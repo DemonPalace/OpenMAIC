@@ -49,6 +49,7 @@ import {
   type OwnerMaterialEntry,
 } from '@/lib/persistence/session-material-links';
 import { getServerPersistenceProvider } from '@/lib/persistence/server-provider';
+import type { MaterialExtractionReasonCode } from '@/lib/types/material-extraction-failure';
 
 import {
   listSessionScopeMaterials,
@@ -61,6 +62,7 @@ import {
   type ResolvedMaterial,
 } from './material-resolver';
 import type { ExtractionWatcher } from './extraction-watcher';
+import { MATERIAL_STATUS_TERMS, materialFailureForModel } from './material-model-copy';
 import type { MaterialLibraryChange } from './material-library-tools';
 import { getAgentSessionMaterialStore, getSessionMaterialQueryable } from './session-materials';
 
@@ -360,12 +362,23 @@ function throwIfAborted(signal?: AbortSignal): void {
 /** The extraction state of a library source as the tools report it. */
 function ownerExtractionOf(entry: OwnerMaterialEntry): {
   status: ExtractionStatus;
+  reasonCode?: MaterialExtractionReasonCode;
   reason?: string;
 } {
   const status = (entry.extraction?.status ?? 'idle') as ExtractionStatus;
   return {
     status,
-    ...(status === 'failed' && entry.extractionError ? { reason: entry.extractionError } : {}),
+    ...(status === 'failed' ? materialFailureForModel(entry.extraction?.reasonCode) : {}),
+  };
+}
+
+/** A session row's extraction state without its diagnostic text (see `materialFailureForModel`). */
+function publicSessionExtractionOf(extraction: AgentSessionMaterial['extraction']) {
+  const { error: _diagnostic, stats, ...rest } = extraction;
+  return {
+    ...rest,
+    ...(stats ? { stats: (({ diagnostics: _hidden, ...counts }) => counts)(stats) } : {}),
+    ...(extraction.status === 'failed' ? materialFailureForModel(undefined) : {}),
   };
 }
 
@@ -378,7 +391,7 @@ function publicSessionMaterialOf(record: AgentSessionMaterial) {
     ...(record.sourceUrl ? { sourceUrl: record.sourceUrl } : {}),
     textChars: record.textChars,
     createdAt: record.createdAt,
-    extraction: record.extraction,
+    extraction: publicSessionExtractionOf(record.extraction),
   };
 }
 
@@ -431,27 +444,31 @@ function isSource(material: ResolvedMaterial): boolean {
 
 function extractionStatusOf(material: ResolvedMaterial): {
   status: ExtractionStatus;
+  reasonCode?: MaterialExtractionReasonCode;
   reason?: string;
   stats?: unknown;
 } {
   if (material.origin === 'owner') return ownerExtractionOf(material.entry);
-  const { extraction } = material.record;
+  const { status, reasonCode, reason, stats } = publicSessionExtractionOf(
+    material.record.extraction,
+  );
   return {
-    status: extraction.status,
-    ...(extraction.error ? { reason: extraction.error } : {}),
-    ...(extraction.stats ? { stats: extraction.stats } : {}),
+    status,
+    ...(reasonCode ? { reasonCode } : {}),
+    ...(reason ? { reason } : {}),
+    ...(stats ? { stats } : {}),
   };
 }
 
 /** What a library source that has no text yet tells the agent to do next. */
 function sourceTextPendingResult(entry: OwnerMaterialEntry) {
-  const { status, reason } = ownerExtractionOf(entry);
+  const { status, reasonCode, reason } = ownerExtractionOf(entry);
   const nextAction =
     status === 'pending' || status === 'running'
-      ? 'Extraction is in progress: call wait_for_materials with this id, then read_material with the same id.'
+      ? 'Parsing: call wait_for_materials with this id, then read_material with the same id.'
       : status === 'failed'
-        ? 'Extraction failed: call extract_material with this id to retry, then wait_for_materials, then read_material with the same id.'
-        : 'This source has not been extracted yet: call extract_material with this id, then wait_for_materials, then read_material with the same id.';
+        ? 'Parse failed: call extract_material with this id to retry, then wait_for_materials, then read_material with the same id.'
+        : 'Stored, not parsed yet: call extract_material with this id, then wait_for_materials, then read_material with the same id.';
   return {
     content: [
       { type: 'text' as const, text: reason ? `${nextAction}\nReason: ${reason}` : nextAction },
@@ -460,6 +477,7 @@ function sourceTextPendingResult(entry: OwnerMaterialEntry) {
       status: 'extraction_required' as const,
       materialId: entry.id,
       extraction: status,
+      ...(reasonCode ? { reasonCode } : {}),
       ...(reason ? { reason } : {}),
     },
   };
@@ -530,7 +548,8 @@ export function buildMaterialTools(deps: MaterialToolDependencies): AgentTool<ne
       'List materials and their ids. Session scope (default) lists what this conversation has ' +
       "attached or made; library scope lists the user's whole knowledge base, newest first, with " +
       'whether each one is attached. Library sources are read by their own id after extraction; ' +
-      'derivatives (images, keyframes) carry derivedFrom and any page or time.',
+      'derivatives (images, keyframes) carry derivedFrom and any page or time. ' +
+      MATERIAL_STATUS_TERMS,
     parameters: LIST_MATERIALS_SCHEMA,
     execute: async (_callId, params, signal) => {
       throwIfAborted(signal);
@@ -895,7 +914,8 @@ export function buildMaterialTools(deps: MaterialToolDependencies): AgentTool<ne
     description:
       'Start extracting one source material, idempotently: an idle or failed source starts; a ' +
       'pending, running or completed one keeps its current state and is not extracted again. ' +
-      'Reports whether this call started it.',
+      'Reports whether this call started it. ' +
+      MATERIAL_STATUS_TERMS,
     parameters: EXTRACT_MATERIAL_SCHEMA,
     execute: async (_callId, params, signal) => {
       throwIfAborted(signal);
@@ -955,9 +975,10 @@ export function buildMaterialTools(deps: MaterialToolDependencies): AgentTool<ne
     name: 'wait_for_materials',
     label: 'Wait for material extraction',
     description:
-      'Wait until selected materials finish extraction (done or failed), or until the bounded ' +
+      'Wait until selected materials finish parsing (done or failed), or until the bounded ' +
       'timeout. In session scope, omit materialIds to wait for every source of this conversation; ' +
-      'library scope requires materialIds.',
+      'library scope requires materialIds. ' +
+      MATERIAL_STATUS_TERMS,
     parameters: WAIT_FOR_MATERIALS_SCHEMA,
     execute: async (_callId, params, signal) => {
       const scope = scopeOf(params.scope);
@@ -986,13 +1007,14 @@ export function buildMaterialTools(deps: MaterialToolDependencies): AgentTool<ne
           resolved = (await listSessionScope(deps.sessionId)).filter(isSource);
         }
         const materials = resolved.map((material) => {
-          const { status, reason, stats } = extractionStatusOf(material);
+          const { status, reasonCode, reason, stats } = extractionStatusOf(material);
           return {
             materialId: resolvedMaterialId(material),
             status,
             ...(status === 'idle'
               ? { nextAction: 'Call extract_material before waiting or reading.' }
               : {}),
+            ...(reasonCode ? { reasonCode } : {}),
             ...(reason ? { reason } : {}),
             ...(stats ? { stats } : {}),
           };

@@ -2110,6 +2110,8 @@
     "courseLinkMore": "{{count}} more classroom(s)",
     "courseMention": {
       "search": "Search classrooms and materials",
+      "searchMaterials": "Search materials",
+      "searchClassrooms": "Search classrooms",
       "courseOrder": "Open classroom first, then recently updated",
       "materialOrder": "Newest uploads first",
       "title": "Reference a classroom for this message",
@@ -2124,6 +2126,7 @@
       "knowledgeBase": "Knowledge base",
       "emptyWithMaterials": "No classroom or material matches",
       "attachMaterial": "Attach {{name}} to this message",
+      "materialUnavailable": "{{name}} can't be attached: {{reason}}",
       "materialAttached": "Already in this conversation",
       "materialStaged": "Already on this message",
       "materialsCapped": "Showing the first {{count}} materials — keep typing to narrow it down"

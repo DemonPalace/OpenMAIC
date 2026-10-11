@@ -236,6 +236,7 @@
       "extractionDone": "Уже разобран",
       "extractionComplete": "Разбор завершён",
       "extractionStillRunning": "Разбор ещё идёт",
+      "parseFailed": "Ошибка обработки",
       "folderExisted": "Папка уже была",
       "unchanged": "Без изменений",
       "movedOutOfFolder": "Перемещено из папки"

@@ -2110,6 +2110,8 @@
     "courseLinkMore": "还有 {{count}} 节课堂",
     "courseMention": {
       "search": "Klassenzimmer und Materialien suchen",
+      "searchMaterials": "Materialien suchen",
+      "searchClassrooms": "Klassenzimmer suchen",
       "courseOrder": "Geöffnetes Klassenzimmer zuerst, dann zuletzt aktualisiert",
       "materialOrder": "Neueste Uploads zuerst",
       "title": "为这条消息引用课堂",
@@ -2124,6 +2126,7 @@
       "knowledgeBase": "Wissensbasis",
       "emptyWithMaterials": "Kein Kursraum und kein Material passt",
       "attachMaterial": "{{name}} an diese Nachricht anhängen",
+      "materialUnavailable": "{{name}} kann nicht angehängt werden: {{reason}}",
       "materialAttached": "Schon in dieser Unterhaltung",
       "materialStaged": "Schon in dieser Nachricht",
       "materialsCapped": "Die ersten {{count}} Materialien — weiter tippen, um einzugrenzen"

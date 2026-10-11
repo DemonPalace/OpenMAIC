@@ -39,6 +39,7 @@ function ownerSource(
     status?: 'idle' | 'pending' | 'running' | 'done' | 'failed';
     revision?: string;
     error?: string | null;
+    reasonCode?: string;
   } = {},
 ): OwnerMaterialEntry {
   const status = options.status ?? (options.revision ? 'done' : 'idle');
@@ -54,7 +55,10 @@ function ownerSource(
     assetId: 'pool-src',
     sha256: 'digest',
     status: 'ready',
-    extraction: { status },
+    extraction: {
+      status,
+      ...(options.reasonCode ? { reasonCode: options.reasonCode } : {}),
+    } as OwnerMaterialEntry['extraction'],
     createdAt: 0,
     deletedAt: null,
     folderId: null,
@@ -279,7 +283,7 @@ describe('material agent tools', () => {
     expect(result.details).toMatchObject({ materialId: 'mat_source', status: 'pending' });
   });
 
-  it('waits through running and reports each terminal material including failure reason', async () => {
+  it('waits through running and reports a failure in the page’s words, not the diagnostic', async () => {
     const states = [
       material({
         id: 'mat_source',
@@ -309,10 +313,9 @@ describe('material agent tools', () => {
     expect(result.details).toMatchObject({
       complete: true,
       timedOut: false,
-      materials: [
-        { materialId: 'mat_source', status: 'failed', reason: 'extractor rejected input' },
-      ],
+      materials: [{ materialId: 'mat_source', status: 'failed', reason: 'Parse failed' }],
     });
+    expect(JSON.stringify(result)).not.toContain('extractor rejected input');
   });
 
   it('honours the wait bound and returns current per-material status', async () => {
@@ -535,8 +538,8 @@ describe('material agent tools', () => {
   });
 
   it.each([
-    ['idle', 'not been extracted yet'],
-    ['running', 'in progress'],
+    ['idle', 'not parsed yet'],
+    ['running', 'Parsing'],
     ['failed', 'to retry'],
   ] as const)(
     'guides the agent when a library source in state %s has no text yet',
@@ -558,12 +561,100 @@ describe('material agent tools', () => {
       expect(result.details).toMatchObject({
         status: 'extraction_required',
         extraction: status,
-        ...(status === 'failed' ? { reason: 'parser said no' } : {}),
+        ...(status === 'failed' ? { reason: 'Parse failed' } : {}),
       });
+      expect(JSON.stringify(result)).not.toContain('parser said no');
       expect(isErrorOf(result)).toBeUndefined();
       expect(readText).not.toHaveBeenCalled();
     },
   );
+
+  // #1880: the model gets the page's stable reason code and wording; the
+  // diagnostic (endpoints, key hints) stays in the server log.
+  it('gives the model a failed library source’s reason code and page wording, never the diagnostic', async () => {
+    const diagnostic =
+      'no document parser configured: set PARSER_BASE_URL=https://parser.internal and PARSER_API_KEY';
+    const entry = ownerSource({
+      status: 'failed',
+      error: diagnostic,
+      reasonCode: 'service_unavailable',
+    });
+    const tools = buildMaterialTools({
+      sessionId: 'ses_1',
+      resolveMaterial: vi.fn().mockResolvedValue({ origin: 'owner', entry }),
+      listLibrary: async () => [entry],
+      attachedIds: async () => new Set<string>(),
+      readText: vi.fn(),
+      ensureOwnerExtraction: vi.fn().mockResolvedValue({ status: 'failed', queued: false }),
+      waitPollIntervalMs: 1,
+      waitForDelay: vi.fn().mockResolvedValue(undefined),
+    });
+    const results = [
+      await tool(tools, 'list_materials').execute('c1', { scope: 'library' } as never),
+      await tool(tools, 'read_material').execute('c2', {
+        materialId: 'src_a',
+        scope: 'library',
+      } as never),
+      await tool(tools, 'wait_for_materials').execute('c3', {
+        materialIds: ['src_a'],
+        scope: 'library',
+        timeoutSec: 1,
+      } as never),
+      await tool(tools, 'extract_material').execute('c4', {
+        materialId: 'src_a',
+        scope: 'library',
+      } as never),
+    ];
+    for (const result of results) {
+      const wire = JSON.stringify(result);
+      expect(wire).not.toContain('PARSER_BASE_URL');
+      expect(wire).not.toContain('PARSER_API_KEY');
+      expect(wire).not.toContain('parser.internal');
+      expect(wire).toContain('service_unavailable');
+      expect(wire).toContain('Parsing service unavailable');
+    }
+  });
+
+  it('keeps a conversation source’s diagnostic out of its listing', async () => {
+    const list = tool(
+      buildMaterialTools({
+        sessionId: 'ses_1',
+        listMaterials: vi.fn().mockResolvedValue([
+          material({
+            id: 'mat_source',
+            kind: 'source',
+            extraction: {
+              status: 'failed',
+              attempts: 1,
+              error: 'upstream 401 from https://asr.internal: bad key',
+              stats: {
+                chars: 0,
+                pages: 1,
+                imageCount: 0,
+                diagnostics: ['https://asr.internal rejected key'],
+              },
+            },
+          }),
+        ]),
+      }),
+      'list_materials',
+    );
+    const result = await list.execute('c1', {} as never);
+    const wire = JSON.stringify(result);
+    expect(wire).not.toContain('asr.internal');
+    expect(wire).toContain('Parse failed');
+    expect(wire).toContain('"pages":1');
+  });
+
+  it('names the page’s status words in the tool descriptions', () => {
+    const tools = buildMaterialTools({ sessionId: 'ses_1' });
+    for (const name of ['list_materials', 'extract_material', 'wait_for_materials'] as const) {
+      const { description } = tool(tools, name);
+      expect(description).toContain('"Searchable"');
+      expect(description).toContain('"Parsing"');
+      expect(description).toContain('"Stored · not parsed"');
+    }
+  });
 
   it('starts a library source’s extraction on the owner chain and reports that it did', async () => {
     const ensureOwnerExtraction = vi.fn().mockResolvedValue({ status: 'pending', queued: true });

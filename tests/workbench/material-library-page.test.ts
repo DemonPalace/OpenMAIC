@@ -2278,6 +2278,24 @@ describe('dragging knowledge-base files with the shared tree gesture', () => {
     await page.dispose();
   });
 
+  it('states the top-level ground as soon as a file is carried, as the rail does', async () => {
+    const page = await openPage();
+    const ground = () => inDocument('kb-drop-top-level')!;
+    expect(ground().dataset.armed).toBe('false');
+    expect(ground().textContent).toBe('');
+    await dragFile('a', inDocument('kb-folder-f1')!.firstElementChild!, false);
+    expect(ground().dataset.armed).toBe('true');
+    expect(ground().className).toContain('ws-ground-drop-armed');
+    expect(ground().textContent).toBe('workspace.dropToUnfile');
+    // Carried like a rail row: lifted, not dimmed.
+    expect(inDocument('kb-material-a')!.className).toContain('ws-row-dragging');
+    expect(inDocument('kb-material-a')!.className).not.toContain('opacity-50');
+    await press(document.body, 'Escape');
+    expect(ground().dataset.armed).toBe('false');
+    expect(inDocument('kb-material-a')!.className).not.toContain('ws-row-dragging');
+    await page.dispose();
+  });
+
   it('cancels with Escape and ignores a target outside this page', async () => {
     const page = await openPage();
     await dragFile('a', inDocument('kb-folder-f1')!.firstElementChild!, false);

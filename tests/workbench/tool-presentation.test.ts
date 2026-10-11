@@ -129,20 +129,49 @@ describe('material tool presentation', () => {
     expect(JSON.stringify(presentation)).not.toContain('mat_private_wire_id');
   });
 
-  it('treats a settled material result containing a failed extraction as an error', () => {
+  // #1880: only the call itself failing is an error; a file that failed to
+  // parse is part of a successful result.
+  it('keeps a successful listing with a failed file a success, with no error text', () => {
     const node = toolNode({
       toolName: 'list_materials',
       toolState: 'done',
       toolDetails: {
-        materials: [{ materialId: 'mat_private_wire_id', status: 'failed' }],
+        materials: [{ materialId: 'mat_private_wire_id', extraction: { status: 'failed' } }],
       },
     });
-    expect(isWorkbenchToolFailed(node)).toBe(true);
-    expect(presentTool(node)).toMatchObject({
-      label: '检查材料',
-      errorText: '材料解析失败',
-      hidePayload: true,
+    expect(isWorkbenchToolFailed(node)).toBe(false);
+    const presentation = presentTool(node);
+    expect(presentation).toMatchObject({ label: '检查材料', hidePayload: true });
+    expect(presentation.errorText).toBeUndefined();
+  });
+
+  it('says a failed parse as a quiet chip on a successful extract or wait', () => {
+    const extract = toolNode({
+      toolName: 'extract_material',
+      toolState: 'done',
+      toolDetails: { materialId: 'mat_x', status: 'failed', started: false },
     });
+    const wait = toolNode({
+      toolName: 'wait_for_materials',
+      toolState: 'done',
+      toolDetails: { complete: true, materials: [{ materialId: 'mat_x', status: 'failed' }] },
+    });
+    for (const node of [extract, wait]) {
+      expect(isWorkbenchToolFailed(node)).toBe(false);
+      const presentation = presentTool(node);
+      expect(presentation.errorText).toBeUndefined();
+      expect(presentation.chips).toEqual([{ label: '解析失败', tone: 'neutral' }]);
+    }
+  });
+
+  it('still shows an error when the material call itself failed', () => {
+    const node = toolNode({
+      toolName: 'list_materials',
+      toolState: 'failed',
+      toolDetails: { materials: [{ materialId: 'mat_x', extraction: { status: 'failed' } }] },
+    });
+    expect(isWorkbenchToolFailed(node)).toBe(true);
+    expect(presentTool(node).errorText).toBe('检查材料失败');
   });
 });
 

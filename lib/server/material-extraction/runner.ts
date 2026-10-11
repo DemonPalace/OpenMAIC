@@ -35,6 +35,8 @@ export async function runNextMaterialExtraction(
     await execute(claim);
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
+    // The diagnostic is for operators: tools give the model only a stable reason.
+    console.warn(`[material-extraction] ${claim.material.id} failed: ${reason}`);
     await store.settleExtractionFailure(
       claim.material.id,
       workerId,

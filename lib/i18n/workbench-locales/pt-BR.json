@@ -236,6 +236,7 @@
       "extractionDone": "Já processado",
       "extractionComplete": "Concluído",
       "extractionStillRunning": "Ainda em processamento",
+      "parseFailed": "Falha na análise",
       "folderExisted": "A pasta já existia",
       "unchanged": "Sem alteração",
       "movedOutOfFolder": "Retirado da pasta"

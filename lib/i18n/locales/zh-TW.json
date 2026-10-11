@@ -2095,6 +2095,8 @@
     "courseLinkMore": "还有 {{count}} 节课堂",
     "courseMention": {
       "search": "搜尋課堂和資料",
+      "searchMaterials": "搜尋資料",
+      "searchClassrooms": "搜尋課堂",
       "courseOrder": "目前課堂優先，其餘依最近更新時間排序",
       "materialOrder": "依上傳時間由新到舊",
       "title": "为这条消息引用课堂",
@@ -2109,6 +2111,7 @@
       "knowledgeBase": "知識庫",
       "emptyWithMaterials": "沒有符合的課堂或材料",
       "attachMaterial": "把 {{name}} 附加到這則訊息",
+      "materialUnavailable": "{{name}} 無法附加：{{reason}}",
       "materialAttached": "本會話已有",
       "materialStaged": "已在這則訊息裡",
       "materialsCapped": "只顯示前 {{count}} 份材料，繼續輸入可縮小範圍"

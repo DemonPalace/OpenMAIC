@@ -571,6 +571,8 @@ describe('the @ menu with the knowledge base', () => {
     materials?: MaterialMentionCandidate[];
     onPick?: () => void;
     onPickMaterial?: (candidate: MaterialMentionCandidate) => void;
+    candidates?: (typeof course)[];
+    search?: { query: string; onChange: (query: string) => void };
   }) {
     const mounted = mount();
     await mounted.render(
@@ -578,8 +580,9 @@ describe('the @ menu with the knowledge base', () => {
         'div',
         null,
         createElement(CourseMentionMenu, {
-          candidates: [course],
+          candidates: props.candidates ?? [course],
           onPick: props.onPick ?? (() => undefined),
+          ...(props.search ? { search: props.search } : {}),
           onClose: () => undefined,
           ...(props.materials ? { materials: props.materials } : {}),
           ...(props.onPickMaterial ? { onPickMaterial: props.onPickMaterial } : {}),
@@ -607,10 +610,14 @@ describe('the @ menu with the knowledge base', () => {
     const failed = mounted.container.querySelector<HTMLButtonElement>(
       '[data-testid="workbench-material-option-failed"]',
     )!;
-    expect(failed.disabled).toBe(true);
+    // Unavailable, and saying why (#1880): not `disabled`, which would hide the tooltip.
+    expect(failed.getAttribute('aria-disabled')).toBe('true');
     expect(failed.textContent).toContain(
       'workspace.knowledgeBase.failure.service_unavailable.label',
     );
+    const reason = failed.getAttribute('aria-label') ?? '';
+    expect(reason).toContain('workspace.courseMention.materialUnavailable');
+    expect(reason).toContain('workspace.knowledgeBase.failure.service_unavailable.description');
     await act(async () => failed.click());
     expect(onPickMaterial).not.toHaveBeenCalled();
     const textarea = mounted.container.querySelector('textarea')!;
@@ -620,6 +627,32 @@ describe('the @ menu with the knowledge base', () => {
     await press(textarea, 'ArrowUp');
     expect(failed.getAttribute('aria-selected')).toBe('false');
     await mounted.dispose();
+  });
+
+  it('names what the search searches: classrooms and materials, materials alone, or classrooms alone', async () => {
+    const search = { query: '', onChange: () => undefined };
+    const placeholder = (mounted: Awaited<ReturnType<typeof renderMenu>>) =>
+      mounted.container
+        .querySelector('[data-testid="workbench-reference-search"]')!
+        .getAttribute('placeholder');
+    const both = await renderMenu({
+      search,
+      materials: [material('a')],
+      onPickMaterial: () => undefined,
+    });
+    expect(placeholder(both)).toBe('workspace.courseMention.search');
+    await both.dispose();
+    const materialsOnly = await renderMenu({
+      search,
+      candidates: [],
+      materials: [material('a')],
+      onPickMaterial: () => undefined,
+    });
+    expect(placeholder(materialsOnly)).toBe('workspace.courseMention.searchMaterials');
+    await materialsOnly.dispose();
+    const classroomsOnly = await renderMenu({ search });
+    expect(placeholder(classroomsOnly)).toBe('workspace.courseMention.searchClassrooms');
+    await classroomsOnly.dispose();
   });
 
   it('lists classrooms, then the knowledge base with folder and state', async () => {

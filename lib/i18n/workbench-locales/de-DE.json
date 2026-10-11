@@ -236,6 +236,7 @@
       "extractionDone": "Bereits aufbereitet",
       "extractionComplete": "Abgeschlossen",
       "extractionStillRunning": "Wird noch aufbereitet",
+      "parseFailed": "Analyse fehlgeschlagen",
       "folderExisted": "Ordner gab es bereits",
       "unchanged": "Keine Änderung",
       "movedOutOfFolder": "Aus dem Ordner verschoben"

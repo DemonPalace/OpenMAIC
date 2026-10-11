@@ -2110,6 +2110,8 @@
     "courseLinkMore": "还有 {{count}} 节课堂",
     "courseMention": {
       "search": "Tìm lớp học và tài liệu",
+      "searchMaterials": "Tìm tài liệu",
+      "searchClassrooms": "Tìm lớp học",
       "courseOrder": "Lớp đang mở trước, sau đó theo cập nhật gần nhất",
       "materialOrder": "Tải lên mới nhất trước",
       "title": "为这条消息引用课堂",
@@ -2124,6 +2126,7 @@
       "knowledgeBase": "Kho kiến thức",
       "emptyWithMaterials": "Không có lớp học hay tài liệu phù hợp",
       "attachMaterial": "Đính kèm {{name}} vào tin nhắn này",
+      "materialUnavailable": "Không thể đính kèm {{name}}: {{reason}}",
       "materialAttached": "Đã có trong cuộc trò chuyện này",
       "materialStaged": "Đã có trong tin nhắn này",
       "materialsCapped": "Đang hiện {{count}} tài liệu đầu tiên — gõ tiếp để thu hẹp"

@@ -1140,7 +1140,8 @@ export function MaterialLibraryPage({
         className={cn(
           layout.row,
           layout.columns,
-          drag.dragId === material.materialId && 'opacity-50',
+          // Carried as the rail carries a course (#1880): lifted on a raised ground.
+          drag.dragId === material.materialId && 'ws-row-dragging bg-[color:var(--ws-raised)]',
         )}
       >
         <div className={cn('flex min-w-0 flex-1 items-start gap-2', options.nested && 'pl-6')}>
@@ -1651,11 +1652,22 @@ export function MaterialLibraryPage({
           >
             {body}
             {!searching && primary.status === 'ready' ? (
+              // The rail's ground (#1880): stated as soon as a file is carried,
+              // pinned to the foot of the page so it is in reach of a long list.
               <div
                 {...drag.folderProps()}
                 data-testid="kb-drop-top-level"
-                className={cn('min-h-20', drag.folderTarget === '' && 'ws-drop-into')}
-              />
+                data-armed={drag.dragKind === 'material' ? 'true' : 'false'}
+                className={cn(
+                  'ws-ground-drop',
+                  drag.dragKind === 'material' && 'ws-ground-drop-armed',
+                  drag.folderTarget === '' && 'ws-drop-into',
+                )}
+              >
+                {drag.dragKind === 'material' ? (
+                  <span className="ws-ground-drop-label">{t('workspace.dropToUnfile')}</span>
+                ) : null}
+              </div>
             ) : null}
           </div>
         </section>

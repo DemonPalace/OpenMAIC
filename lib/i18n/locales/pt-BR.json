@@ -2110,6 +2110,8 @@
     "courseLinkMore": "还有 {{count}} 节课堂",
     "courseMention": {
       "search": "Buscar salas de aula e materiais",
+      "searchMaterials": "Buscar materiais",
+      "searchClassrooms": "Buscar salas de aula",
       "courseOrder": "Sala aberta primeiro, depois atualizações recentes",
       "materialOrder": "Envios mais recentes primeiro",
       "title": "为这条消息引用课堂",
@@ -2124,6 +2126,7 @@
       "knowledgeBase": "Base de conhecimento",
       "emptyWithMaterials": "Nenhuma sala ou material corresponde",
       "attachMaterial": "Anexar {{name}} a esta mensagem",
+      "materialUnavailable": "Não é possível anexar {{name}}: {{reason}}",
       "materialAttached": "Já está nesta conversa",
       "materialStaged": "Já está nesta mensagem",
       "materialsCapped": "Mostrando os primeiros {{count}} materiais — continue digitando para filtrar"

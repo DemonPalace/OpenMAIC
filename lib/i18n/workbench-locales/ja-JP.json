@@ -236,6 +236,7 @@
       "extractionDone": "解析済みです",
       "extractionComplete": "解析が完了しました",
       "extractionStillRunning": "まだ解析中です",
+      "parseFailed": "解析失敗",
       "folderExisted": "フォルダはすでにありました",
       "unchanged": "変更なし",
       "movedOutOfFolder": "フォルダーの外へ移動しました"

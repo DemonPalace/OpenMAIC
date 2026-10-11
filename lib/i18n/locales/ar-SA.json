@@ -2110,6 +2110,8 @@
     "courseLinkMore": "还有 {{count}} 节课堂",
     "courseMention": {
       "search": "البحث عن الفصول والمواد",
+      "searchMaterials": "البحث عن المواد",
+      "searchClassrooms": "البحث عن الفصول",
       "courseOrder": "الفصل المفتوح أولاً، ثم الأحدث تحديثاً",
       "materialOrder": "الأحدث رفعاً أولاً",
       "title": "为这条消息引用课堂",
@@ -2124,6 +2126,7 @@
       "knowledgeBase": "قاعدة المعرفة",
       "emptyWithMaterials": "لا يوجد فصل أو مادة مطابقة",
       "attachMaterial": "إرفاق {{name}} بهذه الرسالة",
+      "materialUnavailable": "تعذّر إرفاق {{name}}: {{reason}}",
       "materialAttached": "موجودة بالفعل في هذه المحادثة",
       "materialStaged": "موجودة بالفعل في هذه الرسالة",
       "materialsCapped": "تُعرض أول {{count}} مواد — تابع الكتابة لتضييق النتائج"

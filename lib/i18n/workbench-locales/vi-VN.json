@@ -236,6 +236,7 @@
       "extractionDone": "Đã bóc tách trước đó",
       "extractionComplete": "Bóc tách xong",
       "extractionStillRunning": "Vẫn đang bóc tách",
+      "parseFailed": "Phân tích thất bại",
       "folderExisted": "Thư mục đã có sẵn",
       "unchanged": "Không thay đổi",
       "movedOutOfFolder": "Đã chuyển ra khỏi thư mục"

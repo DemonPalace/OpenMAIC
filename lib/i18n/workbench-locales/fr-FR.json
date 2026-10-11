@@ -236,6 +236,7 @@
       "extractionDone": "Déjà extrait",
       "extractionComplete": "Terminée",
       "extractionStillRunning": "Extraction en cours",
+      "parseFailed": "Échec de l’analyse",
       "folderExisted": "Le dossier existait déjà",
       "unchanged": "Aucun changement",
       "movedOutOfFolder": "Sorti du dossier"

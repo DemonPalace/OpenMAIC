@@ -9,6 +9,7 @@
  * then read with the same id.
  */
 import { isPptxMaterial } from './pptx-mime';
+import { materialStatusTerm } from './material-model-copy';
 import {
   materialDerivativeCounts,
   resolvedMaterialId,
@@ -35,8 +36,9 @@ function lineOf(material: ResolvedMaterial): string {
   if (entry.kind !== 'source') {
     return `- "${name}" (${entry.kind} of ${entry.derivedFrom ?? 'a source'}, id ${entry.id})`;
   }
-  const status = entry.extraction?.status ?? 'idle';
-  return `- "${name}" (knowledge-base source, id ${entry.id}, extraction ${status})`;
+  // The page's word for the state, so the model repeats what the teacher sees (#1880).
+  const status = materialStatusTerm(entry.extraction?.status ?? 'idle');
+  return `- "${name}" (knowledge-base source, id ${entry.id}, status "${status}")`;
 }
 
 function isPptx(material: ResolvedMaterial): boolean {

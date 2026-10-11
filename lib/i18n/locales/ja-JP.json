@@ -2110,6 +2110,8 @@
     "courseLinkMore": "还有 {{count}} 节课堂",
     "courseMention": {
       "search": "教室と資料を検索",
+      "searchMaterials": "資料を検索",
+      "searchClassrooms": "教室を検索",
       "courseOrder": "表示中の教室を先頭に、更新日時の新しい順",
       "materialOrder": "アップロード日時の新しい順",
       "title": "为这条消息引用课堂",
@@ -2124,6 +2126,7 @@
       "knowledgeBase": "ナレッジベース",
       "emptyWithMaterials": "一致するクラスや素材はありません",
       "attachMaterial": "{{name}} をこのメッセージに添付",
+      "materialUnavailable": "{{name}} は添付できません：{{reason}}",
       "materialAttached": "この会話にすでにあります",
       "materialStaged": "このメッセージにすでにあります",
       "materialsCapped": "最初の {{count}} 件の素材を表示中 — 入力を続けて絞り込めます"

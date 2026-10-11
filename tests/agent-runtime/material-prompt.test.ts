@@ -127,7 +127,7 @@ describe('materialsPromptBlock', () => {
     expect(prompt).toContain('- "Sample article" (web, id mat_web)');
     expect(prompt).toContain('- "old copy.pdf" (source, id mat_copy)');
     expect(prompt).toContain(
-      '- "lesson.pdf" (knowledge-base source, id src_lesson, extraction running)',
+      '- "lesson.pdf" (knowledge-base source, id src_lesson, status "Parsing")',
     );
     expect(prompt).not.toContain('id img_1');
     expect(prompt).toContain('1 derivative');
