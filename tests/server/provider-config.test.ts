@@ -470,6 +470,7 @@ providers:
       expect(resolveWebSearchBaseUrl('claude')).toBe('https://proxy.example.com/anthropic');
       // Server-pinned model (first entry) is authoritative over the client model.
       expect(resolveWebSearchModel('claude', 'claude-haiku-4-5')).toBe('claude-sonnet-5');
+      expect(resolveWebSearchModel('claude', 'claude-sonnet-5')).toBe('claude-sonnet-5');
       expect(getServerWebSearchProviders().claude).toEqual({});
     });
 
@@ -693,7 +694,7 @@ video:
       );
       // A garbage-only `models: [""]` list normalizes to no pin at all — it must
       // never become a truthy pin of "" (the YAML path used to copy it verbatim).
-      expect(resolveVideoModel('kling')).toBeUndefined();
+      expect(resolveVideoModel('kling')).toBe('kling-v2-6');
     });
 
     it('resolves the default video provider as the first server-configured one', async () => {
@@ -1046,16 +1047,17 @@ video:
       expect(resolveTTSBaseUrl('qwen-tts')).toBe('https://dashscope.aliyuncs.com/api/v1');
     });
 
-    it('maps VC sentinels to the resolved model and rejects pin bypasses', async () => {
+    it('maps VC sentinels and substitutes only authorized pins', async () => {
       vi.stubEnv('TTS_QWEN_API_KEY', 'key');
-      vi.stubEnv('TTS_QWEN_MODELS', 'qwen3-tts-flash');
+      vi.stubEnv('TTS_QWEN_MODELS', 'qwen3-tts-flash,operator-vc-model');
       vi.stubEnv('TTS_QWEN_VOICE_CLONE_MODEL', 'operator-vc-model');
       const { resolveTTSModel } = await import('@/lib/server/provider-config');
       expect(resolveTTSModel('qwen-tts', 'qwen3-tts-vc-custom', 'clone-1')).toBe(
         'operator-vc-model',
       );
-      expect(() => resolveTTSModel('qwen-tts', 'qwen3-tts-flash-other', 'Cherry')).toThrow(
-        'not allowed',
+      expect(resolveTTSModel('qwen-tts', 'qwen3-tts-flash', 'clone-1')).toBe('operator-vc-model');
+      expect(resolveTTSModel('qwen-tts', 'qwen3-tts-flash-other', 'Cherry')).toBe(
+        'qwen3-tts-flash',
       );
       expect(resolveTTSModel('qwen-tts', 'operator-vc-model', 'Cherry')).toBe('qwen3-tts-flash');
     });
@@ -1071,7 +1073,7 @@ video:
       vi.stubEnv('TTS_QWEN_MODELS', 'operator-vc-model');
       vi.stubEnv('TTS_QWEN_VOICE_CLONE_MODEL', 'operator-vc-model');
       const { resolveTTSModel } = await import('@/lib/server/provider-config');
-      expect(() => resolveTTSModel('qwen-tts', undefined, 'Cherry')).toThrow('not allowed');
+      expect(() => resolveTTSModel('qwen-tts', undefined, 'Cherry')).toThrow('not authorized');
     });
   });
 

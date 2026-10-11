@@ -203,7 +203,7 @@ describe('server web search config', () => {
     });
   });
 
-  it('pins the Claude model from WEB_SEARCH_CLAUDE_MODELS over the client model', async () => {
+  it('substitutes the first Claude pin for unlisted models and honors listed choices', async () => {
     vi.stubEnv('WEB_SEARCH_CLAUDE_API_KEY', 'sk-server-key');
     vi.stubEnv('WEB_SEARCH_CLAUDE_BASE_URL', 'https://api.anthropic.com/v1');
     vi.stubEnv('WEB_SEARCH_CLAUDE_MODELS', 'claude-sonnet-5,claude-opus-5');
@@ -215,11 +215,17 @@ describe('server web search config', () => {
         webSearchProviderId: 'claude',
         webSearchModelId: 'claude-haiku-4-5',
       }),
+    ).toMatchObject({ claudeModelId: 'claude-sonnet-5' });
+    expect(
+      resolveClassroomWebSearchConfig({
+        webSearchProviderId: 'claude',
+        webSearchModelId: 'claude-opus-5',
+      }),
     ).toEqual({
       providerId: 'claude',
       apiKey: 'sk-server-key',
       baseUrl: 'https://api.anthropic.com/v1',
-      claudeModelId: 'claude-sonnet-5',
+      claudeModelId: 'claude-opus-5',
     });
   });
 

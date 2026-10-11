@@ -20,11 +20,10 @@ import {
   isServerTTSProviderDisabled,
   resolveTTSApiKey,
   resolveTTSBaseUrl,
-  resolveQwenVoiceCloneModel,
-  resolveTTSModel,
+  authorizeServerModel,
 } from '@/lib/server/provider-config';
 import { createLogger } from '@/lib/logger';
-import { apiError, apiSuccess } from '@/lib/server/api-response';
+import { modelAuthorizationResponse, apiError, apiSuccess } from '@/lib/server/api-response';
 import { findUnsafeNetworkTargetError, validatePublicUrlForSSRF } from '@/lib/server/ssrf-guard';
 import { normalizeVoiceDesign } from '@/lib/audio/voice-design';
 import {
@@ -144,16 +143,9 @@ export async function POST(req: NextRequest) {
       publicOnly,
       // A server-configured provider's endpoint may be on a local network.
       managed,
-      model:
-        providerId === 'qwen-tts'
-          ? resolveQwenVoiceCloneModel()
-          : resolveTTSModel(providerId, body.ttsModelId),
     };
 
     if (deleting) {
-      if (!adapter.deleteVoice) {
-        return apiError('INVALID_REQUEST', 400, 'This provider does not support voice deletion');
-      }
       // Vendor IDs may be present in exported classroom data, so possession of
       // an ID is not ownership. Only a caller-supplied account key authorizes
       // provider-side deletion; a managed server key must never be used here.
@@ -167,9 +159,16 @@ export async function POST(req: NextRequest) {
             'The local voice profile can be removed, but the provider voice was not deleted.',
         });
       }
+      if (!adapter.deleteVoice) {
+        return apiError('INVALID_REQUEST', 400, 'This provider does not support voice deletion');
+      }
+      cfg.model = adapter.resolveRegistrationModel(body.ttsModelId?.trim() || undefined);
       await adapter.deleteVoice(cfg, voiceId, deadline.signal);
       return apiSuccess({ voiceId, deleted: true, vendorDeleted: true, localOnly: false });
     }
+
+    cfg.model = adapter.resolveRegistrationModel(body.ttsModelId?.trim() || undefined);
+    authorizeServerModel('tts', providerId, cfg.model);
 
     // Already registered → no-op (also avoids a redundant re-register when the
     // client offered a cached clip but the voice is still live on the backend).
@@ -236,6 +235,8 @@ export async function POST(req: NextRequest) {
       mimeType: clip.mimeType,
     });
   } catch (error) {
+    const refusal = modelAuthorizationResponse(error);
+    if (refusal) return refusal;
     log.error(
       `Voice registration failed [provider=${providerId ?? 'unknown'}, voiceId=${voiceId ?? 'unknown'}]:`,
       error,
