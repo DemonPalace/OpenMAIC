@@ -10,6 +10,22 @@ vi.mock('@/lib/persistence/asset-pending-ttl', () => ({ resolveAssetPendingTtlMs
 vi.mock('@/lib/persistence/asset-collector-schedule', () => ({
   startAssetCollectorSchedule: () => ({ stop: async () => undefined }),
 }));
+// These background tasks belong to other boot tests and must not start here.
+vi.mock('@/lib/persistence/schema-boot-check', () => ({
+  startSchemaBootCheck: async () => undefined,
+}));
+vi.mock('@/lib/server/instance-secret-check', () => ({
+  warnAboutInstanceSecret: async () => undefined,
+}));
+vi.mock('@/lib/server/legacy-classroom-import', () => ({
+  startLegacyClassroomImport: () => ({ stop: async () => undefined }),
+}));
+vi.mock('@/lib/server/generation/run/runner', () => ({
+  startGenerationRunner: () => ({ stop: async () => undefined }),
+}));
+vi.mock('@/lib/server/materials/extraction', () => ({
+  startOwnerMaterialExtractor: () => ({ stop: async () => undefined }),
+}));
 vi.mock('@/lib/server/config-validation', () => ({ validateServerConfig: vi.fn() }));
 vi.mock('@/lib/config/feature-flags', () => ({
   isAgentRuntimeConfigured: () => runtime.configured,
