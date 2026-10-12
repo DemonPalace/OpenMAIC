@@ -1981,6 +1981,7 @@
   "workspace": {
     "knowledgeBase": {
       "title": "知識庫",
+      "topLevel": "頂層",
       "back": "返回",
       "search": "搜尋名稱或檔案類型",
       "loading": "載入中…",
@@ -2100,6 +2101,8 @@
       "courseOrder": "目前課堂優先，其餘依最近更新時間排序",
       "materialOrder": "依上傳時間由新到舊",
       "title": "为这条消息引用课堂",
+      "titleBoth": "為這則訊息引用課堂或附加知識庫資料",
+      "titleMaterials": "為這則訊息附加知識庫資料",
       "empty": "没有匹配的课堂",
       "alreadyNamed": "已引用",
       "remove": "移除{{name}}",
@@ -2111,7 +2114,7 @@
       "knowledgeBase": "知識庫",
       "emptyWithMaterials": "沒有符合的課堂或材料",
       "attachMaterial": "把 {{name}} 附加到這則訊息",
-      "materialUnavailable": "{{name}} 無法附加：{{reason}}",
+      "materialUnavailable": "{{name}} 無法附加（{{reason}}）。請在知識庫中查看原因並重新解析。",
       "materialAttached": "本會話已有",
       "materialStaged": "已在這則訊息裡",
       "materialsCapped": "只顯示前 {{count}} 份材料，繼續輸入可縮小範圍"

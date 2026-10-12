@@ -6,7 +6,7 @@ import { agentRuntimeConfig } from '@/lib/server/agent-runtime/config';
 import { getAgentSessionMaterialStore } from '@/lib/server/agent-runtime/session-materials';
 
 import { extractClaimedSessionMaterial } from './extract';
-import { isTransientExtractionError } from './errors';
+import { isTransientExtractionError, MaterialExtractionError } from './errors';
 
 export interface MaterialExtractionRunnerHandle {
   workerId: string;
@@ -42,6 +42,9 @@ export async function runNextMaterialExtraction(
       workerId,
       reason,
       isTransientExtractionError(error),
+      // The classification extraction already made, stored with the settlement
+      // (#1880); an unclassified failure stores none.
+      error instanceof MaterialExtractionError ? error.reasonCode : undefined,
     );
   } finally {
     clearInterval(heartbeat);

@@ -1996,6 +1996,7 @@
   "workspace": {
     "knowledgeBase": {
       "title": "Kho kiến thức",
+      "topLevel": "Cấp cao nhất",
       "back": "Quay lại",
       "search": "Tìm theo tên hoặc loại tệp",
       "loading": "Đang tải…",
@@ -2115,6 +2116,8 @@
       "courseOrder": "Lớp đang mở trước, sau đó theo cập nhật gần nhất",
       "materialOrder": "Tải lên mới nhất trước",
       "title": "为这条消息引用课堂",
+      "titleBoth": "Tham chiếu lớp học hoặc đính kèm tài liệu từ kho kiến thức vào tin nhắn này",
+      "titleMaterials": "Đính kèm tài liệu từ kho kiến thức vào tin nhắn này",
       "empty": "没有匹配的课堂",
       "alreadyNamed": "已引用",
       "remove": "移除{{name}}",
@@ -2126,7 +2129,7 @@
       "knowledgeBase": "Kho kiến thức",
       "emptyWithMaterials": "Không có lớp học hay tài liệu phù hợp",
       "attachMaterial": "Đính kèm {{name}} vào tin nhắn này",
-      "materialUnavailable": "Không thể đính kèm {{name}}: {{reason}}",
+      "materialUnavailable": "Không thể đính kèm {{name}} ({{reason}}). Mở kho kiến thức để xem lý do và phân tích lại.",
       "materialAttached": "Đã có trong cuộc trò chuyện này",
       "materialStaged": "Đã có trong tin nhắn này",
       "materialsCapped": "Đang hiện {{count}} tài liệu đầu tiên — gõ tiếp để thu hẹp"

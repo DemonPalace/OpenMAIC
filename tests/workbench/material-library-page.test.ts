@@ -2278,21 +2278,28 @@ describe('dragging knowledge-base files with the shared tree gesture', () => {
     await page.dispose();
   });
 
-  it('states the top-level ground as soon as a file is carried, as the rail does', async () => {
+  it('states the top-level ground as soon as a file in a folder is carried, as the rail does', async () => {
     const page = await openPage();
     const ground = () => inDocument('kb-drop-top-level')!;
     expect(ground().dataset.armed).toBe('false');
     expect(ground().textContent).toBe('');
+    // A top-level file has no folder to move out of: the ground stays quiet.
     await dragFile('a', inDocument('kb-folder-f1')!.firstElementChild!, false);
+    expect(ground().dataset.armed).toBe('false');
+    expect(ground().textContent).toBe('');
+    await press(document.body, 'Escape');
+    await expand('f1');
+    await dragFile('in-f1', inDocument('kb-folder-f2')!.firstElementChild!, false);
     expect(ground().dataset.armed).toBe('true');
     expect(ground().className).toContain('ws-ground-drop-armed');
     expect(ground().textContent).toBe('workspace.dropToUnfile');
-    // Carried like a rail row: lifted, not dimmed.
-    expect(inDocument('kb-material-a')!.className).toContain('ws-row-dragging');
-    expect(inDocument('kb-material-a')!.className).not.toContain('opacity-50');
+    // Carried like a rail row: lifted on the rail's tint, not dimmed.
+    expect(inDocument('kb-material-in-f1')!.className).toContain('ws-row-dragging');
+    expect(inDocument('kb-material-in-f1')!.className).toContain('--ws-tint');
+    expect(inDocument('kb-material-in-f1')!.className).not.toContain('opacity-50');
     await press(document.body, 'Escape');
     expect(ground().dataset.armed).toBe('false');
-    expect(inDocument('kb-material-a')!.className).not.toContain('ws-row-dragging');
+    expect(inDocument('kb-material-in-f1')!.className).not.toContain('ws-row-dragging');
     await page.dispose();
   });
 

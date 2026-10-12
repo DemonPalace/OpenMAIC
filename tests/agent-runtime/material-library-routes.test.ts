@@ -299,6 +299,20 @@ describe('material library routes and tools (PGlite)', () => {
     expect(listed.details.folders).toEqual([
       { folderId: folder.details.folderId, name: 'From the run', materialCount: 1 },
     ]);
+    // Back to the top level: named in the page's word for the run's language (#1880).
+    const englishTools = buildMaterialLibraryTools({
+      ownerId: ANON,
+      sessionId: 'ses-run',
+      locale: () => 'en-US',
+    });
+    const outOfFolder = await englishTools
+      .find((tool) => tool.name === 'move_materials')!
+      .execute('call', { materialIds: ['src-anon'], folderId: 'top-level' } as never);
+    expect(outOfFolder.details).toMatchObject({
+      status: 'moved',
+      folderId: null,
+      folderLabel: 'Top level',
+    });
     const refused = await run('move_materials', {
       materialIds: ['missing'],
       folderId: 'top-level',

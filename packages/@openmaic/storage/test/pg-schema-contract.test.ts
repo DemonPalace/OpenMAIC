@@ -283,6 +283,7 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
   active_stage_id     TEXT,
   skill_id            TEXT,
   origin              TEXT,
+  locale              TEXT,
   existing_course     BOOLEAN NOT NULL DEFAULT FALSE,
   status              TEXT NOT NULL DEFAULT 'queued',
   attempt             INTEGER NOT NULL DEFAULT 0,
@@ -310,6 +311,9 @@ ALTER TABLE agent_sessions
 
 ALTER TABLE agent_sessions
   ADD COLUMN IF NOT EXISTS title_state TEXT NOT NULL DEFAULT 'manual';
+
+ALTER TABLE agent_sessions
+  ADD COLUMN IF NOT EXISTS locale TEXT;
 
 DO $agent_session_title_state_constraint$
 BEGIN
@@ -517,6 +521,7 @@ CREATE TABLE IF NOT EXISTS agent_session_materials (
   extraction_status TEXT NOT NULL DEFAULT 'done',
   extraction_attempts INTEGER NOT NULL DEFAULT 0,
   extraction_error TEXT,
+  extraction_reason_code TEXT,
   extraction_stats JSONB,
   extractor_version TEXT,
   extraction_lease_worker_id TEXT,
@@ -532,6 +537,8 @@ CREATE TABLE IF NOT EXISTS agent_session_materials (
 );
 
 ALTER TABLE agent_session_materials ADD COLUMN IF NOT EXISTS owner_material_id TEXT;
+
+ALTER TABLE agent_session_materials ADD COLUMN IF NOT EXISTS extraction_reason_code TEXT;
 
 CREATE INDEX IF NOT EXISTS agent_session_materials_session_created_idx
   ON agent_session_materials (session_id, created_at);

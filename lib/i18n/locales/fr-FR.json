@@ -1996,6 +1996,7 @@
   "workspace": {
     "knowledgeBase": {
       "title": "Base de connaissances",
+      "topLevel": "Niveau supérieur",
       "back": "Retour",
       "search": "Rechercher par nom ou type de fichier",
       "loading": "Chargement…",
@@ -2115,6 +2116,8 @@
       "courseOrder": "Classe ouverte en premier, puis mises à jour récentes",
       "materialOrder": "Envois les plus récents en premier",
       "title": "为这条消息引用课堂",
+      "titleBoth": "Mentionner une classe ou joindre un document de la base de connaissances à ce message",
+      "titleMaterials": "Joindre un document de la base de connaissances à ce message",
       "empty": "没有匹配的课堂",
       "alreadyNamed": "已引用",
       "remove": "移除{{name}}",
@@ -2126,7 +2129,7 @@
       "knowledgeBase": "Base de connaissances",
       "emptyWithMaterials": "Aucune classe ni aucun document ne correspond",
       "attachMaterial": "Joindre {{name}} à ce message",
-      "materialUnavailable": "Impossible de joindre {{name}} : {{reason}}",
+      "materialUnavailable": "Impossible de joindre {{name}} ({{reason}}). Ouvrez la base de connaissances pour voir pourquoi et relancer l’analyse.",
       "materialAttached": "Déjà dans cette conversation",
       "materialStaged": "Déjà dans ce message",
       "materialsCapped": "Les {{count}} premiers documents — continuez à taper pour affiner"

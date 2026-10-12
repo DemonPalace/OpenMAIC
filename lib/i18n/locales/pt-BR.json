@@ -1996,6 +1996,7 @@
   "workspace": {
     "knowledgeBase": {
       "title": "Base de conhecimento",
+      "topLevel": "Nível superior",
       "back": "Voltar",
       "search": "Pesquisar por nome ou tipo de arquivo",
       "loading": "Carregando…",
@@ -2115,6 +2116,8 @@
       "courseOrder": "Sala aberta primeiro, depois atualizações recentes",
       "materialOrder": "Envios mais recentes primeiro",
       "title": "为这条消息引用课堂",
+      "titleBoth": "Mencionar uma sala de aula ou anexar material da base de conhecimento a esta mensagem",
+      "titleMaterials": "Anexar material da base de conhecimento a esta mensagem",
       "empty": "没有匹配的课堂",
       "alreadyNamed": "已引用",
       "remove": "移除{{name}}",
@@ -2126,7 +2129,7 @@
       "knowledgeBase": "Base de conhecimento",
       "emptyWithMaterials": "Nenhuma sala ou material corresponde",
       "attachMaterial": "Anexar {{name}} a esta mensagem",
-      "materialUnavailable": "Não é possível anexar {{name}}: {{reason}}",
+      "materialUnavailable": "Não é possível anexar {{name}} ({{reason}}). Abra a base de conhecimento para ver o motivo e analisar de novo.",
       "materialAttached": "Já está nesta conversa",
       "materialStaged": "Já está nesta mensagem",
       "materialsCapped": "Mostrando os primeiros {{count}} materiais — continue digitando para filtrar"

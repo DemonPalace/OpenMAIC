@@ -1140,8 +1140,9 @@ export function MaterialLibraryPage({
         className={cn(
           layout.row,
           layout.columns,
-          // Carried as the rail carries a course (#1880): lifted on a raised ground.
-          drag.dragId === material.materialId && 'ws-row-dragging bg-[color:var(--ws-raised)]',
+          // Carried as the rail carries a course (#1880): lifted, on the rail's
+          // pressed-row tint.
+          drag.dragId === material.materialId && 'ws-row-dragging bg-[color:var(--ws-tint)]',
         )}
       >
         <div className={cn('flex min-w-0 flex-1 items-start gap-2', options.nested && 'pl-6')}>
@@ -1425,6 +1426,13 @@ export function MaterialLibraryPage({
     </li>
   ) : null;
 
+  /** The file being carried is in a folder: only then can it move out of one. */
+  const carriedFromFolder =
+    drag.dragKind === 'material' &&
+    tree.expanded.some((id) =>
+      (tree.folder(id)?.files ?? []).some((file) => file.materialId === drag.dragId),
+    );
+
   // ── What the list region holds ──────────────────────────────────────
   const searching = tree.mode === 'search';
   const primary = searching ? tree.results : tree.root;
@@ -1652,19 +1660,20 @@ export function MaterialLibraryPage({
           >
             {body}
             {!searching && primary.status === 'ready' ? (
-              // The rail's ground (#1880): stated as soon as a file is carried,
+              // The rail's ground (#1880): stated as soon as a file in a folder
+              // is carried -- a top-level file has nowhere to move out of -- and
               // pinned to the foot of the page so it is in reach of a long list.
               <div
                 {...drag.folderProps()}
                 data-testid="kb-drop-top-level"
-                data-armed={drag.dragKind === 'material' ? 'true' : 'false'}
+                data-armed={carriedFromFolder ? 'true' : 'false'}
                 className={cn(
                   'ws-ground-drop',
-                  drag.dragKind === 'material' && 'ws-ground-drop-armed',
+                  carriedFromFolder && 'ws-ground-drop-armed',
                   drag.folderTarget === '' && 'ws-drop-into',
                 )}
               >
-                {drag.dragKind === 'material' ? (
+                {carriedFromFolder ? (
                   <span className="ws-ground-drop-label">{t('workspace.dropToUnfile')}</span>
                 ) : null}
               </div>

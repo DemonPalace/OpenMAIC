@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS agent_session_materials (
   extraction_status TEXT NOT NULL DEFAULT 'done',
   extraction_attempts INTEGER NOT NULL DEFAULT 0,
   extraction_error TEXT,
+  extraction_reason_code TEXT,
   extraction_stats JSONB,
   extractor_version TEXT,
   extraction_lease_worker_id TEXT,
@@ -83,6 +84,8 @@ CREATE TABLE IF NOT EXISTS agent_session_materials (
 );
 
 ALTER TABLE agent_session_materials ADD COLUMN IF NOT EXISTS owner_material_id TEXT;
+
+ALTER TABLE agent_session_materials ADD COLUMN IF NOT EXISTS extraction_reason_code TEXT;
 
 CREATE INDEX IF NOT EXISTS agent_session_materials_session_created_idx
   ON agent_session_materials (session_id, created_at);
@@ -166,6 +169,7 @@ interface MaterialRow extends Record<string, unknown> {
   extraction_status: MaterialExtractionState['status'];
   extraction_attempts: number | string;
   extraction_error: string | null;
+  extraction_reason_code: string | null;
   extraction_stats: MaterialExtractionState['stats'] | null;
   extractor_version: string | null;
   extraction_lease_worker_id: string | null;
@@ -190,6 +194,7 @@ function mapRow(row: MaterialRow): AgentSessionMaterial {
       status: row.extraction_status,
       attempts: Number(row.extraction_attempts),
       ...(row.extraction_error ? { error: row.extraction_error } : {}),
+      ...(row.extraction_reason_code ? { reasonCode: row.extraction_reason_code } : {}),
       ...(row.extraction_stats ? { stats: row.extraction_stats } : {}),
       ...(row.extractor_version ? { extractorVersion: row.extractor_version } : {}),
     },
@@ -412,7 +417,7 @@ export class PgAgentSessionMaterialStore implements AgentSessionMaterialStore {
     const result = await this.queryable.query(
       `UPDATE ${this.table} AS material
           SET extraction_status = 'pending', extraction_attempts = 0,
-              extraction_error = NULL, extraction_stats = NULL,
+              extraction_error = NULL, extraction_reason_code = NULL, extraction_stats = NULL,
               extractor_version = NULL, extraction_lease_worker_id = NULL,
               extraction_lease_worker_pid = NULL, extraction_lease_heartbeat_at = NULL
          FROM agent_sessions AS session
@@ -451,6 +456,7 @@ export class PgAgentSessionMaterialStore implements AgentSessionMaterialStore {
        )
        UPDATE ${this.table} AS material
           SET extraction_status = 'running', extraction_error = NULL,
+              extraction_reason_code = NULL,
               extraction_lease_worker_id = $2, extraction_lease_worker_pid = $3,
               extraction_lease_heartbeat_at = $4
          FROM candidate
@@ -485,6 +491,7 @@ export class PgAgentSessionMaterialStore implements AgentSessionMaterialStore {
          UPDATE ${this.table}
             SET extraction_status = 'done', extraction_stats = $3::jsonb,
                 extractor_version = $4, extraction_error = NULL,
+                extraction_reason_code = NULL,
                 extraction_lease_worker_id = NULL, extraction_lease_worker_pid = NULL,
                 extraction_lease_heartbeat_at = NULL
           WHERE id = $1 AND kind = 'source' AND extraction_status = 'running'
@@ -527,6 +534,7 @@ export class PgAgentSessionMaterialStore implements AgentSessionMaterialStore {
     workerId: string,
     error: string,
     retryable: boolean,
+    reasonCode?: string,
   ): Promise<MaterialExtractionFailureSettlement | null> {
     const result = await this.queryable.query<
       MaterialExtractionFailureSettlement & Record<string, unknown>
@@ -538,12 +546,22 @@ export class PgAgentSessionMaterialStore implements AgentSessionMaterialStore {
                 WHEN $4 AND extraction_attempts < $5 THEN extraction_attempts + 1
                 ELSE extraction_attempts END,
               extraction_error = $3, extraction_stats = NULL,
+              -- This attempt's own code, only on a terminal failure.
+              extraction_reason_code = CASE
+                WHEN $4 AND extraction_attempts < $5 THEN NULL ELSE $6::text END,
               extraction_lease_worker_id = NULL, extraction_lease_worker_pid = NULL,
               extraction_lease_heartbeat_at = NULL
         WHERE id = $1 AND extraction_status = 'running'
           AND extraction_lease_worker_id = $2
         RETURNING extraction_status AS status, extraction_attempts AS attempts`,
-      [materialId, workerId, error.slice(0, 4000), retryable, MAX_MATERIAL_EXTRACTION_RETRIES],
+      [
+        materialId,
+        workerId,
+        error.slice(0, 4000),
+        retryable,
+        MAX_MATERIAL_EXTRACTION_RETRIES,
+        reasonCode?.slice(0, 64) ?? null,
+      ],
     );
     return result.rows[0] ?? null;
   }

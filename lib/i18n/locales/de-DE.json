@@ -1996,6 +1996,7 @@
   "workspace": {
     "knowledgeBase": {
       "title": "Wissensbasis",
+      "topLevel": "Oberste Ebene",
       "back": "Zurück",
       "search": "Namen und Dateitypen durchsuchen",
       "loading": "Wird geladen…",
@@ -2115,6 +2116,8 @@
       "courseOrder": "Geöffnetes Klassenzimmer zuerst, dann zuletzt aktualisiert",
       "materialOrder": "Neueste Uploads zuerst",
       "title": "为这条消息引用课堂",
+      "titleBoth": "Ein Klassenzimmer referenzieren oder Material aus der Wissensbasis an diese Nachricht anhängen",
+      "titleMaterials": "Material aus der Wissensbasis an diese Nachricht anhängen",
       "empty": "没有匹配的课堂",
       "alreadyNamed": "已引用",
       "remove": "移除{{name}}",
@@ -2126,7 +2129,7 @@
       "knowledgeBase": "Wissensbasis",
       "emptyWithMaterials": "Kein Kursraum und kein Material passt",
       "attachMaterial": "{{name}} an diese Nachricht anhängen",
-      "materialUnavailable": "{{name}} kann nicht angehängt werden: {{reason}}",
+      "materialUnavailable": "{{name}} kann nicht angehängt werden ({{reason}}). Öffnen Sie die Wissensbasis, um den Grund zu sehen und die Datei erneut zu analysieren.",
       "materialAttached": "Schon in dieser Unterhaltung",
       "materialStaged": "Schon in dieser Nachricht",
       "materialsCapped": "Die ersten {{count}} Materialien — weiter tippen, um einzugrenzen"

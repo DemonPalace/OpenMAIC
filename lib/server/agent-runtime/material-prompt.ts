@@ -9,7 +9,7 @@
  * then read with the same id.
  */
 import { isPptxMaterial } from './pptx-mime';
-import { materialStatusTerm } from './material-model-copy';
+import { MATERIAL_USER_WORDING } from './material-model-copy';
 import {
   materialDerivativeCounts,
   resolvedMaterialId,
@@ -36,9 +36,10 @@ function lineOf(material: ResolvedMaterial): string {
   if (entry.kind !== 'source') {
     return `- "${name}" (${entry.kind} of ${entry.derivedFrom ?? 'a source'}, id ${entry.id})`;
   }
-  // The page's word for the state, so the model repeats what the teacher sees (#1880).
-  const status = materialStatusTerm(entry.extraction?.status ?? 'idle');
-  return `- "${name}" (knowledge-base source, id ${entry.id}, status "${status}")`;
+  // The internal code: the words for the user come from the tools, in the
+  // language of the message being answered (`MATERIAL_USER_WORDING`, #1880).
+  const status = entry.extraction?.status ?? 'idle';
+  return `- "${name}" (knowledge-base source, id ${entry.id}, extraction ${status})`;
 }
 
 function isPptx(material: ResolvedMaterial): boolean {
@@ -90,6 +91,7 @@ export function materialsPromptBlock(materials: readonly ResolvedMaterial[]): st
           'A `source` of this conversation that is not a knowledge-base source is read through the `extraction` material its extraction produced (see `list_materials`).',
         ]
       : []),
+    MATERIAL_USER_WORDING,
     'To organize the knowledge base: `list_material_folders`, `create_material_folder`, `rename_material_folder`, `move_materials` (a source moves with its images and keyframes; `folderId: "top-level"` moves it out of its folder), `rename_material`. Deleting a material or a folder is left to the teacher, on the knowledge base page: you cannot delete.',
     ...(materials.some(isPptx)
       ? [

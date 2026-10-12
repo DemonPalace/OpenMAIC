@@ -329,11 +329,30 @@ describe('uploaded material extraction lifecycle', () => {
       }),
     );
 
+    // The classification extraction made is stored with the settlement (#1880).
     expect((await materials.getMaterial('session-1', 'mat_unavailable'))?.extraction).toEqual({
       status: 'failed',
       attempts: 0,
       error: expect.stringMatching(/Configure AliDocMind credentials.*install ffmpeg.*server ASR/i),
+      reasonCode: 'service_unavailable',
     });
+
+    // The model reads that code back in the page's words for the run's
+    // language, with the configuration guidance, and none of the diagnostic.
+    for (const [locale, guidance] of [
+      ['zh-CN', '请联系管理员完成配置'],
+      ['en-US', 'Ask your administrator to configure one'],
+    ] as const) {
+      const listing = buildMaterialTools({
+        sessionId: 'session-1',
+        listMaterials: (sessionId) => materials.listMaterials(sessionId),
+        locale: () => locale,
+      }).find((candidate) => candidate.name === 'list_materials')!;
+      const wire = JSON.stringify(await listing.execute('list', {} as never));
+      expect(wire).toContain('"reasonCode":"service_unavailable"');
+      expect(wire).toContain(guidance);
+      expect(wire).not.toMatch(/AliDocMind|ffmpeg|server ASR/i);
+    }
   });
 });
 

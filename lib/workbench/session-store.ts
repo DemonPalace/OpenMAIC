@@ -22,6 +22,8 @@
  *    `lastEventId` instead of replaying the whole run.
  */
 import { create } from 'zustand';
+import i18n from 'i18next';
+import { supportedLocaleOf } from '@/lib/i18n/types';
 import { isSkillLoadTool, skillLoadId } from './skill-load';
 import {
   defaultWorkbenchTranslator,
@@ -1976,6 +1978,7 @@ export async function createWorkbenchSession(input: {
       ...(input.materials?.length
         ? { materialIds: input.materials.map((material) => material.materialId) }
         : {}),
+      ...interfaceLocale(),
     }),
   });
   const body = (await res.json().catch(() => ({}))) as {
@@ -2088,6 +2091,16 @@ export function recoverTerminalCancelStatus(sessionId: string, error: unknown): 
 }
 
 /**
+ * The interface language a request is sent from, for the run's material
+ * wording (#1880): the shared i18next instance's current language when it is
+ * a supported one; otherwise nothing is sent and the server falls back.
+ */
+function interfaceLocale(): { locale?: string } {
+  const locale = supportedLocaleOf(i18n.language);
+  return locale ? { locale } : {};
+}
+
+/**
  * Send a follow-up into a live conversation. The server decides the delivery
  * shape (steer into a live run, or queue a new run on an idle session); the
  * event stream carries the bubble and whatever the agent does next, so there
@@ -2117,6 +2130,7 @@ export async function postWorkbenchMessage(
         : {}),
       ...(elementRefs.length ? { elementRefs } : {}),
       ...(courseRefs.length ? { courseRefs } : {}),
+      ...interfaceLocale(),
     }),
   });
   if (!res.ok) {

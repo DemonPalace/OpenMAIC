@@ -58,7 +58,6 @@ import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { Check } from 'lucide-react';
 import { useI18n } from '@/lib/hooks/use-i18n';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { MEDIA_MAX_DURATION_SEC } from '@/lib/types/media-limits';
 import { cn } from '@/lib/utils/cn';
 import { COURSE_MENTION_LIMIT, type CourseMentionCandidate } from '@/lib/workbench/course-mention';
 import {
@@ -120,12 +119,25 @@ export function CourseMentionMenu({
   // What the search searches (#1880): read when the menu opens, before a query
   // can narrow the classrooms away, so typing never changes the label.
   const [classroomsAtOpen] = useState(() => candidates.length > 0);
+  const lists = !offersMaterials
+    ? 'classrooms'
+    : classroomsAtOpen || candidates.length > 0
+      ? 'both'
+      : 'materials';
   const searchLabel = t(
-    !offersMaterials
+    lists === 'classrooms'
       ? 'workspace.courseMention.searchClassrooms'
-      : classroomsAtOpen || candidates.length > 0
+      : lists === 'both'
         ? 'workspace.courseMention.search'
         : 'workspace.courseMention.searchMaterials',
+  );
+  // The menu's name says what it offers, as the search does.
+  const menuTitle = t(
+    lists === 'classrooms'
+      ? 'workspace.courseMention.title'
+      : lists === 'both'
+        ? 'workspace.courseMention.titleBoth'
+        : 'workspace.courseMention.titleMaterials',
   );
   const rows: MenuRow[] = [
     ...candidates.map((candidate) => ({ kind: 'course' as const, candidate })),
@@ -248,12 +260,12 @@ export function CourseMentionMenu({
       id={id}
       data-testid="workbench-course-menu"
       data-esc-owner=""
-      aria-label={t('workspace.courseMention.title')}
+      aria-label={menuTitle}
       aria-labelledby={titleId}
       className="pro-skill-slash-popover absolute bottom-full left-0 z-30 mb-1.5 w-full max-w-[340px] overflow-hidden rounded-xl border border-border bg-popover shadow-lg"
     >
       <span id={titleId} className="sr-only">
-        {t('workspace.courseMention.title')}
+        {menuTitle}
       </span>
       {search ? (
         <div className="p-2">
@@ -372,17 +384,14 @@ export function CourseMentionMenu({
                 );
                 // The folder only when it is in one; nothing, and no separator, at the top level.
                 const where = [candidate.folderName, status].filter(Boolean).join(' · ');
-                // Why it cannot be picked, in the page's words (#1880). Not
-                // `disabled`: a disabled button takes no hover or focus, so it
-                // could show no tooltip.
+                // Why it cannot be picked, in the page's words, and where it can
+                // be parsed again: the knowledge base page, not this menu (#1880).
+                // Not `disabled`: a disabled button takes no hover or focus, so
+                // it could show no tooltip.
                 const label = unavailable
                   ? t('workspace.courseMention.materialUnavailable', {
                       name: candidate.name,
-                      reason: candidate.reasonCode
-                        ? t(`workspace.knowledgeBase.failure.${candidate.reasonCode}.description`, {
-                            minutes: MEDIA_MAX_DURATION_SEC / 60,
-                          })
-                        : status,
+                      reason: status,
                     })
                   : t('workspace.courseMention.attachMaterial', { name: candidate.name });
                 const option = (

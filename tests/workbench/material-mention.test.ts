@@ -617,7 +617,8 @@ describe('the @ menu with the knowledge base', () => {
     );
     const reason = failed.getAttribute('aria-label') ?? '';
     expect(reason).toContain('workspace.courseMention.materialUnavailable');
-    expect(reason).toContain('workspace.knowledgeBase.failure.service_unavailable.description');
+    // The page's reason, and the page to parse it again from -- not this menu.
+    expect(reason).toContain('workspace.knowledgeBase.failure.service_unavailable.label');
     await act(async () => failed.click());
     expect(onPickMaterial).not.toHaveBeenCalled();
     const textarea = mounted.container.querySelector('textarea')!;
@@ -629,18 +630,23 @@ describe('the @ menu with the knowledge base', () => {
     await mounted.dispose();
   });
 
-  it('names what the search searches: classrooms and materials, materials alone, or classrooms alone', async () => {
+  it('names what the search and the menu offer: classrooms and materials, materials alone, or classrooms alone', async () => {
     const search = { query: '', onChange: () => undefined };
     const placeholder = (mounted: Awaited<ReturnType<typeof renderMenu>>) =>
       mounted.container
         .querySelector('[data-testid="workbench-reference-search"]')!
         .getAttribute('placeholder');
+    const title = (mounted: Awaited<ReturnType<typeof renderMenu>>) =>
+      mounted.container
+        .querySelector('[data-testid="workbench-course-menu"]')!
+        .getAttribute('aria-label');
     const both = await renderMenu({
       search,
       materials: [material('a')],
       onPickMaterial: () => undefined,
     });
     expect(placeholder(both)).toBe('workspace.courseMention.search');
+    expect(title(both)).toBe('workspace.courseMention.titleBoth');
     await both.dispose();
     const materialsOnly = await renderMenu({
       search,
@@ -649,9 +655,11 @@ describe('the @ menu with the knowledge base', () => {
       onPickMaterial: () => undefined,
     });
     expect(placeholder(materialsOnly)).toBe('workspace.courseMention.searchMaterials');
+    expect(title(materialsOnly)).toBe('workspace.courseMention.titleMaterials');
     await materialsOnly.dispose();
     const classroomsOnly = await renderMenu({ search });
     expect(placeholder(classroomsOnly)).toBe('workspace.courseMention.searchClassrooms');
+    expect(title(classroomsOnly)).toBe('workspace.courseMention.title');
     await classroomsOnly.dispose();
   });
 
