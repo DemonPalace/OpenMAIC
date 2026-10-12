@@ -16,6 +16,7 @@
  */
 import type { Queryable } from '../runtime/pg.js';
 import { encodeJson } from '../pg-json.js';
+import { applySchemaMigrations, type SchemaMigrationSet } from '../pg-migrations.js';
 import {
   AGENT_SESSION_MATERIAL_KINDS,
   AgentSessionMaterialError,
@@ -53,7 +54,7 @@ export interface PgAgentSessionMaterialStoreOptions {
 }
 
 /** Pinned default schema for the PostgreSQL agent-session-material backend. */
-export const AGENT_SESSION_MATERIAL_PG_SCHEMA = `
+const AGENT_SESSION_MATERIAL_PG_BASELINE = `
 CREATE TABLE IF NOT EXISTS agent_session_materials (
   id            TEXT PRIMARY KEY,
   session_id    TEXT NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,
@@ -68,7 +69,6 @@ CREATE TABLE IF NOT EXISTS agent_session_materials (
   extraction_status TEXT NOT NULL DEFAULT 'done',
   extraction_attempts INTEGER NOT NULL DEFAULT 0,
   extraction_error TEXT,
-  extraction_reason_code TEXT,
   extraction_stats JSONB,
   extractor_version TEXT,
   extraction_lease_worker_id TEXT,
@@ -84,8 +84,6 @@ CREATE TABLE IF NOT EXISTS agent_session_materials (
 );
 
 ALTER TABLE agent_session_materials ADD COLUMN IF NOT EXISTS owner_material_id TEXT;
-
-ALTER TABLE agent_session_materials ADD COLUMN IF NOT EXISTS extraction_reason_code TEXT;
 
 CREATE INDEX IF NOT EXISTS agent_session_materials_session_created_idx
   ON agent_session_materials (session_id, created_at);
@@ -116,10 +114,8 @@ function resolveTableNames(
   return names;
 }
 
-function schemaFor(names: AgentSessionMaterialTableNames): string {
-  if (names.materials === DEFAULT_AGENT_SESSION_MATERIAL_TABLE_NAMES.materials) {
-    return AGENT_SESSION_MATERIAL_PG_SCHEMA;
-  }
+/** Rewrite default-name schema SQL for an overridden table name. */
+function renameTable(names: AgentSessionMaterialTableNames, sql: string): string {
   const s = quoteIdentifier(names.materials);
   const kindCheck = `${names.materials}_kind_known`;
   const charsCheck = `${names.materials}_text_chars_nonnegative`;
@@ -130,10 +126,8 @@ function schemaFor(names: AgentSessionMaterialTableNames): string {
   // Constraint/index names are rewritten first (they embed the default table
   // name), then the table-name occurrences themselves; only the CREATE TABLE
   // statement gets the quoted identifier.
-  return AGENT_SESSION_MATERIAL_PG_SCHEMA.replaceAll(
-    'agent_session_materials_kind_known',
-    kindCheck,
-  )
+  return sql
+    .replaceAll('agent_session_materials_kind_known', kindCheck)
     .replaceAll('agent_session_materials_text_chars_nonnegative', charsCheck)
     .replaceAll('agent_session_materials_extraction_status_known', statusCheck)
     .replaceAll('agent_session_materials_extraction_attempts_nonnegative', attemptsCheck)
@@ -143,16 +137,50 @@ function schemaFor(names: AgentSessionMaterialTableNames): string {
     .replaceAll(`CREATE TABLE IF NOT EXISTS ${names.materials}`, `CREATE TABLE IF NOT EXISTS ${s}`);
 }
 
-/** Create the backend-owned table when absent; existing schemas require migrations. */
+/**
+ * The session-material backend's migrations, for the default table name
+ * (recorded under the store `agent-session-material`).
+ */
+export const AGENT_SESSION_MATERIAL_PG_MIGRATIONS: SchemaMigrationSet = {
+  store: 'agent-session-material',
+  migrations: [
+    { version: 1, name: 'baseline', up: AGENT_SESSION_MATERIAL_PG_BASELINE, transaction: false },
+    {
+      version: 2,
+      name: 'extraction_reason_code',
+      up: `ALTER TABLE agent_session_materials ADD COLUMN IF NOT EXISTS extraction_reason_code TEXT;`,
+      transaction: true,
+    },
+  ],
+};
+
+export const AGENT_SESSION_MATERIAL_PG_SCHEMA = AGENT_SESSION_MATERIAL_PG_MIGRATIONS.migrations
+  .map((m) => m.up)
+  .join('\n');
+
+/**
+ * Create the backend-owned table, or bring an existing database up to date, by
+ * applying the pending {@link AGENT_SESSION_MATERIAL_PG_MIGRATIONS}. Safe to
+ * call on every start; a schema change is a new migration.
+ */
 export async function ensureAgentSessionMaterialSchema(
   queryable: Queryable,
   tableNames?: Partial<AgentSessionMaterialTableNames>,
 ): Promise<void> {
-  const schema = schemaFor(resolveTableNames(tableNames));
-  for (const sql of schema.split(';')) {
-    const statement = sql.trim();
-    if (statement !== '') await queryable.query(statement);
+  const names = resolveTableNames(tableNames);
+  if (names.materials === DEFAULT_AGENT_SESSION_MATERIAL_TABLE_NAMES.materials) {
+    await applySchemaMigrations(queryable, AGENT_SESSION_MATERIAL_PG_MIGRATIONS);
+    return;
   }
+  // An overridden table is its own store, recorded apart from the default one.
+  await applySchemaMigrations(
+    queryable,
+    {
+      store: `agent-session-material:${names.materials}`,
+      migrations: AGENT_SESSION_MATERIAL_PG_MIGRATIONS.migrations,
+    },
+    { rewriteSql: (sql) => renameTable(names, sql) },
+  );
 }
 
 interface MaterialRow extends Record<string, unknown> {

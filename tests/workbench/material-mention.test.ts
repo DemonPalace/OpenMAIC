@@ -215,7 +215,7 @@ describe('staging a picked material', () => {
       'fetch',
       vi.fn(async (input: RequestInfo | URL) => {
         if (String(input) === '/api/agent/runtime') return Response.json({ enabled: true });
-        if (String(input) === '/api/materials') {
+        if (String(input) === '/api/materials?scope=library') {
           started = true;
           return response;
         }
@@ -285,7 +285,7 @@ describe('staging a picked material', () => {
         'fetch',
         vi.fn(async (input: RequestInfo | URL) => {
           if (String(input) === '/api/agent/runtime') return Response.json({ enabled: true });
-          if (String(input) === '/api/materials') {
+          if (String(input) === '/api/materials?scope=library') {
             started = true;
             return response;
           }

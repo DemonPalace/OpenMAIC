@@ -684,7 +684,7 @@ describe('uploading from the page', () => {
     await settle();
     expect(page.query('kb-upload-1')?.textContent).toContain('lesson.pdf');
     expect(uploadCalls).toHaveLength(1);
-    expect(uploadCalls[0]!.url).toBe('/api/materials');
+    expect(uploadCalls[0]!.url).toBe('/api/materials?scope=library');
     expect(JSON.stringify(uploadCalls[0]!.init.headers)).not.toMatch(/folder/i);
 
     await act(async () =>

@@ -750,6 +750,7 @@ describe('material library routes and tools (PGlite)', () => {
     await registerOwnerMaterial(
       h.pool as never,
       {
+        retention: 'library',
         id: 'uploading',
         ownerId: ACCOUNT,
         kind: 'source',
@@ -1037,6 +1038,12 @@ describe('material library routes and tools (PGlite)', () => {
     const h = await boot();
     await seedSource(h, 'delete-legacy-failed');
     setMaterialByteStoreForTests({
+      deletePrefix: async () => {
+        throw new Error('Unexpected deletePrefix in this byte-store fixture');
+      },
+      list: async () => {
+        throw new Error('Unexpected list in this byte-store fixture');
+      },
       put: async () => undefined,
       get: async () => Buffer.from('old'),
       delete: async () => {
@@ -1067,7 +1074,7 @@ describe('material library routes and tools (PGlite)', () => {
     const h = await boot();
     const bytes = Buffer.from('%PDF-r8 upload');
     const response = await uploadRoute(
-      new NextRequest('http://localhost/api/materials', {
+      new NextRequest('http://localhost/api/materials?scope=library', {
         method: 'POST',
         headers: { 'content-type': 'application/pdf', 'x-material-filename': 'r8.pdf' },
         body: bytes as BodyInit,
@@ -1148,7 +1155,14 @@ describe('material library routes and tools (PGlite)', () => {
     await seedDerivative(h, 'r6-image', 'r6-owned');
     await registerOwnerMaterial(
       h.pool as never,
-      { id: 'r6-uploading', ownerId: ACCOUNT, kind: 'source', bytes: 1, ossKey: 'pending' },
+      {
+        retention: 'library',
+        id: 'r6-uploading',
+        ownerId: ACCOUNT,
+        kind: 'source',
+        bytes: 1,
+        ossKey: 'pending',
+      },
       { maxCount: 100, maxTotalBytes: 1000000 },
     );
     for (const id of ['missing', 'r6-foreign', 'r6-deleted', 'r6-image', 'r6-uploading']) {
@@ -1346,6 +1360,7 @@ describe('material library routes and tools (PGlite)', () => {
     await registerOwnerMaterial(
       h.pool as never,
       {
+        retention: 'library',
         id: 'src-uploading',
         ownerId: ACCOUNT,
         kind: 'source',

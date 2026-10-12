@@ -67,12 +67,7 @@ import {
   OwnerMaterialBytesUnavailableError,
   readOwnerMaterialBytes,
 } from '@/lib/server/materials/owner-material-bytes';
-import {
-  resolveASRBaseUrl,
-  resolveASRModel,
-  resolvePDFBaseUrl,
-  resolveServerASRProviderId,
-} from '@/lib/server/provider-config';
+import { resolveExtractionServices, type ExtractionServices } from './services';
 
 import { ownerDocumentOutcome } from './document-images';
 import { isTransientExtractionError, MaterialExtractionError } from './errors';
@@ -170,18 +165,23 @@ export function endpointIdentity(baseUrl: string | undefined): string {
  * provider, model and endpoint. No credentials: a key changes who pays, not
  * what comes back.
  */
-export function defaultResultOptions(extractorId: string): Record<string, string> {
+export function defaultResultOptions(
+  extractorId: string,
+  services: ExtractionServices,
+): Record<string, string> {
   if (extractorId === 'local-ffmpeg') {
-    const asrProvider = resolveServerASRProviderId() ?? '';
+    const asrProvider = services.asr?.providerId ?? '';
     return {
       asrProvider,
-      asrModel: (asrProvider && resolveASRModel(asrProvider)) || '',
+      asrModel: services.asr?.modelId || '',
       asrEndpoint: asrProvider
-        ? endpointIdentity(asrRequestUrl(asrProvider, resolveASRBaseUrl(asrProvider)))
+        ? endpointIdentity(asrRequestUrl(asrProvider, services.asr?.baseUrl))
         : '',
     };
   }
-  const endpoint = endpointIdentity(resolvePDFBaseUrl(extractorId));
+  const endpoint = endpointIdentity(
+    services.document?.providerId === extractorId ? services.document.baseUrl : undefined,
+  );
   return {
     ...(endpoint ? { endpoint } : {}),
     ...(extractorId === 'mineru' ? { backend: getMinerUBackend() } : {}),
@@ -301,11 +301,16 @@ export async function runClaimedOwnerExtraction(
   const { persistence } = dependencies;
   const now = dependencies.now ?? Date.now;
   const createId = dependencies.createId ?? randomUUID;
-  const resultOptions = dependencies.resultOptions ?? defaultResultOptions;
+  const services = dependencies.services ?? (await resolveExtractionServices(claim.ownerId));
+  const resultOptions =
+    dependencies.resultOptions ?? ((id: string) => defaultResultOptions(id, services));
   const bytes = await (dependencies.readSource ?? defaultReadSource)(claim);
   const mime = claim.mime ?? 'application/octet-stream';
   const source = { sha256: claim.sha256, mime };
-  const plan = await planSourceExtraction({ bytes, mime }, claim.originalName, dependencies);
+  const plan = await planSourceExtraction({ bytes, mime }, claim.originalName, {
+    ...dependencies,
+    services,
+  });
 
   /**
    * Publish the owner's earlier result of `extractor`, if one still holds.
@@ -468,7 +473,7 @@ async function extractOrReuse(
     const reused = await reuse({ id: provider.id, version: provider.version });
     if (reused) return { kind: 'reused', outcome: reused };
     try {
-      const artifact = await extractWithDocumentProvider(provider, plan.input);
+      const artifact = await extractWithDocumentProvider(provider, plan);
       return { kind: 'extracted', outcome: await ownerDocumentOutcome(artifact, provider) };
     } catch (error) {
       if (error instanceof DocumentImageParseError) throw error;

@@ -38,6 +38,7 @@ vi.mock('@/lib/persistence/server-provider', () => ({
 
 import {
   createWebMaterial,
+  getAgentSessionMaterialStore,
   getSessionMaterial,
   listSessionMaterials,
 } from '@/lib/server/agent-runtime/session-materials';
@@ -59,6 +60,10 @@ async function makeHost() {
       return value;
     },
     delete: async (key) => void bytes.delete(key),
+    deletePrefix: async (prefix: string) => {
+      for (const key of [...bytes.keys()]) if (key.startsWith(prefix)) bytes.delete(key);
+    },
+    list: async () => [],
   });
   const sessionStore = new PgAgentSessionStore(db, {
     withTransaction: (body) => db.transaction((tx: Queryable) => body(tx)),
@@ -182,5 +187,21 @@ describe('session materials persistence', () => {
     expect(await getSessionMaterial('session-1', rows[0]!.id)).not.toBeNull();
     // A material from another session reads as absent.
     expect(await getSessionMaterial('session-other', rows[0]!.id)).toBeNull();
+  });
+});
+describe('the material store on a fresh database', () => {
+  it('provisions the agent-session schema before its own, whoever asks first', async () => {
+    const db = new PGlite();
+    await db.waitReady;
+    // The extraction runner's first scan can be the first caller: nothing has
+    // created agent_sessions yet, which the material table references.
+    mocks.getAgentSessionStore.mockImplementation(async () => {
+      await ensureAgentSessionSchema(db);
+      return {};
+    });
+    mocks.getServerPersistenceProvider.mockResolvedValue({ pool: db });
+    vi.stubEnv('DATABASE_URL', `postgres://fresh-${++dbCounter}`);
+    await expect(getAgentSessionMaterialStore()).resolves.toBeDefined();
+    expect(mocks.getAgentSessionStore).toHaveBeenCalledTimes(1);
   });
 });

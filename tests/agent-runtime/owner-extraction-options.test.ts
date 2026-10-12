@@ -21,7 +21,10 @@ async function keyFor(extractorId: string, env: Record<string, string>) {
   for (const [name, value] of Object.entries(env)) vi.stubEnv(name, value);
   const { defaultResultOptions, ownerExtractionCacheKey } =
     await import('@/lib/server/material-extraction/owner-extraction');
-  const options = defaultResultOptions(extractorId);
+  const { setDeploymentConfigForTests } = await import('@/lib/server/model-config/runtime');
+  setDeploymentConfigForTests();
+  const { resolveExtractionServices } = await import('@/lib/server/material-extraction/services');
+  const options = defaultResultOptions(extractorId, await resolveExtractionServices());
   return {
     options,
     key: ownerExtractionCacheKey(

@@ -1,4 +1,3 @@
-import { attachInteractiveState } from '@/lib/chat/pi/interactive-state-evidence';
 /**
  * Pi Director Chat API Endpoint
  *
@@ -6,6 +5,8 @@ import { attachInteractiveState } from '@/lib/chat/pi/interactive-state-evidence
  * as a single server-side Pi agent loop. The build-time flag can disable this
  * route together with the corresponding client path for legacy rollback.
  */
+import { attachInteractiveState } from '@/lib/chat/pi/interactive-state-evidence';
+import { ModelAuthorizationError } from '@/lib/server/model-config/model-authorization';
 
 import { NextRequest } from 'next/server';
 import { isProviderKeyRequired } from '@/lib/ai/providers';
@@ -23,6 +24,7 @@ import {
 } from '@/lib/chat/pi/config';
 import { runPiDirectorLoop } from '@/lib/chat/pi/director-loop';
 import type { SendEvent } from '@/lib/chat/pi/types';
+import { requestWorkspaceId } from '@/lib/server/model-config/runtime';
 import { resolveModel } from '@/lib/server/resolve-model';
 import { parseUserStageRoutes } from '@/lib/server/model-routes';
 import { apiError } from '@/lib/server/api-response';
@@ -46,8 +48,6 @@ import {
 } from '@/lib/chat/pi/element-reference';
 
 const log = createLogger('Pi Chat API');
-
-export const maxDuration = 300;
 
 export async function POST(req: NextRequest) {
   if (!isPiChatEnabled()) {
@@ -153,6 +153,7 @@ async function chat(req: NextRequest, principal: OwnerPrincipal): Promise<Respon
     } = await resolveModel({
       modelString: body.model,
       stage: 'chat-adapter',
+      workspaceId: await requestWorkspaceId(req),
       // Honor the classroom-interaction per-stage override the client sends in
       // `x-model-routes`. A routed stage brings its own key and base URL; otherwise the body credentials are used (never x-* headers).
       userRoutes: parseUserStageRoutes(req.headers.get('x-model-routes')),
@@ -242,11 +243,11 @@ async function chat(req: NextRequest, principal: OwnerPrincipal): Promise<Respon
         log.warn('Native whiteboard capability unavailable: persistence initialization failed');
       }
     }
-    let nativeWebSearchConfig: ReturnType<typeof resolveClassroomWebSearchConfig>;
+    let nativeWebSearchConfig: Awaited<ReturnType<typeof resolveClassroomWebSearchConfig>>;
     try {
       nativeWebSearchConfig =
         childRuntimeMode === 'native'
-          ? resolveClassroomWebSearchConfig({
+          ? await resolveClassroomWebSearchConfig(await requestWorkspaceId(req), {
               webSearchProviderId: body.webSearchProviderId,
               webSearchApiKey: body.webSearchApiKey,
               webSearchBaseUrl: body.webSearchBaseUrl,
@@ -255,6 +256,8 @@ async function chat(req: NextRequest, principal: OwnerPrincipal): Promise<Respon
             })
           : undefined;
     } catch (error) {
+      if (error instanceof ModelAuthorizationError)
+        return apiError(error.code, error.httpStatus, error.message);
       const message = error instanceof Error ? error.message : 'Invalid Web Search configuration';
       return apiError('INVALID_REQUEST', 400, message);
     }
@@ -350,6 +353,9 @@ async function chat(req: NextRequest, principal: OwnerPrincipal): Promise<Respon
       },
     });
   } catch (error) {
+    if (error instanceof ModelAuthorizationError) {
+      return apiError('PROVIDER_DISABLED', 403, error.message);
+    }
     log.error(
       `Pi chat request failed [model=${chatModel ?? 'unknown'}, messages=${chatMessageCount ?? 0}]:`,
       error,

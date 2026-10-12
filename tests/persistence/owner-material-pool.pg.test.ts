@@ -141,6 +141,7 @@ describe.skipIf(!contractUrl)('owner material pool uploads on PostgreSQL', () =>
     registerOwnerMaterial(
       h.pool as unknown as ConnectableQueryable,
       {
+        retention: 'library',
         id,
         ownerId: ANON,
         kind: 'source',
@@ -216,6 +217,12 @@ describe.skipIf(!contractUrl)('owner material pool uploads on PostgreSQL', () =>
     const { h, hooked } = await boot();
     // Nothing in the material byte store: the record's old object is gone.
     setMaterialByteStoreForTests({
+      deletePrefix: async () => {
+        throw new Error('Unexpected deletePrefix in this byte-store fixture');
+      },
+      list: async () => {
+        throw new Error('Unexpected list in this byte-store fixture');
+      },
       put: async () => undefined,
       get: async (key) => {
         throw new Error(`no object ${key}`);
@@ -287,6 +294,12 @@ describe.skipIf(!contractUrl)('owner material pool uploads on PostgreSQL', () =>
   const memoryObjects = () => {
     const objects = new Map<string, Buffer>();
     setMaterialByteStoreForTests({
+      deletePrefix: async () => {
+        throw new Error('Unexpected deletePrefix in this byte-store fixture');
+      },
+      list: async () => {
+        throw new Error('Unexpected list in this byte-store fixture');
+      },
       put: async (key, body) => void objects.set(key, Buffer.from(body as Uint8Array)),
       get: async (key) => {
         const value = objects.get(key);

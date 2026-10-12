@@ -24,6 +24,11 @@ import { ensureOwnerMaterialSchema } from '@/lib/persistence/owner-materials';
 // Schema bootstrap is serialized by a PostgreSQL advisory lock on a dedicated
 // connection; the fakes here have no connections, and the lock itself is
 // exercised against a real server in schema-bootstrap-concurrency.pg.test.ts.
+vi.mock('@/lib/server/model-config/runtime', async (original) => ({
+  ...(await original<typeof import('@/lib/server/model-config/runtime')>()),
+  assertWorkspaceModelsAuthorized: vi.fn(async () => {}),
+}));
+
 vi.mock('@/lib/persistence/schema-bootstrap-lock', () => ({
   SCHEMA_BOOTSTRAP_LOCK_KEY: 0,
   withSchemaBootstrapLock: <T>(pool: unknown, body: (queryable: never) => Promise<T>) =>
@@ -101,6 +106,10 @@ async function makeHost() {
       return value;
     },
     delete: async (key) => void bytes.delete(key),
+    deletePrefix: async (prefix: string) => {
+      for (const key of [...bytes.keys()]) if (key.startsWith(prefix)) bytes.delete(key);
+    },
+    list: async () => [],
   });
   const sessionStore = new PgAgentSessionStore(instance, {
     withTransaction: (body) => instance.transaction((tx: Queryable) => body(tx)),
@@ -126,9 +135,9 @@ async function seedOwnerMaterial(instance: PGlite, id: string, content = 'PDF') 
   await instance.query(
     `INSERT INTO owner_material
        (id, owner_id, kind, mime, bytes, original_name, oss_key, sha256, status, extraction,
-        created_at)
+        created_at, retention)
      VALUES ($1, 'owner-1', 'source', 'application/pdf', 3, 'textbook.pdf', $2, $3, 'ready', NULL,
-             $4)`,
+             $4, 'library')`,
     [id, `owner/${id}/raw`, createHash('sha256').update(content).digest('hex'), Date.now()],
   );
 }
@@ -353,9 +362,9 @@ describe('owner-material binding across sessions', () => {
     await instance.query(
       `INSERT INTO owner_material
          (id, owner_id, kind, mime, bytes, original_name, oss_key, asset_id, sha256, status,
-          extraction, created_at)
+          extraction, created_at, retention)
        VALUES ('mat_new', 'owner-1', 'source', 'application/pdf', 3, 'new.pdf', '', $1, $2,
-               'ready', NULL, $3)`,
+               'ready', NULL, $3, 'library')`,
       [assetId, createHash('sha256').update('NEW').digest('hex'), Date.now()],
     );
 

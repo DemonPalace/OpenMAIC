@@ -69,6 +69,12 @@ describe('owner material uploads in the asset pool', () => {
     provider = await getServerPersistenceProvider(databaseUrl, () => pool as never);
     objects = new Map();
     setMaterialByteStoreForTests({
+      deletePrefix: async () => {
+        throw new Error('Unexpected deletePrefix in this byte-store fixture');
+      },
+      list: async () => {
+        throw new Error('Unexpected list in this byte-store fixture');
+      },
       put: async (key, body) => void objects.set(key, Buffer.from(body as Uint8Array)),
       get: async (key) => {
         const value = objects.get(key);
@@ -89,6 +95,7 @@ describe('owner material uploads in the asset pool', () => {
     registerOwnerMaterial(
       pool as unknown as ConnectableQueryable,
       {
+        retention: 'library',
         id,
         ownerId: OWNER,
         kind: 'source',

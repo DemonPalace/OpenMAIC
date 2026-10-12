@@ -11,19 +11,15 @@ on:
         main,
         integration/kv-asset-server-backend,
         integration/agent-workbench,
-        feat/persistence-default,
         integration/material-library,
       ]
   pull_request:
     branches:
       [
         main,
-        feat/maic-editor-v0,
-        feat/maic-editor-v1,
         runtime-server-backend,
         integration/kv-asset-server-backend,
         integration/agent-workbench,
-        feat/persistence-default,
         integration/material-library,
       ]
 
@@ -113,6 +109,14 @@ jobs:
         run: node scripts/check-internal-dependency-ranges.mjs
 
       - run: pnpm install --frozen-lockfile
+
+      # Root proxy integration tests load current and historical render-service
+      # sources. They need the standalone service's Node dependencies as well.
+      - name: Install render-service test dependencies
+        working-directory: render-service
+        env:
+          PUPPETEER_SKIP_DOWNLOAD: 'true'
+        run: npm ci
 
       - name: Node engine contract
         run: pnpm check:node-engine

@@ -1,3 +1,4 @@
+import { ModelAuthorizationError } from '@/lib/server/model-config/model-authorization';
 import { randomUUID } from 'node:crypto';
 
 import type { PgAgentSessionMaterialStore } from '@openmaic/storage/material/pg';
@@ -41,7 +42,7 @@ export async function runNextMaterialExtraction(
       claim.material.id,
       workerId,
       reason,
-      isTransientExtractionError(error),
+      error instanceof ModelAuthorizationError ? false : isTransientExtractionError(error),
       // The classification extraction already made, stored with the settlement
       // (#1880); an unclassified failure stores none.
       error instanceof MaterialExtractionError ? error.reasonCode : undefined,

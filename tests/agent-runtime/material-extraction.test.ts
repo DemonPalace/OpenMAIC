@@ -392,7 +392,7 @@ describe('document parsing service unavailable (session chain)', () => {
     displayName: id,
     version: '1',
     supportedMimeTypes: mimes,
-    requiresConfiguration: getDocumentExtractorManifestEntry(id)?.requiresConfiguration ?? false,
+    requiresServiceConfig: getDocumentExtractorManifestEntry(id)?.requiresServiceConfig ?? false,
     capabilities: {
       text: true,
       images: false,
@@ -442,13 +442,13 @@ describe('document parsing service unavailable (session chain)', () => {
   });
 
   it('reads whether a candidate is a service from its metadata, not its id', async () => {
-    const reasonFor = async (requiresConfiguration: boolean) => {
+    const reasonFor = async (requiresServiceConfig: boolean) => {
       const plan = await planSourceExtraction(
         { bytes: Buffer.from('png'), mime: 'image/png' },
         'board.png',
         {
           providers: () => [
-            { ...documentService('another-parser', ['image/png']), requiresConfiguration },
+            { ...documentService('another-parser', ['image/png']), requiresServiceConfig },
           ],
           configuredProviderIds: () => [],
         },

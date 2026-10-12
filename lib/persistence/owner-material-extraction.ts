@@ -205,7 +205,7 @@ export async function ensureOwnerMaterialExtraction(
       `UPDATE owner_material
           SET extraction = $3::jsonb, extraction_claims = 0, extraction_token = NULL,
               extraction_lease_at = NULL, extraction_error = NULL
-        WHERE id = $1 AND owner_id = $2 AND kind = 'source' AND status = 'ready'
+        WHERE id = $1 AND owner_id = $2 AND kind = 'source' AND retention = 'library' AND status = 'ready'
           AND deleted_at IS NULL
           AND (extraction IS NULL OR ${STATUS} IS NULL OR ${STATUS} IN ('idle', 'failed'))
         RETURNING id`,
@@ -214,7 +214,7 @@ export async function ensureOwnerMaterialExtraction(
     if (queued.rows.length > 0) return { status: 'pending' as const, queued: true };
     const current = await tx.query<{ status: string | null }>(
       `SELECT ${STATUS} AS status FROM owner_material
-        WHERE id = $1 AND owner_id = $2 AND kind = 'source' AND status = 'ready'
+        WHERE id = $1 AND owner_id = $2 AND kind = 'source' AND retention = 'library' AND status = 'ready'
           AND deleted_at IS NULL`,
       [materialId, ownerId],
     );
@@ -253,7 +253,7 @@ export async function claimNextOwnerMaterialExtraction(
     const result = await queryable.query<ClaimRow>(
       `WITH candidate AS (
          SELECT id FROM owner_material
-          WHERE kind = 'source' AND status = 'ready' AND deleted_at IS NULL
+          WHERE kind = 'source' AND retention = 'library' AND status = 'ready' AND deleted_at IS NULL
             AND (${STATUS} = 'pending'
               OR (${STATUS} = 'running' AND extraction_lease_at < $1::double precision))
           ORDER BY created_at, id
@@ -483,9 +483,9 @@ export async function publishOwnerMaterialExtraction(
       await tx.query(
         `INSERT INTO owner_material
            (id, owner_id, kind, derived_from, mime, bytes, original_name, oss_key, sha256,
-            status, extraction, created_at, asset_id, folder_id)
+            status, extraction, created_at, asset_id, folder_id, retention)
          SELECT derivative.id, $1, derivative.kind, $2, derivative.mime, derivative.bytes,
-                derivative.title, '', derivative.sha256, 'ready', NULL, $3, derivative.asset_id, $4
+                derivative.title, '', derivative.sha256, 'ready', NULL, $3, derivative.asset_id, $4, 'library'
            FROM unnest($5::text[], $6::text[], $7::text[], $8::double precision[], $9::text[],
                        $10::text[], $11::text[])
              AS derivative(id, kind, mime, bytes, title, sha256, asset_id)`,

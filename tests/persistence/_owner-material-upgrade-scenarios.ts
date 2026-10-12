@@ -13,11 +13,13 @@
  *   rows, and no `oss_key`.
  */
 import { expect } from 'vitest';
+import { applySchemaMigrations } from '@openmaic/storage/pg-migrations';
 
 import type { ConnectableQueryable } from '@openmaic/storage/server/reference';
 
 import {
   ensureOwnerMaterialSchema,
+  OWNER_MATERIAL_MIGRATIONS,
   registerOwnerMaterial,
   type RegisterOwnerMaterialInput,
 } from '@/lib/persistence/owner-materials';
@@ -185,46 +187,35 @@ export async function assetIdEraEmptyScenario(h: UpgradeHarness): Promise<void> 
 }
 
 export async function preRootsDropRecoveryScenario(h: UpgradeHarness): Promise<void> {
-  await ensureOwnerMaterialSchema(h.db);
-  // A process from before this change restarting mid-rollout runs its own
-  // bootstrap, which still drops the column. Nothing writes it yet, so the
-  // next current bootstrap only has to put it back.
+  await applySchemaMigrations(h.db, {
+    ...OWNER_MATERIAL_MIGRATIONS,
+    migrations: OWNER_MATERIAL_MIGRATIONS.migrations.filter((m) => m.version <= 4),
+  });
+  // Old processes must stop before v5 runs. Their last DROP precedes the
+  // new migration; recorded migrations do not repair a later old bootstrap.
   await h.db.query(PRE_ROOTS_DROP);
   expect(await assetIdColumn(h)).toBeUndefined();
-
   await ensureOwnerMaterialSchema(h.db);
-
   await expectCurrentShape(h);
 }
 
 export async function clearingIsAtomicScenario(h: UpgradeHarness): Promise<void> {
-  await h.db.query(ASSET_ID_ERA_TABLE);
-  await insertAssetIdEraRow(h);
-  // Make the clearing UPDATE fail after the column was already made nullable.
-  await h.db.query(`CREATE FUNCTION owner_material_refuse_update() RETURNS trigger
-    LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'refused by test'; END $$`);
-  await h.db.query(`CREATE TRIGGER owner_material_refuse_update
-    BEFORE UPDATE ON owner_material
-    FOR EACH ROW EXECUTE FUNCTION owner_material_refuse_update()`);
-
-  await expect(ensureOwnerMaterialSchema(h.db)).rejects.toThrow(/refused by test/);
-
-  // Neither half stuck: the column is still NOT NULL and still holds the old
-  // value, so the next bootstrap recognizes the shape and clears it.
-  expect(await assetIdColumn(h)).toEqual({ is_nullable: 'NO' });
-  const kept = await h.db.query<{ asset_id: string | null }>(
-    `SELECT asset_id FROM owner_material WHERE id = 'mat_legacy'`,
-  );
-  expect(kept.rows[0]).toEqual({ asset_id: 'legacy-asset-1' });
-
-  await h.db.query('DROP TRIGGER owner_material_refuse_update ON owner_material');
+  await applySchemaMigrations(h.db, {
+    ...OWNER_MATERIAL_MIGRATIONS,
+    migrations: OWNER_MATERIAL_MIGRATIONS.migrations.filter((m) => m.version <= 4),
+  });
+  const failing = {
+    query: async <T extends Record<string, unknown>>(sql: string, params?: unknown[]) => {
+      if (sql.includes('CREATE TABLE IF NOT EXISTS material_folders'))
+        throw new Error('refused by test');
+      return h.db.query<T>(sql, params);
+    },
+  };
+  await expect(ensureOwnerMaterialSchema(failing)).rejects.toThrow('refused by test');
+  // All of v5 is rolled back, including columns preceding the failed DDL.
+  expect(await assetIdColumn(h)).toBeUndefined();
   await ensureOwnerMaterialSchema(h.db);
-
   await expectCurrentShape(h);
-  const cleared = await h.db.query<{ asset_id: string | null }>(
-    `SELECT asset_id FROM owner_material WHERE id = 'mat_legacy'`,
-  );
-  expect(cleared.rows[0]).toEqual({ asset_id: null });
 }
 
 export async function folderForeignKeyScenario(h: UpgradeHarness): Promise<void> {
@@ -264,7 +255,7 @@ export const UPGRADE_SCENARIOS = {
   'a 1.0.0-or-later table gains the library columns': releaseTableScenario,
   'an asset-id era table with rows is made nullable and cleared': assetIdEraWithRowsScenario,
   'an empty asset-id era table is made nullable': assetIdEraEmptyScenario,
-  'a pre-change process dropping asset_id mid-rollout is recovered': preRootsDropRecoveryScenario,
-  'clearing old asset ids is atomic, and a failed attempt is retried': clearingIsAtomicScenario,
+  'the last old bootstrap precedes the new library migration': preRootsDropRecoveryScenario,
+  'the library migration is atomic and a failed attempt is retried': clearingIsAtomicScenario,
   'the folder foreign key and name uniqueness hold': folderForeignKeyScenario,
 } as const;

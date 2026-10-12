@@ -1,3 +1,4 @@
+import { fenceOwnerWrite } from '@/lib/persistence/owner-merges';
 /**
  * GET /api/materials/[id]?sessionId= — one material an owned session
  * reaches (its own row, or a library material its links reach), in the same
@@ -24,9 +25,23 @@
  * only after commit, with failures retried by a cleanup pass on every start.
  * Page-only: no agent deletion tool and no library event.
  */
+import type { ConnectableQueryable } from '@openmaic/storage/server/reference';
+import { deleteMaterialObjects, getMaterialByteStore } from '@/lib/server/materials/bytes';
 import type { NextRequest } from 'next/server';
 
-import { isAgentRuntimeConfigured } from '@/lib/config/feature-flags';
+import {
+  isAgentRuntimeConfigured,
+  isServerPersistenceConfigured,
+} from '@/lib/config/feature-flags';
+
+import {
+  publicMaterial,
+  touchOwnerMaterial,
+  getOwnerMaterial,
+  deleteOwnerMaterial,
+} from '@/lib/persistence/owner-materials';
+import { getServerPersistenceProvider } from '@/lib/persistence/server-provider';
+import { isMaterialId } from '@/lib/server/materials/material-id';
 import { apiError } from '@/lib/server/api-response';
 import { resolveOwnedSession } from '@/lib/server/agent-runtime/session-materials';
 import { resolveMaterial } from '@/lib/server/agent-runtime/material-resolver';
@@ -47,10 +62,26 @@ export const runtime = 'nodejs';
 type Params = { params: Promise<{ id: string }> };
 
 export async function GET(req: NextRequest, { params }: Params) {
+  const searchParams = new URL(req.url).searchParams;
+  const sessionId = searchParams.get('sessionId')?.trim();
+  // A session named but empty is a mistake, not a request for the library.
+  if (searchParams.has('sessionId') && !sessionId) {
+    return apiError('MISSING_REQUIRED_FIELD', 400, 'sessionId must not be empty');
+  }
+  if (!sessionId) {
+    if (!isServerPersistenceConfigured()) return new Response('Not found', { status: 404 });
+    return withRequestOwner(req, async ({ ownerId }, responseHeaders) => {
+      const { id } = await params;
+      if (!isMaterialId(id)) return ownerNotFound(responseHeaders);
+      const provider = await getServerPersistenceProvider(process.env.DATABASE_URL ?? '');
+      // Reading it says the owner still holds it: the unused-upload sweep
+      // counts its age from now.
+      const record = await touchOwnerMaterial(provider.pool, ownerId, id);
+      if (!record) return ownerNotFound(responseHeaders);
+      return ownerJson({ material: publicMaterial(record) }, 200, responseHeaders);
+    });
+  }
   if (!isAgentRuntimeConfigured()) return new Response('Not found', { status: 404 });
-
-  const sessionId = new URL(req.url).searchParams.get('sessionId')?.trim();
-  if (!sessionId) return apiError('MISSING_REQUIRED_FIELD', 400, 'sessionId is required');
 
   return withRequestOwner(req, async ({ ownerId }, responseHeaders) => {
     const session = await resolveOwnedSession(sessionId, ownerId);
@@ -95,11 +126,29 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 }
 
 export async function DELETE(req: NextRequest, { params }: Params) {
-  if (!isAgentRuntimeConfigured()) return new Response('Not found', { status: 404 });
+  if (!isServerPersistenceConfigured()) return new Response('Not found', { status: 404 });
   const { id } = await params;
   return withRequestOwner(req, async ({ ownerId }, headers) => {
     try {
-      const outcome = await deleteMaterial(await libraryPersistence(), {
+      const persistence = await libraryPersistence();
+      const record = await persistence.withTransaction(async (tx) => {
+        await fenceOwnerWrite(tx, ownerId);
+        return getOwnerMaterial(tx, ownerId, id);
+      });
+      if (!record) return libraryNotFound(headers);
+      if (record.retention === 'temporary') {
+        const deleted = await deleteOwnerMaterial(
+          persistence.pool as ConnectableQueryable,
+          ownerId,
+          id,
+          (key) => deleteMaterialObjects(getMaterialByteStore(), key),
+        );
+        return deleted
+          ? ownerJson({ materialId: id, deleted: true }, 200, headers)
+          : libraryNotFound(headers);
+      }
+      if (!isAgentRuntimeConfigured()) return new Response('Not found', { status: 404, headers });
+      const outcome = await deleteMaterial(persistence, {
         ownerId,
         materialId: id,
         fence: 'request',

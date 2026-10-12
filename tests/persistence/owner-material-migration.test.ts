@@ -105,6 +105,12 @@ describe('backfilling pre-pool material uploads into the asset pool', { timeout:
     onRead = undefined;
     failDelete = false;
     setMaterialByteStoreForTests({
+      deletePrefix: async () => {
+        throw new Error('Unexpected deletePrefix in this byte-store fixture');
+      },
+      list: async () => {
+        throw new Error('Unexpected list in this byte-store fixture');
+      },
       put: async (key, body) => void objects.set(key, Buffer.from(body as Uint8Array)),
       get: async (key) => {
         const hook = onRead;
@@ -138,6 +144,7 @@ describe('backfilling pre-pool material uploads into the asset pool', { timeout:
     await registerOwnerMaterial(
       h.pool as unknown as ConnectableQueryable,
       {
+        retention: 'library',
         id,
         ownerId: seed.owner ?? ANON,
         kind: 'source',
@@ -356,7 +363,14 @@ describe('backfilling pre-pool material uploads into the asset pool', { timeout:
     // A reservation still uploading.
     await registerOwnerMaterial(
       h.pool as unknown as ConnectableQueryable,
-      { id: 'mat-uploading', ownerId: ANON, kind: 'source', bytes: 1, ossKey: 'objects/u' },
+      {
+        retention: 'library',
+        id: 'mat-uploading',
+        ownerId: ANON,
+        kind: 'source',
+        bytes: 1,
+        ossKey: 'objects/u',
+      },
       { maxCount: 100, maxTotalBytes: 1_000_000 },
     );
 

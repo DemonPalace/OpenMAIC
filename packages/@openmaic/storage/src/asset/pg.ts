@@ -38,6 +38,7 @@ import {
 } from './types.js';
 import { assertJsonValue, isLosslessJsonString } from '../runtime/json-value.js';
 import { encodeJson } from '../pg-json.js';
+import { applySchemaMigrations, type SchemaMigrationSet } from '../pg-migrations.js';
 import type { Queryable, WithTransaction } from '../runtime/pg.js';
 
 export type { QueryResult, Queryable, WithTransaction } from '../runtime/pg.js';
@@ -162,7 +163,7 @@ export const DEFAULT_ASSET_PENDING_TTL_MS = 24 * 60 * 60 * 1000;
  * `docs/reference-server.md` already gives: do not mix tracking states on one
  * database (see `./references.ts`).
  */
-export const ASSET_PG_SCHEMA: readonly string[] = [
+const ASSET_PG_BASELINE: readonly string[] = [
   `CREATE TABLE IF NOT EXISTS asset_blobs (
      content_hash TEXT PRIMARY KEY,
      byte_size BIGINT NOT NULL,
@@ -199,14 +200,6 @@ export const ASSET_PG_SCHEMA: readonly string[] = [
    )`,
   `CREATE INDEX IF NOT EXISTS document_asset_refs_asset_idx
      ON document_asset_refs (asset_id)`,
-  `CREATE TABLE IF NOT EXISTS asset_root_refs (
-     root_kind TEXT NOT NULL,
-     root_id TEXT NOT NULL,
-     asset_id TEXT NOT NULL REFERENCES asset_entries(id) ON DELETE CASCADE,
-     PRIMARY KEY (root_kind, root_id, asset_id)
-   )`,
-  `CREATE INDEX IF NOT EXISTS asset_root_refs_asset_idx
-     ON asset_root_refs (asset_id)`,
   `CREATE INDEX IF NOT EXISTS asset_entries_expires_idx
      ON asset_entries (expires_at) WHERE expires_at IS NOT NULL`,
   `CREATE INDEX IF NOT EXISTS asset_entries_unreferenced_idx
@@ -217,16 +210,43 @@ export const ASSET_PG_SCHEMA: readonly string[] = [
      singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
      enabled_at TIMESTAMPTZ NOT NULL
    )`,
-  `ALTER TABLE asset_reference_tracking
-     ADD COLUMN IF NOT EXISTS rule_version INTEGER NOT NULL DEFAULT 1`,
   `CREATE TABLE IF NOT EXISTS document_asset_withdrawals (
      stage_id TEXT NOT NULL PRIMARY KEY,
      withdrawn_at TIMESTAMPTZ NOT NULL
    )`,
 ];
 
+const ASSET_PG_ROOTS: readonly string[] = [
+  `CREATE TABLE IF NOT EXISTS asset_root_refs (
+     root_kind TEXT NOT NULL,
+     root_id TEXT NOT NULL,
+     asset_id TEXT NOT NULL REFERENCES asset_entries(id) ON DELETE CASCADE,
+     PRIMARY KEY (root_kind, root_id, asset_id)
+   )`,
+  `CREATE INDEX IF NOT EXISTS asset_root_refs_asset_idx
+     ON asset_root_refs (asset_id)`,
+  `ALTER TABLE asset_reference_tracking
+     ADD COLUMN IF NOT EXISTS rule_version INTEGER NOT NULL DEFAULT 1`,
+];
+
+export const ASSET_PG_SCHEMA: readonly string[] = [...ASSET_PG_BASELINE, ...ASSET_PG_ROOTS];
+
+/** The asset backend's migrations, recorded under the store `asset`. */
+export const ASSET_PG_MIGRATIONS: SchemaMigrationSet = {
+  store: 'asset',
+  migrations: [
+    { version: 1, name: 'baseline', up: ASSET_PG_BASELINE.join(';\n'), transaction: false },
+    { version: 2, name: 'material_roots', up: ASSET_PG_ROOTS.join(';\n'), transaction: true },
+  ],
+};
+
+/**
+ * Create the tables owned by this backend, or bring an existing database up to
+ * date, by applying the pending {@link ASSET_PG_MIGRATIONS}. Safe to call on
+ * every start; a schema change is a new migration.
+ */
 export async function ensureAssetSchema(queryable: Queryable): Promise<void> {
-  for (const statement of ASSET_PG_SCHEMA) await queryable.query(statement);
+  await applySchemaMigrations(queryable, ASSET_PG_MIGRATIONS);
 }
 
 interface UsageRow extends Record<string, unknown> {
@@ -752,6 +772,69 @@ export class PgAssetStore implements AssetStore {
     } catch (error) {
       if (error instanceof AssetRootedError) throw error;
       throw registryFailure('remove');
+    }
+  }
+
+  /**
+   * Delete one entry only while it is still an unclaimed allocation: this
+   * principal's, still pending (no document write has committed it, and its
+   * deadline stands), and named by no document. Answers whether it deleted.
+   *
+   * For a writer that allocated ids and then failed to write the document
+   * that would name them: releasing them at once keeps a retry from holding
+   * two copies. The guard is what makes that safe when the writer cannot be
+   * sure its write failed (a lost COMMIT acknowledgement): an entry the
+   * document did commit is no longer pending, and one it references has a
+   * reference row, so neither is touched. The blob is stamped like
+   * {@link remove} does when no entry names it any more.
+   */
+  async releasePending(principal: AssetPrincipal, ref: AssetRef): Promise<boolean> {
+    if (!isLosslessJsonString(ref) || !isLosslessJsonString(principal.key)) return false;
+    try {
+      return await this.writeTransaction(async (queryable) => {
+        // TWO statements, for the reason the collector's entry pass gives
+        // (`AssetCollector.releaseEntries`). The first locks the entry while
+        // it is still this principal's pending allocation; a document write
+        // racing it updates the row, so a lock wait re-evaluates the pending
+        // predicate against the new row and skips it. The reference check has
+        // to be a separate statement: a reference-only writer (the backfill)
+        // inserts into `document_asset_refs` under `KEY SHARE` without
+        // updating the entry, so a `NOT EXISTS` folded into the locking or
+        // deleting statement would keep its statement-start answer ("no
+        // reference") after waiting on that writer, and the delete would
+        // cascade its committed reference away. Under READ COMMITTED the
+        // second statement takes a fresh snapshot and sees it, and the
+        // `FOR UPDATE` held since keeps any later reference insert waiting
+        // until this transaction ends.
+        const locked = await queryable.query<HashRow>(
+          `SELECT content_hash
+             FROM asset_entries
+            WHERE id = $1 AND principal = $2
+              AND committed_at IS NULL AND expires_at IS NOT NULL
+            FOR UPDATE`,
+          [ref, principal.key],
+        );
+        const hash = locked.rows[0]?.content_hash;
+        if (!hash) return false;
+        const referenced = await queryable.query(
+          'SELECT 1 FROM document_asset_refs WHERE asset_id = $1 LIMIT 1',
+          [ref],
+        );
+        if (referenced.rows.length > 0) return false;
+        await queryable.query('DELETE FROM asset_entries WHERE id = $1', [ref]);
+        await queryable.query(
+          `UPDATE asset_blobs
+              SET unreferenced_at = now()
+            WHERE content_hash = $1
+              AND NOT EXISTS (
+                SELECT 1 FROM asset_entries WHERE content_hash = $1
+              )`,
+          [hash],
+        );
+        return true;
+      });
+    } catch {
+      throw registryFailure('releasePending');
     }
   }
 

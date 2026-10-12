@@ -126,6 +126,7 @@ it.each(['read_material', 'search_material'])(
       originalName: 'lesson.pdf',
       ossKey: '',
       assetId: 'source-bytes',
+      retention: 'library',
       sha256: 'source-sha',
       status: 'ready',
       extraction: { status: 'done' },

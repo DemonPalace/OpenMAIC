@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => {
   // random-per-process value. Capture it from the first appendRunEvent call
   // (the runner passes WORKER_ID as its second argument) and hand it back
   // through getSession so `leaseMatches` sees a live, owned session.
+  const history = { started: false };
   let workerId: string | undefined;
   let deliveredUserMessageSeq = 0;
   const recordWorker = async (_id: string, worker: string, _event?: { type?: string }) => {
@@ -41,7 +42,29 @@ const mocks = vi.hoisted(() => {
           }
         : null,
     ),
-    hasSessionRunHistory: vi.fn(async () => false),
+    // The event log as the runner reads it: the user messages listUserMessages
+    // models, as `user_message` events, and no earlier run.
+    readEventsAfter: vi.fn(async (sessionId: string, afterSeq: number) =>
+      afterSeq > 0
+        ? []
+        : [
+            ...(history.started
+              ? [{ id: 1, ts: 1, attempt: 1, type: 'run_started', data: {} }]
+              : []),
+            ...(await store.listUserMessages(sessionId)).map((message) => ({
+              id: message.seq,
+              ts: message.ts,
+              attempt: 1,
+              type: 'user_message',
+              data: {
+                text: message.text,
+                delivery: message.delivery,
+                materials: message.materials,
+                locale: message.locale,
+              },
+            })),
+          ],
+    ),
     heartbeat: vi.fn(async () => true),
     markUserMessageDelivered: vi.fn(async (_id, _worker, _attempt, messageSeq: number) => {
       deliveredUserMessageSeq = Math.max(deliveredUserMessageSeq, messageSeq);
@@ -50,7 +73,9 @@ const mocks = vi.hoisted(() => {
     getCancelRequestedAt: vi.fn(async () => null),
     isCancelRequested: vi.fn(async () => false),
     listUserMessages: vi.fn(
-      async (): Promise<
+      async (
+        _sessionId?: string,
+      ): Promise<
         Array<{
           seq: number;
           ts: number;
@@ -75,6 +100,7 @@ const mocks = vi.hoisted(() => {
     bus,
     /** Transcript the next run finds in its entry tree (a run cut off mid-turn). */
     entrySeed: [] as unknown[],
+    history,
     /** The default event append; a test that replaces it leaves it replaced. */
     recordWorker,
     resetWorker: () => {
@@ -616,7 +642,7 @@ describe('runSession material wording follows the consumed message', () => {
     // The worker died mid-turn after consuming message 5; message 6 arrived
     // meanwhile. The takeover continues turn 5 -- and only consuming 6 moves on.
     mocks.entrySeed.push({ role: 'user', content: 'message 5', timestamp: 5 });
-    mocks.store.hasSessionRunHistory.mockResolvedValue(true);
+    mocks.history.started = true;
     mocks.store.listUserMessages.mockResolvedValue([message(5, 'en-US'), message(6, 'ja-JP')]);
     const run = runSession(
       { running: new Map(), shuttingDown: false },
@@ -628,7 +654,7 @@ describe('runSession material wording follows the consumed message', () => {
     await vi.waitFor(() => expect(fake.current.instance?.steerCalls).toHaveLength(1));
     expect(await listedReason()).toBe(REASON['ja-JP']);
     await settle(run);
-    mocks.store.hasSessionRunHistory.mockResolvedValue(false);
+    mocks.history.started = false;
   });
 
   it('resumes in the language of a frame saved before its delivered cursor landed', async () => {
@@ -641,7 +667,7 @@ describe('runSession material wording follows the consumed message', () => {
       timestamp: 6,
       openmaicDurableUserMessageSeq: 6,
     });
-    mocks.store.hasSessionRunHistory.mockResolvedValue(true);
+    mocks.history.started = true;
     mocks.store.listUserMessages.mockResolvedValue([message(5, 'en-US'), message(6, 'ja-JP')]);
     const run = runSession(
       { running: new Map(), shuttingDown: false },
@@ -650,7 +676,7 @@ describe('runSession material wording follows the consumed message', () => {
     await waitForReady();
     expect(await listedReason()).toBe(REASON['ja-JP']);
     await settle(run);
-    mocks.store.hasSessionRunHistory.mockResolvedValue(false);
+    mocks.history.started = false;
   });
 
   it('keeps two sessions apart: one run’s language never reaches the next', async () => {

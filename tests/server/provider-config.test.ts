@@ -34,6 +34,7 @@ const ENV_PREFIXES_TO_CLEAR = [
   'TTS_QWEN',
   'TTS_DOUBAO',
   'TTS_ELEVENLABS',
+  'TTS_GOOGLE',
   'TTS_MINIMAX',
   'TTS_VOXCPM',
   'ASR_OPENAI',
@@ -100,6 +101,7 @@ vi.mock('fs', async (importOriginal) => {
 
 describe('provider-config', () => {
   beforeEach(() => {
+    delete (globalThis as Record<symbol, unknown>)[Symbol.for('openmaic.model-config.deployment')];
     vi.resetModules();
     vi.unstubAllEnvs();
     clearProviderEnv();
@@ -154,6 +156,33 @@ describe('provider-config', () => {
     });
   });
 
+  describe('startup log', () => {
+    async function loadedLine(): Promise<string | undefined> {
+      const consoleLog = vi.spyOn(console, 'log').mockImplementation(() => {});
+      try {
+        const { getServerProviderConfig } = await import('@/lib/server/provider-config');
+        getServerProviderConfig();
+        return consoleLog.mock.calls
+          .map(([line]) => String(line))
+          .find((line) => line.includes('[ServerProviderConfig] Loaded'));
+      } finally {
+        consoleLog.mockRestore();
+      }
+    }
+
+    it('names environment variables alone when there is no server-providers.yml', async () => {
+      vi.stubEnv('OPENAI_API_KEY', 'sk-server');
+      expect(await loadedLine()).toContain('Loaded (environment variables): 1 LLM');
+    });
+
+    it('names the file too when server-providers.yml has content', async () => {
+      yamlOverride = 'providers:\n  openai:\n    apiKey: sk-yaml\n';
+      expect(await loadedLine()).toContain(
+        'Loaded (server-providers.yml and environment variables): 1 LLM',
+      );
+    });
+  });
+
   describe('getParallelSceneConcurrency', () => {
     beforeEach(() => {
       delete process.env.PARALLEL_SCENE_CONCURRENCY;
@@ -178,6 +207,9 @@ describe('provider-config', () => {
 
     it('treats zero, negative, and non-numeric values as off', async () => {
       for (const value of ['0', '-2', 'abc']) {
+        delete (globalThis as Record<symbol, unknown>)[
+          Symbol.for('openmaic.model-config.deployment')
+        ];
         vi.resetModules();
         vi.stubEnv('PARALLEL_SCENE_CONCURRENCY', value);
         const { getParallelSceneConcurrency } = await import('@/lib/server/provider-config');
@@ -468,8 +500,9 @@ providers:
 
       expect(resolveWebSearchApiKey('claude', undefined)).toBe('claude-env-key');
       expect(resolveWebSearchBaseUrl('claude')).toBe('https://proxy.example.com/anthropic');
-      // Server-pinned model (first entry) is authoritative over the client model.
-      expect(resolveWebSearchModel('claude', 'claude-haiku-4-5')).toBe('claude-sonnet-5');
+      // Only listed models may use this credential.
+      expect(() => resolveWebSearchModel('claude', 'claude-haiku-4-5')).toThrow('not authorized');
+      expect(resolveWebSearchModel('claude', 'claude-opus-5')).toBe('claude-opus-5');
       expect(getServerWebSearchProviders().claude).toEqual({});
     });
 
@@ -621,8 +654,8 @@ pdf:
       const { resolveImageModel } = await import('@/lib/server/provider-config');
       // Allowlisted client choice wins over the managed default.
       expect(resolveImageModel('seedream', 'model-b')).toBe('model-b');
-      // Non-allowlisted client choice falls back to the managed default.
-      expect(resolveImageModel('seedream', 'client-model')).toBe('model-a');
+      // Unlisted client models are refused before using the server credential.
+      expect(() => resolveImageModel('seedream', 'client-model')).toThrow('not authorized');
       expect(resolveImageModel('seedream')).toBe('model-a');
     });
 
@@ -654,8 +687,8 @@ pdf:
       const { resolveVideoModel } = await import('@/lib/server/provider-config');
       // Allowlisted client choice wins over the managed default.
       expect(resolveVideoModel('seedance', 'v2')).toBe('v2');
-      // Non-allowlisted client choice falls back to the managed default.
-      expect(resolveVideoModel('seedance', 'not-allowed')).toBe('v1');
+      // Unlisted client models are refused before using the server credential.
+      expect(() => resolveVideoModel('seedance', 'not-allowed')).toThrow('not authorized');
       expect(resolveVideoModel('seedance')).toBe('v1');
     });
 
@@ -693,7 +726,7 @@ video:
       );
       // A garbage-only `models: [""]` list normalizes to no pin at all — it must
       // never become a truthy pin of "" (the YAML path used to copy it verbatim).
-      expect(resolveVideoModel('kling')).toBeUndefined();
+      expect(() => resolveVideoModel('kling')).toThrow('not authorized');
     });
 
     it('resolves the default video provider as the first server-configured one', async () => {
@@ -714,8 +747,8 @@ video:
       const { resolveASRModel } = await import('@/lib/server/provider-config');
       // Allowlisted client choice wins over the managed default.
       expect(resolveASRModel('openai-whisper', 'whisper-y')).toBe('whisper-y');
-      // Non-allowlisted client choice falls back to the managed default.
-      expect(resolveASRModel('openai-whisper', 'client-model')).toBe('whisper-x');
+      // Unlisted client models are refused before using the server credential.
+      expect(() => resolveASRModel('openai-whisper', 'client-model')).toThrow('not authorized');
       expect(resolveASRModel('openai-whisper')).toBe('whisper-x');
     });
 
@@ -1048,14 +1081,15 @@ video:
 
     it('maps VC sentinels to the resolved model and rejects pin bypasses', async () => {
       vi.stubEnv('TTS_QWEN_API_KEY', 'key');
-      vi.stubEnv('TTS_QWEN_MODELS', 'qwen3-tts-flash');
+      vi.stubEnv('TTS_QWEN_MODELS', 'qwen3-tts-flash,operator-vc-model');
       vi.stubEnv('TTS_QWEN_VOICE_CLONE_MODEL', 'operator-vc-model');
       const { resolveTTSModel } = await import('@/lib/server/provider-config');
-      expect(resolveTTSModel('qwen-tts', 'qwen3-tts-vc-custom', 'clone-1')).toBe(
-        'operator-vc-model',
+      expect(() => resolveTTSModel('qwen-tts', 'qwen3-tts-vc-custom', 'clone-1')).toThrow(
+        'not authorized',
       );
+      expect(resolveTTSModel('qwen-tts', 'operator-vc-model', 'clone-1')).toBe('operator-vc-model');
       expect(() => resolveTTSModel('qwen-tts', 'qwen3-tts-flash-other', 'Cherry')).toThrow(
-        'not allowed',
+        'not authorized',
       );
       expect(resolveTTSModel('qwen-tts', 'operator-vc-model', 'Cherry')).toBe('qwen3-tts-flash');
     });
@@ -1071,7 +1105,7 @@ video:
       vi.stubEnv('TTS_QWEN_MODELS', 'operator-vc-model');
       vi.stubEnv('TTS_QWEN_VOICE_CLONE_MODEL', 'operator-vc-model');
       const { resolveTTSModel } = await import('@/lib/server/provider-config');
-      expect(() => resolveTTSModel('qwen-tts', undefined, 'Cherry')).toThrow('not allowed');
+      expect(() => resolveTTSModel('qwen-tts', undefined, 'Cherry')).toThrow('not authorized');
     });
   });
 

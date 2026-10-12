@@ -74,45 +74,6 @@ CREATE TABLE IF NOT EXISTS document_stages (
 ALTER TABLE document_stages
   ADD COLUMN IF NOT EXISTS folder_id TEXT;
 
--- Document ownership is not recorded here: a host keeps it in its own
--- relation (see DocumentOwnershipRelation). An installation created before
--- that keeps its owner_id column for one release -- so a rollback still finds
--- it, and a host can copy it into its relation first -- but nothing reads or
--- writes it any more, and the next release drops it. A NOT NULL or a default
--- a host added to it would fail or mislabel every new document, so both are
--- relaxed. The catalog is asked first, and each ALTER runs only when it has
--- something to change: an ALTER naming a column that is not there is an error,
--- and one with nothing to change would still take an exclusive table lock on
--- every boot. The indexes below served only the column.
-DO $document_stages_owner_retirement$
-BEGIN
-  IF EXISTS (
-    SELECT 1
-      FROM pg_attribute
-     WHERE attrelid = to_regclass('document_stages')
-       AND attname = 'owner_id'
-       AND NOT attisdropped
-       AND attnotnull
-  ) THEN
-    ALTER TABLE document_stages ALTER COLUMN owner_id DROP NOT NULL;
-  END IF;
-  IF EXISTS (
-    SELECT 1
-      FROM pg_attribute
-     WHERE attrelid = to_regclass('document_stages')
-       AND attname = 'owner_id'
-       AND NOT attisdropped
-       AND atthasdef
-  ) THEN
-    ALTER TABLE document_stages ALTER COLUMN owner_id DROP DEFAULT;
-  END IF;
-END
-$document_stages_owner_retirement$;
-
-DROP INDEX IF EXISTS document_stages_owner_idx;
-
-DROP INDEX IF EXISTS document_stages_owner_folder_idx;
-
 CREATE INDEX IF NOT EXISTS document_stages_folder_idx
   ON document_stages (folder_id, id) WHERE folder_id IS NOT NULL;
 
@@ -239,6 +200,45 @@ DROP TRIGGER IF EXISTS openmaic_stage_revision_trigger ON document_stages;
 CREATE TRIGGER openmaic_stage_revision_trigger
 AFTER INSERT OR UPDATE OR DELETE ON document_stages
 FOR EACH ROW EXECUTE FUNCTION openmaic_bump_stage_revision();
+
+-- Document ownership is not recorded here: a host keeps it in its own
+-- relation (see DocumentOwnershipRelation). An installation created before
+-- that keeps its owner_id column for one release -- so a rollback still finds
+-- it, and a host can copy it into its relation first -- but nothing reads or
+-- writes it any more, and the next release drops it. A NOT NULL or a default
+-- a host added to it would fail or mislabel every new document, so both are
+-- relaxed. The catalog is asked first, and each ALTER runs only when it has
+-- something to change: an ALTER naming a column that is not there is an error,
+-- and one with nothing to change would still take an exclusive table lock on
+-- every boot. The indexes below served only the column.
+DO $document_stages_owner_retirement$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+      FROM pg_attribute
+     WHERE attrelid = to_regclass('document_stages')
+       AND attname = 'owner_id'
+       AND NOT attisdropped
+       AND attnotnull
+  ) THEN
+    ALTER TABLE document_stages ALTER COLUMN owner_id DROP NOT NULL;
+  END IF;
+  IF EXISTS (
+    SELECT 1
+      FROM pg_attribute
+     WHERE attrelid = to_regclass('document_stages')
+       AND attname = 'owner_id'
+       AND NOT attisdropped
+       AND atthasdef
+  ) THEN
+    ALTER TABLE document_stages ALTER COLUMN owner_id DROP DEFAULT;
+  END IF;
+END
+$document_stages_owner_retirement$;
+
+DROP INDEX IF EXISTS document_stages_owner_idx;
+
+DROP INDEX IF EXISTS document_stages_owner_folder_idx;
 `;
 
 const EXPECTED_RUNTIME_PG_SCHEMA = `
@@ -283,7 +283,6 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
   active_stage_id     TEXT,
   skill_id            TEXT,
   origin              TEXT,
-  locale              TEXT,
   existing_course     BOOLEAN NOT NULL DEFAULT FALSE,
   status              TEXT NOT NULL DEFAULT 'queued',
   attempt             INTEGER NOT NULL DEFAULT 0,
@@ -311,9 +310,6 @@ ALTER TABLE agent_sessions
 
 ALTER TABLE agent_sessions
   ADD COLUMN IF NOT EXISTS title_state TEXT NOT NULL DEFAULT 'manual';
-
-ALTER TABLE agent_sessions
-  ADD COLUMN IF NOT EXISTS locale TEXT;
 
 DO $agent_session_title_state_constraint$
 BEGIN
@@ -412,6 +408,18 @@ CREATE TABLE IF NOT EXISTS agent_owner_session_events (
     CHECK (attempt IS NULL OR attempt >= 0)
 );
 
+CREATE TABLE IF NOT EXISTS agent_session_urls (
+  session_id TEXT NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,
+  url        TEXT NOT NULL,
+  source     TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (session_id, url),
+  CONSTRAINT agent_session_urls_source_known CHECK (source IN ('user','web_search'))
+);
+
+CREATE INDEX IF NOT EXISTS agent_session_urls_session_created_idx
+  ON agent_session_urls (session_id, created_at);
+
 DO $agent_session_owner_event_type_constraint$
 BEGIN
   IF EXISTS (
@@ -464,19 +472,7 @@ BEGIN
   END IF;
 END
 $agent_session_owner_event_type_validation$;
-
-CREATE TABLE IF NOT EXISTS agent_session_urls (
-  session_id TEXT NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,
-  url        TEXT NOT NULL,
-  source     TEXT NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  PRIMARY KEY (session_id, url),
-  CONSTRAINT agent_session_urls_source_known CHECK (source IN ('user','web_search'))
-);
-
-CREATE INDEX IF NOT EXISTS agent_session_urls_session_created_idx
-  ON agent_session_urls (session_id, created_at);
-`;
+ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS locale TEXT;`;
 
 const EXPECTED_USER_SKILL_PG_SCHEMA = `
 CREATE TABLE IF NOT EXISTS agent_user_skill (
@@ -521,7 +517,6 @@ CREATE TABLE IF NOT EXISTS agent_session_materials (
   extraction_status TEXT NOT NULL DEFAULT 'done',
   extraction_attempts INTEGER NOT NULL DEFAULT 0,
   extraction_error TEXT,
-  extraction_reason_code TEXT,
   extraction_stats JSONB,
   extractor_version TEXT,
   extraction_lease_worker_id TEXT,
@@ -538,8 +533,6 @@ CREATE TABLE IF NOT EXISTS agent_session_materials (
 
 ALTER TABLE agent_session_materials ADD COLUMN IF NOT EXISTS owner_material_id TEXT;
 
-ALTER TABLE agent_session_materials ADD COLUMN IF NOT EXISTS extraction_reason_code TEXT;
-
 CREATE INDEX IF NOT EXISTS agent_session_materials_session_created_idx
   ON agent_session_materials (session_id, created_at);
 
@@ -550,7 +543,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS agent_session_materials_session_owner_material
 CREATE INDEX IF NOT EXISTS agent_session_materials_extraction_queue_idx
   ON agent_session_materials (created_at)
   WHERE kind = 'source' AND extraction_status IN ('pending','running');
-`;
+
+ALTER TABLE agent_session_materials ADD COLUMN IF NOT EXISTS extraction_reason_code TEXT;`;
 
 /** Records the statements an ensure function actually issues. */
 function recordingQueryable(): { statements: string[]; queryable: Queryable } {
@@ -560,10 +554,32 @@ function recordingQueryable(): { statements: string[]; queryable: Queryable } {
     queryable: {
       async query<TRow extends Record<string, unknown>>(text: string) {
         statements.push(text);
+        // The migration runner's lock is granted; every other query answers
+        // no rows, so the runner sees nothing recorded and applies everything.
+        if (text.includes('pg_try_advisory_lock'))
+          return { rows: [{ locked: true }] as unknown as TRow[] };
         return { rows: [] as TRow[] };
       },
     },
   };
+}
+
+/**
+ * The schema statements among those an ensure function issued: everything but
+ * the migration runner's own bookkeeping (its lock, its record table, and the
+ * transaction around each migration). The recording queryable answers every
+ * query with no rows, so the runner sees a database with no recorded
+ * versions and applies every migration.
+ */
+function schemaStatements(statements: string[]): string[] {
+  return statements.filter(
+    (statement) =>
+      !/pg_(try_)?advisory_(un)?lock|openmaic_schema_migrations|schema_migration_probe/.test(
+        statement,
+      ) &&
+      statement !== 'BEGIN' &&
+      statement !== 'COMMIT',
+  );
 }
 
 function statementsOf(schema: string): string[] {
@@ -668,14 +684,6 @@ const EXPECTED_ASSET_PG_SCHEMA: readonly string[] = [
    )`,
   `CREATE INDEX IF NOT EXISTS document_asset_refs_asset_idx
      ON document_asset_refs (asset_id)`,
-  `CREATE TABLE IF NOT EXISTS asset_root_refs (
-     root_kind TEXT NOT NULL,
-     root_id TEXT NOT NULL,
-     asset_id TEXT NOT NULL REFERENCES asset_entries(id) ON DELETE CASCADE,
-     PRIMARY KEY (root_kind, root_id, asset_id)
-   )`,
-  `CREATE INDEX IF NOT EXISTS asset_root_refs_asset_idx
-     ON asset_root_refs (asset_id)`,
   `CREATE INDEX IF NOT EXISTS asset_entries_expires_idx
      ON asset_entries (expires_at) WHERE expires_at IS NOT NULL`,
   `CREATE INDEX IF NOT EXISTS asset_entries_unreferenced_idx
@@ -686,12 +694,20 @@ const EXPECTED_ASSET_PG_SCHEMA: readonly string[] = [
      singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
      enabled_at TIMESTAMPTZ NOT NULL
    )`,
-  `ALTER TABLE asset_reference_tracking
-     ADD COLUMN IF NOT EXISTS rule_version INTEGER NOT NULL DEFAULT 1`,
   `CREATE TABLE IF NOT EXISTS document_asset_withdrawals (
      stage_id TEXT NOT NULL PRIMARY KEY,
      withdrawn_at TIMESTAMPTZ NOT NULL
    )`,
+  `CREATE TABLE IF NOT EXISTS asset_root_refs (
+     root_kind TEXT NOT NULL,
+     root_id TEXT NOT NULL,
+     asset_id TEXT NOT NULL REFERENCES asset_entries(id) ON DELETE CASCADE,
+     PRIMARY KEY (root_kind, root_id, asset_id)
+   )`,
+  `CREATE INDEX IF NOT EXISTS asset_root_refs_asset_idx
+     ON asset_root_refs (asset_id)`,
+  `ALTER TABLE asset_reference_tracking
+     ADD COLUMN IF NOT EXISTS rule_version INTEGER NOT NULL DEFAULT 1`,
 ];
 
 describe('ASSET_PG_SCHEMA is a pinned contract', () => {
@@ -699,15 +715,18 @@ describe('ASSET_PG_SCHEMA is a pinned contract', () => {
     const { statements, queryable } = recordingQueryable();
     await ensureAssetSchema(queryable);
 
-    expect(statements).toEqual([...EXPECTED_ASSET_PG_SCHEMA]);
+    expect(schemaStatements(statements)).toEqual([...EXPECTED_ASSET_PG_SCHEMA]);
   });
 
-  it('provisions idempotently on a second call', async () => {
+  it('reissues the same statements where no version is recorded', async () => {
     const { statements, queryable } = recordingQueryable();
     await ensureAssetSchema(queryable);
     await ensureAssetSchema(queryable);
 
-    expect(statements).toEqual([...EXPECTED_ASSET_PG_SCHEMA, ...EXPECTED_ASSET_PG_SCHEMA]);
+    expect(schemaStatements(statements)).toEqual([
+      ...EXPECTED_ASSET_PG_SCHEMA,
+      ...EXPECTED_ASSET_PG_SCHEMA,
+    ]);
   });
 
   it('matches the published DDL verbatim', () => {
@@ -816,16 +835,16 @@ describe.each(schemas)('$name is a pinned contract', ({ name, actual, expected, 
     const { statements, queryable } = recordingQueryable();
     await ensure(queryable);
 
-    expect(statements).toEqual(statementsOf(expected));
+    expect(schemaStatements(statements)).toEqual(statementsOf(expected));
   });
 
-  it('provisions idempotently on a second call', async () => {
+  it('reissues the same statements where no version is recorded', async () => {
     const { statements, queryable } = recordingQueryable();
     await ensure(queryable);
     await ensure(queryable);
 
     const once = statementsOf(expected);
-    expect(statements).toEqual([...once, ...once]);
+    expect(schemaStatements(statements)).toEqual([...once, ...once]);
   });
 
   it('matches the published DDL verbatim', () => {

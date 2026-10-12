@@ -71,6 +71,10 @@
       "types": "./dist/server/reference.d.ts",
       "import": "./dist/server/reference.js"
     },
+    "./pg-migrations": {
+      "types": "./dist/pg-migrations.d.ts",
+      "import": "./dist/pg-migrations.js"
+    },
     "./pg-json": {
       "types": "./dist/pg-json.d.ts",
       "import": "./dist/pg-json.js"

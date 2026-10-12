@@ -17,11 +17,12 @@ import {
   type MediaExtractorProvider,
 } from '@/lib/document';
 import {
-  getServerPDFProviders,
-  resolvePDFApiKey,
-  resolvePDFBaseUrl,
-  resolveServerMediaExtractorConfig,
-} from '@/lib/server/provider-config';
+  extractorConfigFor,
+  mediaExtractorConfig,
+  resolveExtractionServices,
+  type ExtractionServices,
+} from './services';
+import { ModelAuthorizationError } from '@/lib/server/model-config/model-authorization';
 import {
   getAgentSessionMaterialStore,
   resolveSessionMaterialRawAsset,
@@ -35,9 +36,11 @@ export interface ExtractorRegistryDependencies {
   providers?: () => DocumentExtractorProvider[];
   mediaProviders?: () => MediaExtractorProvider[];
   configuredProviderIds?: () => string[];
+  services?: ExtractionServices;
 }
 
 export interface MaterialExtractionExecutionDependencies extends ExtractorRegistryDependencies {
+  sessionOwner?: (sessionId: string) => Promise<string | undefined>;
   resolveSource?: (
     sessionId: string,
     assetId: string,
@@ -132,6 +135,7 @@ export type SourceExtractionPlan =
        * configured: if they all fail, the reason is `service_unavailable`.
        */
       noServiceConfigured?: boolean;
+      services: ExtractionServices;
     };
 
 /** An image the extractor returned, not yet decoded or stored. */
@@ -158,6 +162,7 @@ export interface SourceExtractionOutcome {
 }
 
 function wrapProviderError(error: unknown): MaterialExtractionError {
+  if (error instanceof ModelAuthorizationError) throw error;
   return new MaterialExtractionError(
     error instanceof Error ? error.message : String(error),
     isTransientExtractionError(error),
@@ -174,6 +179,7 @@ export async function planSourceExtraction(
   title: string | null,
   dependencies: ExtractorRegistryDependencies = {},
 ): Promise<SourceExtractionPlan> {
+  const services = dependencies.services ?? (await resolveExtractionServices());
   const mediaProviders = dependencies.mediaProviders?.() ?? getMediaExtractorProviders();
   const isMedia = mediaProviders.some((provider) =>
     provider.supportedMimeTypes.includes(raw.mime.toLowerCase()),
@@ -184,7 +190,7 @@ export async function planSourceExtraction(
       fileName: title ?? undefined,
       fileSize: raw.bytes.byteLength,
       mimeType: raw.mime,
-      config: resolveServerMediaExtractorConfig(),
+      config: mediaExtractorConfig(services),
     };
     let provider: MediaExtractorProvider;
     try {
@@ -201,7 +207,8 @@ export async function planSourceExtraction(
 
   const providers = dependencies.providers?.() ?? getDocumentExtractorProviders();
   const configuredIds =
-    dependencies.configuredProviderIds?.() ?? Object.keys(getServerPDFProviders());
+    dependencies.configuredProviderIds?.() ??
+    (services.document ? [services.document.providerId] : []);
   const candidates = extractorCandidates(raw.mime, providers, configuredIds);
   // No extractor for this type is not a missing service: no reason code.
   if (candidates.length === 0) throw new Error(`no document extractor supports ${raw.mime}`);
@@ -210,10 +217,11 @@ export async function planSourceExtraction(
   // service, whatever made it fail.
   const configured = new Set(configuredIds);
   const noServiceConfigured = candidates.every(
-    (provider) => provider.requiresConfiguration === true && !configured.has(provider.id),
+    (provider) => provider.requiresServiceConfig === true && !configured.has(provider.id),
   );
   return {
     kind: 'document',
+    services,
     candidates,
     ...(noServiceConfigured ? { noServiceConfigured } : {}),
     input: {
@@ -288,7 +296,7 @@ export async function runSourceExtraction(
   for (const provider of plan.candidates) {
     let artifact: DocumentArtifact;
     try {
-      artifact = await extractWithDocumentProvider(provider, plan.input);
+      artifact = await extractWithDocumentProvider(provider, plan);
     } catch (error) {
       errors.push(documentFailureLine(provider, error));
       failures.push(error);
@@ -302,17 +310,11 @@ export async function runSourceExtraction(
 /** Run one document provider on a planned input; a failure is the provider's own error. */
 export function extractWithDocumentProvider(
   provider: DocumentExtractorProvider,
-  input: Extract<SourceExtractionPlan, { kind: 'document' }>['input'],
+  plan: Extract<SourceExtractionPlan, { kind: 'document' }>,
 ): Promise<DocumentArtifact> {
   return provider.extract({
-    ...input,
-    config: {
-      providerId: provider.id,
-      apiKey: resolvePDFApiKey(provider.id) || undefined,
-      baseUrl: resolvePDFBaseUrl(provider.id),
-      allowEnvFallback: true,
-      managed: true,
-    },
+    ...plan.input,
+    config: extractorConfigFor(provider.id, plan.services),
   });
 }
 
@@ -361,6 +363,12 @@ export function documentOutcome(
   };
 }
 
+async function defaultSessionOwner(sessionId: string): Promise<string | undefined> {
+  if (!process.env.DATABASE_URL?.trim()) return undefined;
+  const { getAgentSessionStore } = await import('@/lib/server/agent-runtime/store');
+  return (await (await getAgentSessionStore()).getSession(sessionId))?.ownerId;
+}
+
 /** Extract one lease-fenced source through the upstream extractor registry. */
 export async function extractClaimedSessionMaterial(
   claim: ClaimedMaterialExtraction,
@@ -372,7 +380,9 @@ export async function extractClaimedSessionMaterial(
   const raw = await resolveSource(source.sessionId, source.rawAssetId);
   if (!raw) throw new Error(`source bytes are unavailable for material ${source.id}`);
 
-  const plan = await planSourceExtraction(raw, source.title, dependencies);
+  const ownerId = await (dependencies.sessionOwner ?? defaultSessionOwner)(source.sessionId);
+  const services = dependencies.services ?? (await resolveExtractionServices(ownerId));
+  const plan = await planSourceExtraction(raw, source.title, { ...dependencies, services });
   const outcome = await runSourceExtraction(plan, source.title);
   const { text } = outcome;
   const textAssetId = await (dependencies.putText ?? defaultPutText)(

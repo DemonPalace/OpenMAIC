@@ -26,13 +26,9 @@ import type { Stage } from '@/lib/types/stage';
 
 const log = createLogger('ImportClassroom');
 
-async function allocateImportedAsset(
-  blob: Blob,
-  meta: AssetMeta,
-  stageId: string,
-): Promise<string> {
+async function allocateImportedAsset(blob: Blob, meta: AssetMeta): Promise<string> {
   // A shared document must name stored bytes, not a browser-only cache key.
-  return putAsset(blob, meta, { stageId });
+  return putAsset(blob, meta);
 }
 
 async function writeImportedMediaCache(write: () => Promise<unknown>): Promise<void> {
@@ -224,14 +220,10 @@ export async function materializeImportedAudio(
     const zipEntry = zip.file(zipPath);
     if (!zipEntry) continue;
     const blob = await zipEntry.async('blob');
-    const audioId = await allocateImportedAsset(
-      blob,
-      {
-        contentType: importedAudioContentType(meta, blob.type),
-        ...(meta.duration === undefined ? {} : { durationSeconds: meta.duration }),
-      },
-      stageId,
-    );
+    const audioId = await allocateImportedAsset(blob, {
+      contentType: importedAudioContentType(meta, blob.type),
+      ...(meta.duration === undefined ? {} : { durationSeconds: meta.duration }),
+    });
     allocatedIds.push(audioId);
     pathToId.set(zipPath, audioId);
     const relativePath = zipPath.startsWith('audio/') ? zipPath.slice('audio/'.length) : zipPath;
@@ -295,7 +287,7 @@ export async function materializeImportedMedia(
     const posterEntry =
       type === 'video' ? zip.file(siblingPosterZipPath(zipPath, meta.mimeType)) : null;
     const posterBlob = posterEntry ? await posterEntry.async('blob') : undefined;
-    const mediaId = await allocateImportedAsset(blob, { contentType: mimeType }, stageId);
+    const mediaId = await allocateImportedAsset(blob, { contentType: mimeType });
     allocatedIds.push(mediaId);
     refToNewId.set(oldRef, mediaId);
 
@@ -327,11 +319,9 @@ export async function materializeImportedMedia(
       .map((oldPosterRef) => mappedString(mappings.refToNewId, oldPosterRef))
       .find((value): value is string => typeof value === 'string');
     if (!posterAssetId) {
-      posterAssetId = await allocateImportedAsset(
-        posterBlob,
-        { contentType: posterBlob.type || 'image/jpeg' },
-        stageId,
-      );
+      posterAssetId = await allocateImportedAsset(posterBlob, {
+        contentType: posterBlob.type || 'image/jpeg',
+      });
       allocatedIds.push(posterAssetId);
       const posterRef = posterAssetId;
       await writeImportedMediaCache(() =>
@@ -553,7 +543,18 @@ export function useImportClassroom(onSuccess?: (importedStageId: string) => void
         // replaces.
         await mutateDocument(
           newStageId,
-          async (_existing, store) => store.saveDocument(document),
+          async (_existing, store) => {
+            try {
+              await store.saveDocument(document);
+            } catch (saveError) {
+              try {
+                if (await store.loadDocument(newStageId)) return;
+              } catch (verificationError) {
+                log.error('Failed to verify rejected document write:', verificationError);
+              }
+              throw saveError;
+            }
+          },
           {},
           { mode: 'replace' },
         );
@@ -570,9 +571,9 @@ export function useImportClassroom(onSuccess?: (importedStageId: string) => void
             : t('import.error.invalidZip');
         toast.error(message, { id: toastId });
       } finally {
-        // Local rows cannot join the document transaction. Server allocations
-        // are left to the pending-asset collector: the browser cannot safely
-        // delete them after a document write with an ambiguous outcome.
+        // A rejected response does not prove the atomic document write failed.
+        // Never delete by stage id here. Local rows are disposable caches, and
+        // the pending collector reclaims unreferenced server assets.
         const cleanup = async (label: string, operation: () => Promise<unknown>) => {
           try {
             await operation();
@@ -582,11 +583,6 @@ export function useImportClassroom(onSuccess?: (importedStageId: string) => void
         };
         if (!importCommitted && importedStageId) {
           const stageId = importedStageId;
-          await cleanup('document', async () => {
-            await mutateDocument(stageId, async (_document, store) =>
-              store.deleteDocument(stageId),
-            );
-          });
           await cleanup('generated media', () =>
             db.mediaFiles.where('stageId').equals(stageId).delete(),
           );

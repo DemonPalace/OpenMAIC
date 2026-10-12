@@ -195,6 +195,7 @@ export async function seedSource(
   await registerOwnerMaterial(
     h.pool as unknown as ConnectableQueryable,
     {
+      retention: 'library',
       id,
       ownerId: owner,
       kind: 'source',
@@ -302,7 +303,14 @@ export async function ensureStartedScenario(h: ExtractionHarness): Promise<void>
   await seedSource(h, 'src-a');
   await registerOwnerMaterial(
     h.pool as unknown as ConnectableQueryable,
-    { id: 'src-uploading', ownerId: ACCOUNT, kind: 'source', bytes: 1, ossKey: 'objects/u' },
+    {
+      retention: 'library',
+      id: 'src-uploading',
+      ownerId: ACCOUNT,
+      kind: 'source',
+      bytes: 1,
+      ossKey: 'objects/u',
+    },
     { maxCount: 100, maxTotalBytes: 1_000_000 },
   );
   await seedSource(h, 'src-deleted');
@@ -335,6 +343,7 @@ export async function uploadQueuesExtractionScenario(h: ExtractionHarness): Prom
     await registerOwnerMaterial(
       h.pool as unknown as ConnectableQueryable,
       {
+        retention: 'library',
         id,
         ownerId: ACCOUNT,
         kind: 'source',
@@ -964,10 +973,19 @@ export async function schemaCompatibilityScenario(h: ExtractionHarness): Promise
   });
   await ensure(h, 'src-view');
   await drain(h);
-  const { listOwnerMaterials } = await import('@/lib/persistence/owner-materials');
-  const [view] = (await listOwnerMaterials(h.pool as never, ACCOUNT)).map(publicMaterial);
+  const { listOwnerLibrary } = await import('@/lib/persistence/session-material-links');
+  const [view] = (await listOwnerLibrary(h.pool as never, ACCOUNT)).map(publicMaterial);
   expect(Object.keys(view).sort()).toEqual(
-    ['bytes', 'createdAt', 'extraction', 'kind', 'materialId', 'mime', 'originalName'].sort(),
+    [
+      'bytes',
+      'createdAt',
+      'extraction',
+      'kind',
+      'materialId',
+      'mediaKind',
+      'mime',
+      'originalName',
+    ].sort(),
   );
   expect(view.extraction).toEqual({ status: 'done' });
 }
@@ -1459,7 +1477,7 @@ function documentCandidates(h: ExtractionHarness) {
     id: id as never,
     supportedMimeTypes: mimes,
     // Whether it is a service to configure, as the real manifest says.
-    requiresConfiguration: getDocumentExtractorManifestEntry(id)?.requiresConfiguration ?? false,
+    requiresServiceConfig: getDocumentExtractorManifestEntry(id)?.requiresServiceConfig ?? false,
   });
   const run = async (
     id: string,

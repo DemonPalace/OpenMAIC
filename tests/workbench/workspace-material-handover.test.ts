@@ -91,6 +91,9 @@ const mocks = vi.hoisted(() => ({
   setSessionTitle: vi.fn(),
 }));
 
+vi.mock('@/lib/generation-run-client/use-owner-runs', () => ({
+  useOwnerRuns: () => ({ runs: [], forget: () => {} }),
+}));
 vi.mock('next/navigation', () => ({
   useRouter: () => mocks.router,
   useSearchParams: () => mocks.searchParams,
@@ -453,7 +456,7 @@ describe('an upload still in flight when the next hand-over arrives', () => {
       });
       input.dispatchEvent(new Event('change', { bubbles: true }));
     });
-    expect(fetchCalls.some((call) => call.url === '/api/materials')).toBe(true);
+    expect(fetchCalls.some((call) => call.url === '/api/materials?scope=library')).toBe(true);
     if (handOver) await chatWith('B');
     await act(async () =>
       uploaded.resolve(

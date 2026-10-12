@@ -32,6 +32,7 @@
  * again reuses the copy instead of adding a link, so the conversation never
  * lists the same file twice under two ids. Copies are never migrated.
  */
+import { applySchemaMigrations, type SchemaMigrationSet } from '@openmaic/storage/pg-migrations';
 import type { Queryable, WithTransaction } from '@openmaic/storage/document/pg';
 
 import type { OwnerExtractionResult } from './owner-material-extraction';
@@ -58,8 +59,15 @@ CREATE TABLE IF NOT EXISTS agent_session_material_links (
 );
 `;
 
+export const SESSION_MATERIAL_LINK_MIGRATIONS: SchemaMigrationSet = {
+  store: 'session-material-links',
+  migrations: [
+    { version: 1, name: 'baseline', up: SESSION_MATERIAL_LINK_SCHEMA, transaction: true },
+  ],
+};
+
 export async function ensureSessionMaterialLinkSchema(queryable: Queryable): Promise<void> {
-  await queryable.query(SESSION_MATERIAL_LINK_SCHEMA.trim());
+  await applySchemaMigrations(queryable, SESSION_MATERIAL_LINK_MIGRATIONS);
 }
 
 /** An owner material with the library columns readers need beyond the record. */
@@ -142,7 +150,7 @@ const LINKED_SOURCES = `
     JOIN owner_material AS source
       ON source.id = link.material_id AND source.owner_id = session.owner_id
    WHERE link.session_id = $1
-     AND source.kind = 'source' AND source.status = 'ready' AND source.deleted_at IS NULL`;
+     AND source.kind = 'source' AND source.retention = 'library' AND source.status = 'ready' AND source.deleted_at IS NULL`;
 
 /** Each linked source and its live derivatives (`linked` is {@link LINKED_SOURCES}). */
 const LINKED_MATERIALS = `
@@ -151,7 +159,7 @@ const LINKED_MATERIALS = `
     JOIN owner_material AS material
       ON material.id = linked.id
       OR (material.derived_from = linked.id AND material.owner_id = linked.owner_id
-          AND material.status = 'ready' AND material.deleted_at IS NULL)`;
+          AND material.status = 'ready' AND material.retention = 'library' AND material.deleted_at IS NULL)`;
 
 /**
  * Every material a session reaches through its links: each linked source,
@@ -202,7 +210,7 @@ export async function getSessionOwnerMaterial(
        JOIN owner_material AS material ON material.owner_id = session.owner_id
        LEFT JOIN owner_material AS source ON source.id = material.derived_from
       WHERE session.id = $1 AND session.deleted_at IS NULL AND material.id = $2
-        AND material.status = 'ready' AND material.deleted_at IS NULL
+        AND material.status = 'ready' AND material.retention = 'library' AND material.deleted_at IS NULL
         AND (material.derived_from IS NULL
           OR (source.owner_id = material.owner_id AND source.status = 'ready'
               AND source.deleted_at IS NULL))
@@ -314,7 +322,7 @@ async function listLibrary(
        }
        LEFT JOIN owner_material AS source ON source.id = material.derived_from
       WHERE ${bySession ? 'session.id = $1 AND session.deleted_at IS NULL' : 'material.owner_id = $1'}
-        AND material.status = 'ready' AND material.deleted_at IS NULL
+        AND material.status = 'ready' AND material.retention = 'library' AND material.deleted_at IS NULL
         AND (material.derived_from IS NULL
           OR (source.owner_id = material.owner_id AND source.status = 'ready'
               AND source.deleted_at IS NULL))
@@ -407,7 +415,7 @@ export async function attachOwnerMaterialsToSession(
       `SELECT ${OWNER_MATERIAL_COLUMNS}
          FROM owner_material
         WHERE id = ANY($1::text[]) AND owner_id = $2 AND kind = 'source'
-          AND status = 'ready' AND deleted_at IS NULL
+          AND status = 'ready' AND retention = 'library' AND deleted_at IS NULL
         ORDER BY id
           FOR SHARE`,
       [ids, ownerId],

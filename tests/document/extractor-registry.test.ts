@@ -45,12 +45,12 @@ describe('document extractor registry', () => {
 
     expect(
       providers
-        .filter((provider) => !provider.requiresConfiguration)
+        .filter((provider) => !provider.requiresServiceConfig)
         .map((provider) => provider.id),
     ).toEqual(['plain-text', 'unpdf']);
     for (const provider of providers) {
-      expect(provider.requiresConfiguration, `provider ${provider.id}`).toBe(
-        getDocumentExtractorManifestEntry(provider.id)?.requiresConfiguration,
+      expect(provider.requiresServiceConfig, `provider ${provider.id}`).toBe(
+        getDocumentExtractorManifestEntry(provider.id)?.requiresServiceConfig,
       );
     }
   });

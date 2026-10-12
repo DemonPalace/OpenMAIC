@@ -59,6 +59,7 @@ export {
 } from './asset/types.js';
 export type { AssetByteStore, AssetSignedReadHeaders } from './asset/byte-store.js';
 export {
+  ASSET_PG_MIGRATIONS,
   ASSET_PG_SCHEMA,
   DEFAULT_ASSET_PENDING_TTL_MS,
   PgAssetStore,
@@ -121,7 +122,20 @@ export {
   type HttpDocumentStoreOptions,
 } from './document/http.js';
 export {
+  SCHEMA_MIGRATION_LOCK_KEY,
+  SCHEMA_MIGRATIONS_TABLE,
+  SchemaMigrationChecksumError,
+  SchemaVersionAheadError,
+  applySchemaMigrations,
+  schemaMigrationChecksum,
+  type ApplySchemaMigrationsOptions,
+  type MigrationQueryable,
+  type SchemaMigration,
+  type SchemaMigrationSet,
+} from './pg-migrations.js';
+export {
   PgDocumentStore,
+  DOCUMENT_PG_MIGRATIONS,
   DOCUMENT_PG_SCHEMA,
   DocumentAssetReferencesDisabledError,
   StorageLockUnavailableError,
@@ -225,6 +239,7 @@ export {
 export {
   DEFAULT_USER_SKILL_TABLE_NAMES,
   PgUserSkillStore,
+  USER_SKILL_PG_MIGRATIONS,
   USER_SKILL_PG_SCHEMA,
   ensureUserSkillSchema,
   type PgUserSkillStoreOptions,
@@ -253,6 +268,7 @@ export {
   type MaterialExtractionFailureSettlement,
 } from './material/types.js';
 export {
+  AGENT_SESSION_MATERIAL_PG_MIGRATIONS,
   AGENT_SESSION_MATERIAL_PG_SCHEMA,
   DEFAULT_AGENT_SESSION_MATERIAL_TABLE_NAMES,
   PgAgentSessionMaterialStore,

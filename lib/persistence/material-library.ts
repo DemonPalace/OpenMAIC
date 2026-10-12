@@ -364,7 +364,7 @@ export async function moveMaterials(
       folder_id: string | null;
     }>(
       `SELECT id, owner_id, derived_from, status, deleted_at, folder_id FROM owner_material
-        WHERE id = ANY($1::text[]) AND derived_from IS NULL ORDER BY id FOR UPDATE`,
+        WHERE id = ANY($1::text[]) AND retention = 'library' AND derived_from IS NULL ORDER BY id FOR UPDATE`,
       [ids],
     );
     // A derivative named here is never locked (lock order, module docstring),
@@ -425,7 +425,7 @@ export async function renameMaterial(
       original_name: string | null;
     }>(
       `SELECT owner_id, derived_from, status, deleted_at, display_name, original_name
-         FROM owner_material WHERE id = $1 FOR UPDATE`,
+         FROM owner_material WHERE id = $1 AND retention = 'library' FOR UPDATE`,
       [input.materialId],
     );
     const row = current.rows[0];

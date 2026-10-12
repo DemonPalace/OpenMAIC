@@ -79,6 +79,7 @@ describe('owner material pool uploads with extraction and claims', () => {
     registerOwnerMaterial(
       h.pool as unknown as ConnectableQueryable,
       {
+        retention: 'library',
         id,
         ownerId: ACCOUNT,
         kind: 'source',
@@ -97,6 +98,12 @@ describe('owner material pool uploads with extraction and claims', () => {
     const bytes = Buffer.from('%PDF-pool-only');
     // Nothing in the material byte store: a read by object key would fail.
     setMaterialByteStoreForTests({
+      deletePrefix: async () => {
+        throw new Error('Unexpected deletePrefix in this byte-store fixture');
+      },
+      list: async () => {
+        throw new Error('Unexpected list in this byte-store fixture');
+      },
       put: async () => undefined,
       get: async (key) => {
         throw new Error(`no object ${key}`);
@@ -123,6 +130,12 @@ describe('owner material pool uploads with extraction and claims', () => {
     const bytes = Buffer.from('%PDF-legacy');
     const objects = new Map([['objects/src-legacy', bytes]]);
     setMaterialByteStoreForTests({
+      deletePrefix: async () => {
+        throw new Error('Unexpected deletePrefix in this byte-store fixture');
+      },
+      list: async () => {
+        throw new Error('Unexpected list in this byte-store fixture');
+      },
       put: async () => undefined,
       get: async (key) => {
         const value = objects.get(key);
@@ -145,6 +158,12 @@ describe('owner material pool uploads with extraction and claims', () => {
     const bytes = Buffer.from('%PDF-legacy');
     const objects = new Map([['objects/src-damaged', Buffer.from('%PDF-legacX')]]);
     setMaterialByteStoreForTests({
+      deletePrefix: async () => {
+        throw new Error('Unexpected deletePrefix in this byte-store fixture');
+      },
+      list: async () => {
+        throw new Error('Unexpected list in this byte-store fixture');
+      },
       put: async () => undefined,
       get: async (key) => {
         const value = objects.get(key);
@@ -169,6 +188,7 @@ describe('owner material pool uploads with extraction and claims', () => {
     await registerOwnerMaterial(
       h.pool as unknown as ConnectableQueryable,
       {
+        retention: 'library',
         id: 'src-mid-claim',
         ownerId: ANON,
         kind: 'source',
@@ -221,6 +241,7 @@ describe('owner material pool uploads with extraction and claims', () => {
     await registerOwnerMaterial(
       h.pool as unknown as ConnectableQueryable,
       {
+        retention: 'library',
         id: 'src-claimed',
         ownerId: ANON,
         kind: 'source',

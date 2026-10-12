@@ -242,7 +242,7 @@ export async function migrateOwnerMaterialsToPool(
     const batch = await provider.pool.query<CandidateRow>(
       `SELECT id, owner_id, mime, sha256, oss_key, asset_id
          FROM owner_material
-        WHERE kind = 'source' AND status = 'ready' AND deleted_at IS NULL
+        WHERE kind = 'source' AND retention = 'library' AND status = 'ready' AND deleted_at IS NULL
           AND oss_key <> '' AND id > $1
         ORDER BY id
         LIMIT $2`,
@@ -300,7 +300,7 @@ export async function removeDeletedOriginals(
     const batch = await provider.pool.query<{ id: string }>(
       `SELECT id
          FROM owner_material
-        WHERE kind = 'source' AND status = 'ready' AND deleted_at IS NOT NULL
+        WHERE kind = 'source' AND retention = 'library' AND status = 'ready' AND deleted_at IS NOT NULL
           AND oss_key <> '' AND id > $1
         ORDER BY id
         LIMIT $2`,

@@ -13,18 +13,17 @@
  */
 
 import { NextRequest } from 'next/server';
+import { ModelAuthorizationError } from '@/lib/server/model-config/model-authorization';
 import { statelessGenerate } from '@/lib/orchestration/stateless-generate';
 import { isProviderKeyRequired } from '@/lib/ai/providers';
 import type { StatelessChatRequest, StatelessEvent } from '@/lib/types/chat';
 import { apiError } from '@/lib/server/api-response';
 import { createLogger } from '@/lib/logger';
+import { requestWorkspaceId } from '@/lib/server/model-config/runtime';
 import { resolveModel } from '@/lib/server/resolve-model';
 import { parseUserStageRoutes } from '@/lib/server/model-routes';
 import type { ThinkingConfig } from '@/lib/types/provider';
 const log = createLogger('Chat API');
-
-// Allow streaming responses up to 60 seconds
-export const maxDuration = 60;
 
 /**
  * POST /api/chat
@@ -73,6 +72,7 @@ export async function POST(req: NextRequest) {
     } = await resolveModel({
       modelString: body.model,
       stage: 'chat-adapter',
+      workspaceId: await requestWorkspaceId(req),
       // Honor the classroom-interaction per-stage override the client sends in
       // `x-model-routes`. A routed stage brings its own key and base URL; otherwise the body credentials are used (never x-* headers).
       userRoutes: parseUserStageRoutes(req.headers.get('x-model-routes')),
@@ -198,6 +198,9 @@ export async function POST(req: NextRequest) {
       },
     });
   } catch (error) {
+    if (error instanceof ModelAuthorizationError) {
+      return apiError('PROVIDER_DISABLED', 403, error.message);
+    }
     log.error(
       `Chat request failed [model=${chatModel ?? 'unknown'}, messages=${chatMessageCount ?? 0}]:`,
       error,

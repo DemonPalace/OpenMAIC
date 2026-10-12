@@ -106,6 +106,12 @@ export async function bootLibraryHarness(
   // Seeded sources name `objects/<id>` (see seedSource); session copies their own keys.
   const objects = h.objects;
   setMaterialByteStoreForTests({
+    deletePrefix: async () => {
+      throw new Error('Unexpected deletePrefix in this byte-store fixture');
+    },
+    list: async () => {
+      throw new Error('Unexpected list in this byte-store fixture');
+    },
     put: async (key, body) => void objects.set(key, Buffer.from(body as Uint8Array)),
     get: async (key) => {
       const id = key.startsWith('objects/') ? key.slice('objects/'.length) : undefined;
@@ -139,8 +145,8 @@ export async function seedDerivative(
   await h.pool.query(
     `INSERT INTO owner_material
        (id, owner_id, kind, derived_from, mime, bytes, original_name, oss_key, sha256,
-        status, extraction, created_at, asset_id)
-     VALUES ($1, $2, 'image', $3, 'image/png', 3, $1, '', $4, 'ready', NULL, $5, NULL)`,
+        status, extraction, created_at, asset_id, retention)
+     VALUES ($1, $2, 'image', $3, 'image/png', 3, $1, '', $4, 'ready', NULL, $5, NULL, 'library')`,
     [id, owner, sourceId, createHash('sha256').update(id).digest('hex'), h.clock.now],
   );
 }
@@ -690,6 +696,7 @@ export async function seedPoolSource(
   await registerOwnerMaterial(
     h.pool as never,
     {
+      retention: 'library',
       id,
       ownerId: ACCOUNT,
       kind: 'source',
@@ -1931,6 +1938,7 @@ export async function deleteRefusalScenario(h: ExtractionHarness): Promise<void>
   await registerOwnerMaterial(
     h.pool as never,
     {
+      retention: 'library',
       id: 'delete-uploading',
       ownerId: ACCOUNT,
       kind: 'source',
@@ -2122,6 +2130,12 @@ export async function deleteLegacyScenario(h: LibraryHarness): Promise<void> {
   };
   const keys: string[] = [];
   setMaterialByteStoreForTests({
+    deletePrefix: async () => {
+      throw new Error('Unexpected deletePrefix in this byte-store fixture');
+    },
+    list: async () => {
+      throw new Error('Unexpected list in this byte-store fixture');
+    },
     put: async (key, bytes) => void h.objects.set(key, Buffer.from(bytes as Uint8Array)),
     get: async (key) => {
       const bytes = h.objects.get(key);

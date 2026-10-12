@@ -1,42 +1,20 @@
 /**
- * /api/materials — the workbench's material list and upload face.
+ * Shared owner-material upload endpoint. The default is a classic temporary
+ * attachment: bytes stay in the material byte store and extraction uses the
+ * existing classic worker (`extract=false` leaves it idle).
  *
- * The uploader (`uploadWorkbenchMaterial` in `lib/workbench/session-store.ts`)
- * is OWNER-scoped: it posts a file with no session id and expects the flat
- * `{ materialId, originalName, bytes, mime, extraction }` 201 view. This route
- * implements the reference's upload contract on the owner-scoped material
- * library (`lib/persistence/owner-materials.ts`) with the neutral local
- * material byte store.
+ * The workbench explicitly sends `scope=library`. Its durable upload is
+ * published into the owner asset pool with a material root and pending
+ * extraction in one transaction. The library scanner processes it; classic
+ * unused-upload and run-release cleanup never remove it.
  *
- * ## Upload contract (the reference's)
+ * Both paths reserve quota before consuming the body and enforce the same
+ * per-type byte limits (413 includes maxBytes), MIME policy, owner fence,
+ * request-id header and flat 201 response. A stale reservation retains its
+ * recorded object key until byte cleanup succeeds.
  *
- * - `content-type` is the MIME type; it is normalized and validated against
- *   the workbench policy — an unsupported type answers 415.
- * - `x-material-filename` is the display name (required).
- * - Size caps are per class: media (audio/video) uploads cap at
- *   `maxUploadBytes`, documents/images at `min(maxDocumentBytes,
- *   maxUploadBytes)`. Exceeding that effective limit answers 413, both for
- *   the declared `content-length` and while reading the body. Those two
- *   responses include a top-level numeric `maxBytes`: the exact byte
- *   threshold that check enforced, not the rounded figure the client shows.
- *   A body larger than its declared content-length is a separate 413 and
- *   does not include `maxBytes`.
- * - Lifecycle: the upload reclaims crashed `uploading` leftovers older than
- *   24 hours (the byte objects of reservations made before the asset pool
- *   first, then the reservations), reserves a quota-checked `uploading` row
- *   (429 when the owner's count or byte quota is exceeded), reads the body
- *   through a sha256 meter, allocates a pending entry for the bytes in the
- *   owner's asset pool partition (507 when the pool quota has no room), and
- *   publishes the pointer, the material root and `ready` in one transaction.
- *   Failures abandon the reservation and never delete stored bytes: an
- *   unpublished entry expires on its own. A retired or busy owner answers
- *   403 / 503 at any write. Crash leftovers are reclaimed by the next upload's
- *   24-hour sweep.
- * - Every response echoes the `x-request-id` header so the uploader can pair
- *   a failure with its log line.
- *
- * The configured runtime gates the family (the workbench is agent-runtime
- * territory): off, or on without a DATABASE_URL, answers the same plain 404.
+ * Classic uploads/listing need persistence only. Durable library uploads and
+ * session-scoped reads additionally need the agent runtime.
  */
 import { createHash, randomUUID } from 'node:crypto';
 import { basename } from 'node:path';
@@ -47,7 +25,10 @@ import { NextResponse } from 'next/server';
 import { createMaterialId } from '@openmaic/storage';
 import type { ConnectableQueryable } from '@openmaic/storage/server/reference';
 
-import { isAgentRuntimeConfigured } from '@/lib/config/feature-flags';
+import {
+  isAgentRuntimeConfigured,
+  isServerPersistenceConfigured,
+} from '@/lib/config/feature-flags';
 import { apiError } from '@/lib/server/api-response';
 import { agentRuntimeConfig } from '@/lib/server/agent-runtime/config';
 import { ownerJson, ownerNotFound } from '@/lib/server/agent-runtime/route-response';
@@ -60,6 +41,8 @@ import { AssetQuotaExceededError } from '@openmaic/storage';
 import {
   abandonOwnerMaterial,
   allocateOwnerMaterialBytes,
+  listOwnerMaterials,
+  finalizeOwnerMaterial,
   MaterialQuotaExceededError,
   publicMaterial,
   publishOwnerMaterialUpload,
@@ -68,7 +51,12 @@ import {
 } from '@/lib/persistence/owner-materials';
 import { ownerWriteErrorResponse } from '@/lib/persistence/owner-merges';
 import { getServerPersistenceProvider } from '@/lib/persistence/server-provider';
-import { getMaterialByteStore } from '@/lib/server/materials/bytes';
+import { deleteMaterialObjects, getMaterialByteStore } from '@/lib/server/materials/bytes';
+import { wakeOwnerMaterialExtractor } from '@/lib/server/materials/extractor-wake';
+import {
+  MATERIAL_DOCUMENT_UPLOAD_LIMIT,
+  MATERIAL_MEDIA_UPLOAD_LIMIT,
+} from '@/lib/server/materials/upload-limits';
 import {
   isWorkbenchMaterialMime,
   MEDIA_MIME_TYPES,
@@ -77,14 +65,14 @@ import {
 
 export const runtime = 'nodejs';
 
-const DOCUMENT_UPLOAD_LIMIT = Math.min(
-  agentRuntimeConfig.maxDocumentBytes,
-  agentRuntimeConfig.maxUploadBytes,
-);
 const MEDIA_MIME_SET = new Set<string>(MEDIA_MIME_TYPES);
 
 /** The store's keyset-paging ceiling (default 50, capped at 200). */
 export const MAX_MATERIAL_LIST_LIMIT = 200;
+
+export function ownerMaterialObjectKey(ownerId: string, materialId: string): string {
+  return `materials/${ownerId.replace(/[^A-Za-z0-9._-]/g, '_')}/${materialId}`;
+}
 
 class MaterialPayloadTooLarge extends Error {}
 
@@ -127,15 +115,29 @@ function parseLimit(raw: string | null): { limit?: number } | { invalid: true } 
   return { limit: parsed };
 }
 
+// GET /api/materials — the caller's own library uploads, newest first, each
+// with its extraction (served with server persistence).
 // GET /api/materials?sessionId=&limit=&before= — list one owned session's
 // materials: its own rows newest first, then the library materials its links
 // reach, on one cursor (the agent-tools list surface).
 export async function GET(req: NextRequest) {
+  const searchParams = new URL(req.url).searchParams;
+  // A session named but empty is a mistake, not a request for the library.
+  if (searchParams.has('sessionId') && !searchParams.get('sessionId')?.trim()) {
+    return apiError('MISSING_REQUIRED_FIELD', 400, 'sessionId must not be empty');
+  }
+  if (!searchParams.has('sessionId')) {
+    if (!isServerPersistenceConfigured()) return new Response('Not found', { status: 404 });
+    return withRequestOwner(req, async ({ ownerId }, responseHeaders) => {
+      const provider = await getServerPersistenceProvider(process.env.DATABASE_URL ?? '');
+      const records = await listOwnerMaterials(provider.pool, ownerId);
+      return ownerJson({ materials: records.map(publicMaterial) }, 200, responseHeaders);
+    });
+  }
   if (!isAgentRuntimeConfigured()) return new Response('Not found', { status: 404 });
 
   const url = new URL(req.url);
-  const sessionId = url.searchParams.get('sessionId')?.trim();
-  if (!sessionId) return apiError('MISSING_REQUIRED_FIELD', 400, 'sessionId is required');
+  const sessionId = url.searchParams.get('sessionId')!.trim();
 
   const parsedLimit = parseLimit(url.searchParams.get('limit'));
   if ('invalid' in parsedLimit) {
@@ -193,11 +195,16 @@ export async function POST(req: NextRequest) {
     return response;
   };
 
-  if (!isAgentRuntimeConfigured()) return new Response('Not found', { status: 404 });
+  if (!isServerPersistenceConfigured()) return new Response('Not found', { status: 404 });
 
   return withRequestOwner(req, async ({ ownerId }, responseHeaders) => {
     try {
       phase = 'validate_request';
+      // Library uploads always enqueue; classic callers may defer extraction.
+      const library = new URL(req.url).searchParams.get('scope') === 'library';
+      if (library && !isAgentRuntimeConfigured())
+        return new Response('Not found', { status: 404, headers: responseHeaders });
+      const extract = new URL(req.url).searchParams.get('extract') !== 'false';
       const rawMime = (req.headers.get('content-type') ?? '').split(';', 1)[0];
       declaredMime = rawMime;
       const originalName = materialFilename(req);
@@ -218,8 +225,8 @@ export async function POST(req: NextRequest) {
         );
       }
       const uploadLimit = MEDIA_MIME_SET.has(mime)
-        ? agentRuntimeConfig.maxUploadBytes
-        : DOCUMENT_UPLOAD_LIMIT;
+        ? MATERIAL_MEDIA_UPLOAD_LIMIT
+        : MATERIAL_DOCUMENT_UPLOAD_LIMIT;
 
       declaredBytes = Number(req.headers.get('content-length') ?? 0);
       if (Number.isFinite(declaredBytes) && declaredBytes > uploadLimit) {
@@ -242,10 +249,10 @@ export async function POST(req: NextRequest) {
       }
       const createdMaterialId = createMaterialId();
       materialId = createdMaterialId;
+      const ossKey = library ? '' : ownerMaterialObjectKey(ownerId, createdMaterialId);
 
       const provider = await getServerPersistenceProvider(process.env.DATABASE_URL ?? '');
-      // Only the reclaim below still uses the material byte store: a
-      // reservation made before the asset pool names an object there.
+      // Classic attachments and legacy library originals use the byte store.
       const byteStore = getMaterialByteStore();
       const abandon = () =>
         abandonOwnerMaterial(provider, ownerId, createdMaterialId).catch(() => undefined);
@@ -265,7 +272,7 @@ export async function POST(req: NextRequest) {
       phase = 'reclaim_stale_uploads';
       await reclaimStaleOwnerMaterialUploads(provider, ownerId, async (objectKey) => {
         try {
-          await byteStore.delete(objectKey);
+          await deleteMaterialObjects(byteStore, objectKey);
         } catch (error) {
           console.warn(
             'material stale byte deletion failed; keeping its reservation for the next pass',
@@ -293,8 +300,9 @@ export async function POST(req: NextRequest) {
             mime,
             bytes: reservedBytes,
             originalName,
-            // In the pool once published; nothing is ever stored under a key.
-            ossKey: '',
+            // Library bytes go to the pool; classic bytes keep their reserved key.
+            ossKey,
+            retention: library ? 'library' : 'temporary',
             extraction: { status: 'idle' },
           },
           {
@@ -355,17 +363,50 @@ export async function POST(req: NextRequest) {
       // was lost -- a published row is `ready` and is left as it is.
       const hash = createHash('sha256').update(bytes).digest('hex');
       let row: Awaited<ReturnType<typeof publishOwnerMaterialUpload>>;
+      let classicBytesStored = false;
       try {
-        phase = 'allocate_bytes';
-        const assetId = await allocateOwnerMaterialBytes(provider, ownerId, bytes, mime);
-        phase = 'publish_material';
-        row = await publishOwnerMaterialUpload(provider, ownerId, createdMaterialId, {
-          assetId,
-          bytes: bytes.byteLength,
-          sha256: hash,
-        });
+        if (!library) {
+          await byteStore.put(ossKey, bytes, mime);
+          classicBytesStored = true;
+          row = await finalizeOwnerMaterial(
+            provider.pool,
+            createdMaterialId,
+            bytes.byteLength,
+            hash,
+            { extract },
+          );
+          if (extract) wakeOwnerMaterialExtractor();
+        } else {
+          phase = 'allocate_bytes';
+          const assetId = await allocateOwnerMaterialBytes(provider, ownerId, bytes, mime);
+          phase = 'publish_material';
+          row = await publishOwnerMaterialUpload(provider, ownerId, createdMaterialId, {
+            assetId,
+            bytes: bytes.byteLength,
+            sha256: hash,
+          });
+        }
       } catch (error) {
-        await abandon();
+        if (library) {
+          await abandon();
+        } else {
+          // Keep main's classic failure cleanup: only drop the reservation
+          // after its byte deletion succeeded; otherwise stale reclaim retries.
+          let bytesDeleted = !classicBytesStored;
+          if (classicBytesStored) {
+            try {
+              await byteStore.delete(ossKey);
+              bytesDeleted = true;
+            } catch (cleanupError) {
+              console.warn(
+                'material byte cleanup failed; keeping its reservation for stale reclaim',
+                context(),
+                cleanupError,
+              );
+            }
+          }
+          if (bytesDeleted) await abandon();
+        }
         if (error instanceof AssetQuotaExceededError) {
           return reject(
             apiError('ASSET_QUOTA_EXCEEDED', 507, 'asset storage quota exceeded'),
@@ -397,6 +438,7 @@ export async function POST(req: NextRequest) {
           originalName: view.originalName,
           bytes: view.bytes,
           mime: view.mime,
+          mediaKind: view.mediaKind,
           extraction: view.extraction,
         },
         { status: 201 },
