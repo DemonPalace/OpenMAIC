@@ -129,6 +129,10 @@ describe('materialsPromptBlock', () => {
     expect(prompt).toContain(
       '- "lesson.pdf" (knowledge-base source, id src_lesson, extraction running)',
     );
+    // The words for the user come from the tools, in the language of the
+    // message being answered; the block itself stays language-neutral (#1880).
+    expect(prompt).toContain('use those words with the user as they are');
+    expect(prompt).toContain('Never show the user tool names, field names, ids or raw values');
     expect(prompt).not.toContain('id img_1');
     expect(prompt).toContain('1 derivative');
     expect(prompt).toContain('- "Week 1" (knowledge-base source, id src_deck');

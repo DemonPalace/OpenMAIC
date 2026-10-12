@@ -236,6 +236,7 @@
       "extractionDone": "Ya se había procesado",
       "extractionComplete": "Terminado",
       "extractionStillRunning": "Aún en procesamiento",
+      "parseFailed": "Error al analizar",
       "folderExisted": "La carpeta ya existía",
       "unchanged": "Sin cambios",
       "movedOutOfFolder": "Sacado de la carpeta"

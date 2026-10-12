@@ -10,6 +10,8 @@
  * agent cannot delete anything: deleting a material or a folder is the
  * teacher's, on the library page.
  */
+import { defaultLocale, type Locale } from '@/lib/i18n/types';
+import { materialModelCopy } from './material-model-copy';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { Type } from 'typebox';
 
@@ -82,6 +84,8 @@ export interface MaterialLibraryToolDependencies {
   /** The conversation whose legacy copies may shadow an owner source. */
   sessionId: string;
   onLibraryChanged?: (change: MaterialLibraryChange) => void;
+  /** The interface language in effect for this call; see `buildMaterialTools`. */
+  locale?: () => Locale;
 }
 
 function result(details: Record<string, unknown>, text: string, isError = false) {
@@ -280,6 +284,12 @@ export function buildMaterialLibraryTools(
             status: outcome.status,
             materialIds: outcome.materialIds,
             folderId: outcome.folderId,
+            // The page's word for "not in a folder", for the model to use with the user.
+            ...(outcome.folderId === null
+              ? {
+                  folderLabel: (await materialModelCopy(deps.locale?.() ?? defaultLocale)).topLevel,
+                }
+              : {}),
             movedCount: outcome.movedCount,
           };
           return outcome.status === 'moved'

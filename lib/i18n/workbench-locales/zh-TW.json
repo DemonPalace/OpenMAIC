@@ -236,6 +236,7 @@
       "extractionDone": "此前已解析完成",
       "extractionComplete": "解析完成",
       "extractionStillRunning": "仍在解析",
+      "parseFailed": "解析失敗",
       "folderExisted": "資料夾已存在",
       "unchanged": "沒有變化",
       "movedOutOfFolder": "已移出資料夾"

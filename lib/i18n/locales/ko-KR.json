@@ -1996,6 +1996,7 @@
   "workspace": {
     "knowledgeBase": {
       "title": "지식 베이스",
+      "topLevel": "최상위",
       "back": "뒤로",
       "search": "이름 또는 파일 형식 검색",
       "loading": "불러오는 중…",
@@ -2110,9 +2111,13 @@
     "courseLinkMore": "还有 {{count}} 节课堂",
     "courseMention": {
       "search": "교실 및 자료 검색",
+      "searchMaterials": "자료 검색",
+      "searchClassrooms": "교실 검색",
       "courseOrder": "열린 교실 우선, 나머지는 최근 수정순",
       "materialOrder": "최근 업로드순",
       "title": "为这条消息引用课堂",
+      "titleBoth": "이 메시지에 교실을 참조하거나 지식 베이스 자료 첨부",
+      "titleMaterials": "이 메시지에 지식 베이스 자료 첨부",
       "empty": "没有匹配的课堂",
       "alreadyNamed": "已引用",
       "remove": "移除{{name}}",
@@ -2124,6 +2129,7 @@
       "knowledgeBase": "지식 베이스",
       "emptyWithMaterials": "일치하는 수업이나 자료가 없습니다",
       "attachMaterial": "{{name}}을(를) 이 메시지에 첨부",
+      "materialUnavailable": "{{name}}을(를) 첨부할 수 없습니다({{reason}}). 지식 베이스에서 이유를 확인하고 다시 분석하세요.",
       "materialAttached": "이 대화에 이미 있습니다",
       "materialStaged": "이 메시지에 이미 있습니다",
       "materialsCapped": "처음 {{count}}개 자료만 표시 중 — 계속 입력해 범위를 좁히세요"

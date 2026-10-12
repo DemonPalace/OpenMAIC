@@ -222,10 +222,12 @@ function materialStatusFailed(value: unknown): boolean {
   });
 }
 
-/** Runtime success can still carry a terminal material-extraction failure. */
+/**
+ * Only the call itself failing is an error (#1880): a call that succeeded and
+ * reports a file that failed to parse is a result, said as a quiet chip.
+ */
 export function isWorkbenchToolFailed(node: ChatNode): boolean {
-  if (node.toolState === 'failed') return true;
-  return MATERIAL_TOOLS.has(node.toolName ?? '') && materialStatusFailed(node.toolDetails);
+  return node.toolState === 'failed';
 }
 
 /**
@@ -277,7 +279,7 @@ export function presentTool(
   const args = node.toolArgs ?? {};
   const d = asRecord(node.toolDetails);
   const failed = isWorkbenchToolFailed(node);
-  const extractionFailed = materialStatusFailed(d);
+  const extractionFailed = MATERIAL_TOOLS.has(name) && materialStatusFailed(d);
   const chips: ToolChip[] = [];
   const localizedResult = node.toolResultCopyKey ? t(node.toolResultCopyKey) : node.toolResultText;
   const errorLine = (subject: string, _raw?: string) =>
@@ -293,15 +295,7 @@ export function presentTool(
         label: t('workbench.tool.label.listMaterials'),
         chips,
         hidePayload: true,
-        ...(failed
-          ? {
-              errorText: t(
-                extractionFailed
-                  ? 'workbench.tool.error.materialExtraction'
-                  : 'workbench.tool.error.listMaterials',
-              ),
-            }
-          : {}),
+        ...(failed ? { errorText: t('workbench.tool.error.listMaterials') } : {}),
       };
 
     case 'extract_material': {
@@ -309,7 +303,9 @@ export function presentTool(
       // already extracting or already extracted is not started again.
       if (!failed) {
         const status = str(d.status);
-        if (d.started === true) {
+        if (status === 'failed') {
+          chips.push({ label: t('workbench.tool.chip.parseFailed'), tone: 'neutral' });
+        } else if (d.started === true) {
           chips.push({ label: t('workbench.tool.chip.extractionStarted'), tone: 'accent' });
         } else if (status === 'pending' || status === 'running') {
           chips.push({ label: t('workbench.tool.chip.extractionInProgress'), tone: 'neutral' });
@@ -327,7 +323,9 @@ export function presentTool(
     }
 
     case 'wait_for_materials':
-      if (!failed && !extractionFailed) {
+      if (!failed && extractionFailed) {
+        chips.push({ label: t('workbench.tool.chip.parseFailed'), tone: 'neutral' });
+      } else if (!failed) {
         if (d.complete === true) {
           chips.push({ label: t('workbench.tool.chip.extractionComplete'), tone: 'accent' });
         } else if (d.timedOut === true) {
@@ -339,9 +337,7 @@ export function presentTool(
         label: t('workbench.tool.label.waitMaterials'),
         chips,
         hidePayload: true,
-        ...(failed || extractionFailed
-          ? { errorText: t('workbench.tool.error.materialExtraction') }
-          : {}),
+        ...(failed ? { errorText: t('workbench.tool.error.materialExtraction') } : {}),
       };
 
     // Organizing the knowledge base: one quiet row each, from the tool's own

@@ -109,6 +109,39 @@ describe('PgAgentSessionMaterialStore with PGlite', () => {
     expect(second.ownerMaterialId).toBe('mat_owner');
   });
 
+  test('adds extraction_reason_code to a table provisioned before the column existed', async () => {
+    await db.query('ALTER TABLE agent_session_materials DROP COLUMN extraction_reason_code');
+    const sessions = new PgAgentSessionStore(db, {
+      withTransaction: (body) => db.transaction((tx: Queryable) => body(tx)),
+    });
+    await sessions.createSession({ id: 'session-legacy', ownerId: 'owner-a', prompt: 'p' });
+    await db.query(
+      `INSERT INTO agent_session_materials
+         (id, session_id, kind, text_chars, extraction_status, extraction_attempts,
+          extraction_error, created_at)
+       VALUES ('mat_legacy', 'session-legacy', 'source', 0, 'failed', 0, 'old diagnostic', now())`,
+    );
+
+    // Re-running the initializer is the in-place upgrade, and it is repeatable.
+    await ensureAgentSessionMaterialSchema(db);
+    await ensureAgentSessionMaterialSchema(db);
+
+    const legacy = await store.getMaterial('session-legacy', 'mat_legacy');
+    expect(legacy?.extraction).toEqual({ status: 'failed', attempts: 0, error: 'old diagnostic' });
+    await store.enqueueExtraction('session-legacy', 'mat_legacy');
+    await store.claimNextExtraction('worker-a', { leaseTtlMs: 10_000 });
+    await store.settleExtractionFailure(
+      'mat_legacy',
+      'worker-a',
+      'no parser',
+      false,
+      'service_unavailable',
+    );
+    expect((await store.getMaterial('session-legacy', 'mat_legacy'))?.extraction.reasonCode).toBe(
+      'service_unavailable',
+    );
+  });
+
   test('backfills owner_material_id onto a legacy row without touching extraction', async () => {
     await new PgAgentSessionStore(db, {
       withTransaction: (body) => db.transaction((tx: Queryable) => body(tx)),

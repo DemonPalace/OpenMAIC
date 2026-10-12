@@ -54,9 +54,10 @@ import { extractionLabelKey } from '@/lib/workbench/material-library-client';
  * because the two menus sit in the same box and must not behave differently. The
  * ordering rules are pure and live in `lib/workbench/course-mention`.
  */
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { Check } from 'lucide-react';
 import { useI18n } from '@/lib/hooks/use-i18n';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils/cn';
 import { COURSE_MENTION_LIMIT, type CourseMentionCandidate } from '@/lib/workbench/course-mention';
 import {
@@ -115,6 +116,29 @@ export function CourseMentionMenu({
   const optionRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const [highlightedIndex, setHighlightedIndex] = useState(0);
   const offersMaterials = materials !== undefined && onPickMaterial !== undefined;
+  // What the search searches (#1880): read when the menu opens, before a query
+  // can narrow the classrooms away, so typing never changes the label.
+  const [classroomsAtOpen] = useState(() => candidates.length > 0);
+  const lists = !offersMaterials
+    ? 'classrooms'
+    : classroomsAtOpen || candidates.length > 0
+      ? 'both'
+      : 'materials';
+  const searchLabel = t(
+    lists === 'classrooms'
+      ? 'workspace.courseMention.searchClassrooms'
+      : lists === 'both'
+        ? 'workspace.courseMention.search'
+        : 'workspace.courseMention.searchMaterials',
+  );
+  // The menu's name says what it offers, as the search does.
+  const menuTitle = t(
+    lists === 'classrooms'
+      ? 'workspace.courseMention.title'
+      : lists === 'both'
+        ? 'workspace.courseMention.titleBoth'
+        : 'workspace.courseMention.titleMaterials',
+  );
   const rows: MenuRow[] = [
     ...candidates.map((candidate) => ({ kind: 'course' as const, candidate })),
     ...(offersMaterials
@@ -135,6 +159,26 @@ export function CourseMentionMenu({
     if (row.kind === 'course') onPick(row.candidate);
     else onPickMaterial?.(row.candidate);
   };
+
+  // End the window on a whole row (#1880): the section headings and the
+  // "showing the first N" lines are not row-sized, so the CSS cap alone can
+  // stop halfway through a row. The cap is lowered to the bottom of the last
+  // row, heading or line that fits under it.
+  const scrollRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const list = scrollRef.current;
+    if (!list) return;
+    list.style.maxHeight = '';
+    const cap = parseFloat(getComputedStyle(list).maxHeight);
+    if (!Number.isFinite(cap) || list.scrollHeight <= cap) return;
+    const top = list.getBoundingClientRect().top - list.scrollTop;
+    let fits = 0;
+    for (const block of list.querySelectorAll<HTMLElement>('.ws-cmenu-row, p')) {
+      const bottom = block.getBoundingClientRect().bottom - top;
+      if (bottom <= cap + 0.5) fits = Math.max(fits, bottom);
+    }
+    if (fits > 0) list.style.maxHeight = `${fits}px`;
+  }, [candidates, materials]);
 
   // Keep the highlighted row in view: the list scrolls now, so a keyboard walk
   // past the window's edge would otherwise move an invisible highlight.
@@ -216,12 +260,12 @@ export function CourseMentionMenu({
       id={id}
       data-testid="workbench-course-menu"
       data-esc-owner=""
-      aria-label={t('workspace.courseMention.title')}
+      aria-label={menuTitle}
       aria-labelledby={titleId}
       className="pro-skill-slash-popover absolute bottom-full left-0 z-30 mb-1.5 w-full max-w-[340px] overflow-hidden rounded-xl border border-border bg-popover shadow-lg"
     >
       <span id={titleId} className="sr-only">
-        {t('workspace.courseMention.title')}
+        {menuTitle}
       </span>
       {search ? (
         <div className="p-2">
@@ -229,17 +273,18 @@ export function CourseMentionMenu({
             ref={searchRef}
             type="search"
             data-testid="workbench-reference-search"
-            aria-label={t('workspace.courseMention.search')}
-            placeholder={t('workspace.courseMention.search')}
+            aria-label={searchLabel}
+            placeholder={searchLabel}
             value={search.query}
             onChange={(event) => search.onChange(event.target.value)}
-            className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm outline-none transition-[border-color,box-shadow] focus-visible:border-[color:var(--ws-accent-thread)] focus-visible:shadow-[0_0_0_3px_var(--ws-accent-wash)]"
           />
         </div>
       ) : null}
       <div
         role="listbox"
         aria-labelledby={titleId}
+        ref={scrollRef}
         data-testid="workbench-course-scroll"
         // Its height is a whole number of rows (`workbench-chat.css`), so the
         // resting state cannot show half a row.
@@ -339,52 +384,71 @@ export function CourseMentionMenu({
                 );
                 // The folder only when it is in one; nothing, and no separator, at the top level.
                 const where = [candidate.folderName, status].filter(Boolean).join(' · ');
+                // Why it cannot be picked, in the page's words, and where it can
+                // be parsed again: the knowledge base page, not this menu (#1880).
+                // Not `disabled`: a disabled button takes no hover or focus, so
+                // it could show no tooltip.
                 const label = unavailable
-                  ? `${candidate.name} · ${status}`
+                  ? t('workspace.courseMention.materialUnavailable', {
+                      name: candidate.name,
+                      reason: status,
+                    })
                   : t('workspace.courseMention.attachMaterial', { name: candidate.name });
+                const option = (
+                  <button
+                    ref={(node) => {
+                      optionRefs.current[index] = node;
+                    }}
+                    type="button"
+                    role="option"
+                    aria-selected={index === activeIndex}
+                    data-highlighted={index === activeIndex ? 'true' : undefined}
+                    data-testid={`workbench-material-option-${candidate.materialId}`}
+                    title={unavailable ? undefined : label}
+                    aria-label={label}
+                    aria-disabled={unavailable}
+                    onClick={() => pickRow(rows[index])}
+                    onMouseEnter={() => {
+                      if (!unavailable) setHighlightedIndex(index);
+                    }}
+                    className={cn(
+                      'ws-cmenu-row flex w-full min-w-0 items-center gap-2 px-3 text-left transition-colors hover:bg-muted aria-disabled:cursor-not-allowed aria-disabled:opacity-50',
+                      index === activeIndex && 'bg-muted',
+                    )}
+                  >
+                    <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium text-foreground">
+                      {candidate.name}
+                    </span>
+                    <span className="shrink-0 truncate text-[10.5px] text-muted-foreground">
+                      {where}
+                    </span>
+                    {/* Already in this conversation, or already on this message. */}
+                    {candidate.attached || candidate.staged ? (
+                      <Check
+                        size={12}
+                        className="shrink-0 text-muted-foreground"
+                        aria-label={t(
+                          candidate.staged
+                            ? 'workspace.courseMention.materialStaged'
+                            : 'workspace.courseMention.materialAttached',
+                        )}
+                      />
+                    ) : null}
+                  </button>
+                );
                 return (
                   <li key={candidate.materialId}>
-                    <button
-                      ref={(node) => {
-                        optionRefs.current[index] = node;
-                      }}
-                      type="button"
-                      role="option"
-                      aria-selected={index === activeIndex}
-                      data-highlighted={index === activeIndex ? 'true' : undefined}
-                      data-testid={`workbench-material-option-${candidate.materialId}`}
-                      title={label}
-                      aria-label={label}
-                      disabled={unavailable}
-                      aria-disabled={unavailable}
-                      onClick={() => pickRow(rows[index])}
-                      onMouseEnter={() => {
-                        if (!unavailable) setHighlightedIndex(index);
-                      }}
-                      className={cn(
-                        'ws-cmenu-row flex w-full min-w-0 items-center gap-2 px-3 text-left transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50',
-                        index === activeIndex && 'bg-muted',
-                      )}
-                    >
-                      <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium text-foreground">
-                        {candidate.name}
-                      </span>
-                      <span className="shrink-0 truncate text-[10.5px] text-muted-foreground">
-                        {where}
-                      </span>
-                      {/* Already in this conversation, or already on this message. */}
-                      {candidate.attached || candidate.staged ? (
-                        <Check
-                          size={12}
-                          className="shrink-0 text-muted-foreground"
-                          aria-label={t(
-                            candidate.staged
-                              ? 'workspace.courseMention.materialStaged'
-                              : 'workspace.courseMention.materialAttached',
-                          )}
-                        />
-                      ) : null}
-                    </button>
+                    {unavailable ? (
+                      // Why it cannot be picked, on hover and on focus.
+                      <Tooltip>
+                        <TooltipTrigger asChild>{option}</TooltipTrigger>
+                        <TooltipContent side="right" className="max-w-[260px]">
+                          {label}
+                        </TooltipContent>
+                      </Tooltip>
+                    ) : (
+                      option
+                    )}
                   </li>
                 );
               })}

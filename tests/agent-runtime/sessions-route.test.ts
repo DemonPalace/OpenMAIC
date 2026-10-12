@@ -126,6 +126,21 @@ describe('agent session collection route', () => {
     expect(mocks.scheduleConversationTitle).toHaveBeenCalledWith('session-1', 'anon:test');
   });
 
+  it('records a supported interface locale on the session and its opening message (#1880)', async () => {
+    await post({ prompt: 'Read this', materialIds: ['material-1'], locale: 'ja-JP' });
+    expect(mocks.createSession).toHaveBeenCalledWith(expect.objectContaining({ locale: 'ja-JP' }));
+    expect(mocks.postUserMessage).toHaveBeenCalledWith(
+      'session-1',
+      expect.objectContaining({ locale: 'ja-JP' }),
+      { expectedOwnerId: 'anon:test' },
+    );
+  });
+
+  it('ignores an unsupported interface locale on a new session', async () => {
+    await post({ prompt: 'Build a course', locale: 'not-a-locale' });
+    expect(mocks.createSession.mock.calls.at(-1)![0]).not.toHaveProperty('locale');
+  });
+
   it('does not schedule an ordinary session until its create write resolves', async () => {
     let resolveCreate:
       | ((value: Awaited<ReturnType<typeof mocks.createSession>>) => void)

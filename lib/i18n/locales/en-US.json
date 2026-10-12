@@ -1996,6 +1996,7 @@
   "workspace": {
     "knowledgeBase": {
       "title": "Knowledge base",
+      "topLevel": "Top level",
       "back": "Back",
       "search": "Search names and file types",
       "loading": "Loading…",
@@ -2110,9 +2111,13 @@
     "courseLinkMore": "{{count}} more classroom(s)",
     "courseMention": {
       "search": "Search classrooms and materials",
+      "searchMaterials": "Search materials",
+      "searchClassrooms": "Search classrooms",
       "courseOrder": "Open classroom first, then recently updated",
       "materialOrder": "Newest uploads first",
       "title": "Reference a classroom for this message",
+      "titleBoth": "Reference a classroom or attach knowledge base material to this message",
+      "titleMaterials": "Attach knowledge base material to this message",
       "empty": "No classroom matches",
       "alreadyNamed": "Already referenced",
       "remove": "Remove {{name}}",
@@ -2124,6 +2129,7 @@
       "knowledgeBase": "Knowledge base",
       "emptyWithMaterials": "No classroom or material matches",
       "attachMaterial": "Attach {{name}} to this message",
+      "materialUnavailable": "{{name}} can't be attached ({{reason}}). Open the knowledge base to see why and parse it again.",
       "materialAttached": "Already in this conversation",
       "materialStaged": "Already on this message",
       "materialsCapped": "Showing the first {{count}} materials — keep typing to narrow it down"

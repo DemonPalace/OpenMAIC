@@ -45,6 +45,7 @@ import {
 } from './fetch-url';
 import { assembleRunnerTools, buildRunnerCoursePrompt } from './runner-contract';
 import { buildMaterialTools, MATERIAL_TOOL_NAMES } from './material-tools';
+import { defaultLocale, supportedLocaleOf, type Locale } from '@/lib/i18n/types';
 import { startExtractionWatcher, type ExtractionWatcher } from './extraction-watcher';
 import {
   buildMaterialLibraryTools,
@@ -699,6 +700,25 @@ export function durableUserMessageSeq(message: AgentMessage): number | null {
 }
 
 /**
+ * The interface language in effect once the user message `through` has been
+ * consumed (#1880): the latest message up to it that names a supported
+ * locale, else the session's own (for a first run with no message event at
+ * all), else the project default. Messages after `through` never count, so a
+ * queued message cannot change the words of the turn before it.
+ */
+export function localeThrough(
+  messages: ReadonlyMap<number, Locale>,
+  through: number,
+  sessionLocale: unknown,
+): Locale {
+  let latest: { seq: number; locale: Locale } | null = null;
+  for (const [seq, locale] of messages) {
+    if (seq <= through && (!latest || seq > latest.seq)) latest = { seq, locale };
+  }
+  return latest?.locale ?? supportedLocaleOf(sessionLocale) ?? defaultLocale;
+}
+
+/**
  * The classrooms a message named, resolved against the owner's own library.
  *
  * The composer stores a SNAPSHOT title on the ref, which is right for the
@@ -1215,6 +1235,14 @@ export async function runSession(ctx: RunContext, meta: ClaimedAgentSession): Pr
 
     const loggedMessages = await listAgentUserMessages(store, id);
     let deliveredThrough = meta.deliveredUserMessageSeq ?? 0;
+    // Each durable message's interface language (#1880), filled as the run
+    // reads messages; `localeThrough` decides which one is in effect.
+    const messageLocales = new Map<number, Locale>();
+    const rememberLocale = (message: { seq: number; locale?: unknown }) => {
+      const locale = supportedLocaleOf(message.locale);
+      if (locale) messageLocales.set(message.seq, locale);
+    };
+    loggedMessages.forEach(rememberLocale);
     // Resolve the classrooms each pending message named against the owner's
     // library BEFORE the prompt is built: the run must be told the course's
     // current name (reference semantics), and the same resolved refs feed the
@@ -1361,6 +1389,23 @@ export async function runSession(ctx: RunContext, meta: ClaimedAgentSession): Pr
       prompt: meta.prompt,
       idleAttach,
     });
+    // The language of the message this run answers first: the one it starts
+    // from (not the newest queued), or -- a first prompt, or a resume -- what
+    // was in effect at the last consumed message. A user frame in the retained
+    // transcript was consumed even when the delivered cursor, a separate
+    // write, did not land before the worker stopped. It moves only when a
+    // steered message is actually consumed (below).
+    const consumedInTranscript = plannedMessages.reduce(
+      (latest, message) => Math.max(latest, durableUserMessageSeq(message) ?? 0),
+      0,
+    );
+    let runLocale = localeThrough(
+      messageLocales,
+      plannedStart.kind === 'prompt' && plannedStart.durableMessageSeq !== undefined
+        ? plannedStart.durableMessageSeq
+        : Math.max(deliveredThrough, consumedInTranscript),
+      meta.locale,
+    );
     // The owner probe is the tool layer's legality boundary: every course call
     // declares its stageId, and stageAccess resolves that stage against the
     // session owner (owned / foreign / missing / tombstoned) before the tool
@@ -1427,12 +1472,14 @@ export async function runSession(ctx: RunContext, meta: ClaimedAgentSession): Pr
       sessionId: id,
       onLibraryChanged: onMaterialLibraryChanged,
       extractionWatcher,
+      locale: () => runLocale,
     });
     // Organizing the knowledge base: the run's owner, never a parameter.
     const materialLibraryTools = buildMaterialLibraryTools({
       sessionId: id,
       ownerId: meta.ownerId,
       onLibraryChanged: onMaterialLibraryChanged,
+      locale: () => runLocale,
     });
     // Session-scoped registered voices: register_voice appends here, and
     // list_voices / set_roster (roster-tools) read the same array, so a cloned
@@ -1561,7 +1608,14 @@ export async function runSession(ctx: RunContext, meta: ClaimedAgentSession): Pr
         if (event.message.role === 'assistant') {
           trackToolCallMessage(inFlightToolCalls, event.message);
         }
-        if (event.message.role === 'user') userFramesSeen += 1;
+        if (event.message.role === 'user') {
+          userFramesSeen += 1;
+          // A durable message enters the transcript here -- the start prompt
+          // or a steered follow-up -- and from now on the run answers it, in
+          // its language.
+          const consumed = durableUserMessageSeq(event.message);
+          if (consumed !== null) runLocale = localeThrough(messageLocales, consumed, meta.locale);
+        }
         enqueue(async () => {
           await entrySession!.appendMessage(event.message);
           const deliveredSeq = durableUserMessageSeq(event.message);
@@ -1621,6 +1675,8 @@ export async function runSession(ctx: RunContext, meta: ClaimedAgentSession): Pr
       let delivered = 0;
       for (const message of all) {
         if (message.seq <= deliveredThrough || acceptedMessageSeqs.has(message.seq)) continue;
+        // Recorded now, in effect only once pi consumes the message.
+        rememberLocale(message);
         const followUp = toFollowUp(message);
         // Same resolution as the start path: a steered message names its
         // classrooms on the durable event, and the model must be told the

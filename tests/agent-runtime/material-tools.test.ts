@@ -39,6 +39,7 @@ function ownerSource(
     status?: 'idle' | 'pending' | 'running' | 'done' | 'failed';
     revision?: string;
     error?: string | null;
+    reasonCode?: string;
   } = {},
 ): OwnerMaterialEntry {
   const status = options.status ?? (options.revision ? 'done' : 'idle');
@@ -54,7 +55,10 @@ function ownerSource(
     assetId: 'pool-src',
     sha256: 'digest',
     status: 'ready',
-    extraction: { status },
+    extraction: {
+      status,
+      ...(options.reasonCode ? { reasonCode: options.reasonCode } : {}),
+    } as OwnerMaterialEntry['extraction'],
     createdAt: 0,
     deletedAt: null,
     folderId: null,
@@ -279,7 +283,7 @@ describe('material agent tools', () => {
     expect(result.details).toMatchObject({ materialId: 'mat_source', status: 'pending' });
   });
 
-  it('waits through running and reports each terminal material including failure reason', async () => {
+  it('waits through running and reports a failure in the page’s words, not the diagnostic', async () => {
     const states = [
       material({
         id: 'mat_source',
@@ -299,6 +303,7 @@ describe('material agent tools', () => {
         getMaterial,
         waitPollIntervalMs: 1,
         waitForDelay: vi.fn().mockResolvedValue(undefined),
+        locale: () => 'en-US',
       }),
       'wait_for_materials',
     );
@@ -310,9 +315,15 @@ describe('material agent tools', () => {
       complete: true,
       timedOut: false,
       materials: [
-        { materialId: 'mat_source', status: 'failed', reason: 'extractor rejected input' },
+        {
+          materialId: 'mat_source',
+          status: 'failed',
+          statusLabel: 'Parse failed',
+          reason: 'Parse failed',
+        },
       ],
     });
+    expect(JSON.stringify(result)).not.toContain('extractor rejected input');
   });
 
   it('honours the wait bound and returns current per-material status', async () => {
@@ -535,8 +546,8 @@ describe('material agent tools', () => {
   });
 
   it.each([
-    ['idle', 'not been extracted yet'],
-    ['running', 'in progress'],
+    ['idle', 'not parsed yet'],
+    ['running', 'Parsing'],
     ['failed', 'to retry'],
   ] as const)(
     'guides the agent when a library source in state %s has no text yet',
@@ -550,6 +561,7 @@ describe('material agent tools', () => {
             entry: ownerSource({ status, error: status === 'failed' ? 'parser said no' : null }),
           }),
           readText,
+          locale: () => 'en-US',
         }),
         'read_material',
       );
@@ -558,12 +570,179 @@ describe('material agent tools', () => {
       expect(result.details).toMatchObject({
         status: 'extraction_required',
         extraction: status,
-        ...(status === 'failed' ? { reason: 'parser said no' } : {}),
+        ...(status === 'failed' ? { reason: 'Parse failed' } : {}),
       });
+      expect(JSON.stringify(result)).not.toContain('parser said no');
       expect(isErrorOf(result)).toBeUndefined();
       expect(readText).not.toHaveBeenCalled();
     },
   );
+
+  // #1880: the model gets the page's stable reason code and wording; the
+  // diagnostic (endpoints, key hints) stays in the server log.
+  it.each([
+    ['zh-CN', '解析服务不可用', '请联系管理员完成配置', '顶层'],
+    [
+      'en-US',
+      'Parsing service unavailable',
+      'Ask your administrator to configure one',
+      'Top level',
+    ],
+  ] as const)(
+    'gives the model a failed library source’s code and %s page wording, never the diagnostic',
+    async (locale, reason, guidance, topLevel) => {
+      const diagnostic =
+        'no document parser configured: set PARSER_BASE_URL=https://parser.internal and PARSER_API_KEY';
+      const entry = ownerSource({
+        status: 'failed',
+        error: diagnostic,
+        reasonCode: 'service_unavailable',
+      });
+      const tools = buildMaterialTools({
+        sessionId: 'ses_1',
+        resolveMaterial: vi.fn().mockResolvedValue({ origin: 'owner', entry }),
+        listLibrary: async () => [entry],
+        attachedIds: async () => new Set<string>(),
+        readText: vi.fn(),
+        ensureOwnerExtraction: vi.fn().mockResolvedValue({ status: 'failed', queued: false }),
+        waitPollIntervalMs: 1,
+        waitForDelay: vi.fn().mockResolvedValue(undefined),
+        locale: () => locale,
+      });
+      const results = [
+        await tool(tools, 'list_materials').execute('c1', { scope: 'library' } as never),
+        await tool(tools, 'read_material').execute('c2', {
+          materialId: 'src_a',
+          scope: 'library',
+        } as never),
+        await tool(tools, 'wait_for_materials').execute('c3', {
+          materialIds: ['src_a'],
+          scope: 'library',
+          timeoutSec: 1,
+        } as never),
+        await tool(tools, 'extract_material').execute('c4', {
+          materialId: 'src_a',
+          scope: 'library',
+        } as never),
+      ];
+      for (const result of results) {
+        const wire = JSON.stringify(result);
+        expect(wire).not.toContain('PARSER_BASE_URL');
+        expect(wire).not.toContain('PARSER_API_KEY');
+        expect(wire).not.toContain('parser.internal');
+        expect(wire).toContain('"reasonCode":"service_unavailable"');
+        expect(wire).toContain(reason);
+        expect(wire).toContain(guidance);
+      }
+      // The page's word for "not in a folder", in the same language.
+      expect(JSON.stringify(results[0])).toContain(`"folderLabel":"${topLevel}"`);
+    },
+  );
+
+  // The model reads a tool result's text, not its details: the page's words
+  // must be in the text it actually receives (#1880).
+  it.each([
+    ['idle', ['已存入 · 未解析']],
+    ['running', ['解析中']],
+    ['failed', ['解析失败', '解析服务不可用', '请联系管理员完成配置']],
+  ] as const)(
+    'puts the page’s words for a %s library source without text into what the model reads',
+    async (status, words) => {
+      const read = tool(
+        buildMaterialTools({
+          sessionId: 'ses_1',
+          resolveMaterial: vi.fn().mockResolvedValue({
+            origin: 'owner',
+            entry: ownerSource({
+              status,
+              ...(status === 'failed'
+                ? { error: 'set PARSER_API_KEY', reasonCode: 'service_unavailable' }
+                : {}),
+            }),
+          }),
+          readText: vi.fn(),
+          locale: () => 'zh-CN',
+        }),
+        'read_material',
+      );
+      const result = await read.execute('call_1', { materialId: 'src_a' } as never);
+      const text = result.content.map((part) => (part as { text?: string }).text ?? '').join('\n');
+      for (const word of words) expect(text).toContain(word);
+      expect(text).not.toContain('PARSER_API_KEY');
+    },
+  );
+
+  it('reads an unknown or missing stored code as the generic failure', async () => {
+    const tools = buildMaterialTools({
+      sessionId: 'ses_1',
+      listLibrary: async () => [
+        { ...ownerSource({ status: 'failed', reasonCode: 'made_up_code' }), id: 'src_unknown' },
+        { ...ownerSource({ status: 'failed' }), id: 'src_legacy' },
+      ],
+      attachedIds: async () => new Set<string>(),
+      locale: () => 'en-US',
+    });
+    const { details } = await tool(tools, 'list_materials').execute('c1', {
+      scope: 'library',
+    } as never);
+    for (const listed of (details as { materials: { extraction: Record<string, unknown> }[] })
+      .materials) {
+      expect(listed.extraction).toEqual({
+        status: 'failed',
+        statusLabel: 'Parse failed',
+        reason: 'Parse failed',
+      });
+    }
+  });
+
+  it('keeps a conversation source’s stored code but not its diagnostic in its listing', async () => {
+    const list = tool(
+      buildMaterialTools({
+        sessionId: 'ses_1',
+        listMaterials: vi.fn().mockResolvedValue([
+          material({
+            id: 'mat_source',
+            kind: 'source',
+            extraction: {
+              status: 'failed',
+              attempts: 1,
+              error: 'upstream 401 from https://asr.internal: bad key',
+              reasonCode: 'service_unavailable',
+              stats: {
+                chars: 0,
+                pages: 1,
+                imageCount: 0,
+                diagnostics: ['https://asr.internal rejected key'],
+              },
+            },
+          }),
+        ]),
+        locale: () => 'en-US',
+      }),
+      'list_materials',
+    );
+    const result = await list.execute('c1', {} as never);
+    const wire = JSON.stringify(result);
+    expect(wire).not.toContain('asr.internal');
+    expect(wire).not.toContain('bad key');
+    // The stored code survives, with the page's configuration guidance.
+    expect(wire).toContain('"reasonCode":"service_unavailable"');
+    expect(wire).toContain('Ask your administrator to configure one');
+    expect(wire).toContain('"pages":1');
+  });
+
+  it('tells the model to use the returned words and never show tool names or raw fields', () => {
+    const tools = buildMaterialTools({ sessionId: 'ses_1' });
+    for (const name of ['list_materials', 'extract_material', 'wait_for_materials'] as const) {
+      const { description } = tool(tools, name);
+      expect(description).toContain('statusLabel');
+      expect(description).toContain(
+        'Never show the user tool names, field names, ids or raw values',
+      );
+      // No words of one language baked in: those come with each result.
+      expect(description).not.toContain('Searchable');
+    }
+  });
 
   it('starts a library source’s extraction on the owner chain and reports that it did', async () => {
     const ensureOwnerExtraction = vi.fn().mockResolvedValue({ status: 'pending', queued: true });
@@ -576,13 +755,19 @@ describe('material agent tools', () => {
           .mockResolvedValue({ origin: 'owner', entry: ownerSource({ status: 'idle' }) }),
         ensureOwnerExtraction,
         enqueueExtraction,
+        locale: () => 'en-US',
       }),
       'extract_material',
     );
     const result = await extract.execute('call_1', { materialId: 'src_a' } as never);
     expect(ensureOwnerExtraction).toHaveBeenCalledOnce();
     expect(enqueueExtraction).not.toHaveBeenCalled();
-    expect(result.details).toEqual({ materialId: 'src_a', status: 'pending', started: true });
+    expect(result.details).toEqual({
+      materialId: 'src_a',
+      status: 'pending',
+      statusLabel: 'Parsing',
+      started: true,
+    });
   });
 
   it('refuses to wait in library scope without material ids', async () => {

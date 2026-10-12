@@ -1140,7 +1140,9 @@ export function MaterialLibraryPage({
         className={cn(
           layout.row,
           layout.columns,
-          drag.dragId === material.materialId && 'opacity-50',
+          // Carried as the rail carries a course (#1880): lifted, on the rail's
+          // pressed-row tint.
+          drag.dragId === material.materialId && 'ws-row-dragging bg-[color:var(--ws-tint)]',
         )}
       >
         <div className={cn('flex min-w-0 flex-1 items-start gap-2', options.nested && 'pl-6')}>
@@ -1424,6 +1426,13 @@ export function MaterialLibraryPage({
     </li>
   ) : null;
 
+  /** The file being carried is in a folder: only then can it move out of one. */
+  const carriedFromFolder =
+    drag.dragKind === 'material' &&
+    tree.expanded.some((id) =>
+      (tree.folder(id)?.files ?? []).some((file) => file.materialId === drag.dragId),
+    );
+
   // ── What the list region holds ──────────────────────────────────────
   const searching = tree.mode === 'search';
   const primary = searching ? tree.results : tree.root;
@@ -1651,11 +1660,23 @@ export function MaterialLibraryPage({
           >
             {body}
             {!searching && primary.status === 'ready' ? (
+              // The rail's ground (#1880): stated as soon as a file in a folder
+              // is carried -- a top-level file has nowhere to move out of -- and
+              // pinned to the foot of the page so it is in reach of a long list.
               <div
                 {...drag.folderProps()}
                 data-testid="kb-drop-top-level"
-                className={cn('min-h-20', drag.folderTarget === '' && 'ws-drop-into')}
-              />
+                data-armed={carriedFromFolder ? 'true' : 'false'}
+                className={cn(
+                  'ws-ground-drop',
+                  carriedFromFolder && 'ws-ground-drop-armed',
+                  drag.folderTarget === '' && 'ws-drop-into',
+                )}
+              >
+                {carriedFromFolder ? (
+                  <span className="ws-ground-drop-label">{t('workspace.dropToUnfile')}</span>
+                ) : null}
+              </div>
             ) : null}
           </div>
         </section>

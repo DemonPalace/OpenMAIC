@@ -570,8 +570,11 @@ export async function runNextOwnerExtraction(
     await runClaimedOwnerExtraction(claim, dependencies, state);
   } catch (error) {
     if (!(error instanceof OwnerExtractionClaimLostError) && !state.lost) {
+      const reason = error instanceof Error ? error.message : String(error);
+      // The diagnostic is for operators: tools give the model only a stable reason.
+      console.warn(`[owner-extraction] ${claim.materialId} failed: ${reason}`);
       await settleOwnerMaterialExtractionFailure(pool, claim, {
-        reason: error instanceof Error ? error.message : String(error),
+        reason,
         retryable: isTransientExtractionError(error),
         reasonCode:
           error instanceof OwnerMaterialBytesUnavailableError

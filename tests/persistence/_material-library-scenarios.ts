@@ -441,7 +441,8 @@ export async function libraryToolFlowScenario(h: ExtractionHarness): Promise<voi
     expect.objectContaining({
       materialId: 'src-a',
       attached: false,
-      extraction: { status: 'idle' },
+      // The page's word for the state comes with the code (#1880).
+      extraction: { status: 'idle', statusLabel: expect.any(String) },
     }),
   ]);
 
@@ -449,7 +450,12 @@ export async function libraryToolFlowScenario(h: ExtractionHarness): Promise<voi
     materialId: 'src-a',
     scope: 'library',
   });
-  expect(extract.details).toEqual({ materialId: 'src-a', status: 'pending', started: true });
+  expect(extract.details).toEqual({
+    materialId: 'src-a',
+    status: 'pending',
+    statusLabel: expect.any(String),
+    started: true,
+  });
   // Again: already queued, not started a second time.
   expect(
     (await runTool('ses-1', 'extract_material', { materialId: 'src-a', scope: 'library' })).details,

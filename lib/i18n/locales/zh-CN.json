@@ -1996,6 +1996,7 @@
   "workspace": {
     "knowledgeBase": {
       "title": "知识库",
+      "topLevel": "顶层",
       "back": "返回",
       "search": "搜索名称或文件类型",
       "loading": "加载中…",
@@ -2110,9 +2111,13 @@
     "courseLinkMore": "还有 {{count}} 节课堂",
     "courseMention": {
       "search": "搜索课堂和资料",
+      "searchMaterials": "搜索资料",
+      "searchClassrooms": "搜索课堂",
       "courseOrder": "当前课堂优先，其余按最近更新时间排序",
       "materialOrder": "按上传时间从新到旧",
       "title": "为这条消息引用课堂",
+      "titleBoth": "为这条消息引用课堂或附加知识库资料",
+      "titleMaterials": "为这条消息附加知识库资料",
       "empty": "没有匹配的课堂",
       "alreadyNamed": "已引用",
       "remove": "移除{{name}}",
@@ -2124,6 +2129,7 @@
       "knowledgeBase": "知识库",
       "emptyWithMaterials": "没有匹配的课堂或材料",
       "attachMaterial": "把 {{name}} 附加到这条消息",
+      "materialUnavailable": "{{name}} 无法附加（{{reason}}）。请在知识库中查看原因并重新解析。",
       "materialAttached": "本会话已有",
       "materialStaged": "已在这条消息里",
       "materialsCapped": "只显示前 {{count}} 份材料，继续输入可缩小范围"

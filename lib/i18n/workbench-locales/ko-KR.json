@@ -236,6 +236,7 @@
       "extractionDone": "이미 분석했습니다",
       "extractionComplete": "분석을 마쳤습니다",
       "extractionStillRunning": "아직 분석 중입니다",
+      "parseFailed": "분석 실패",
       "folderExisted": "폴더가 이미 있습니다",
       "unchanged": "변경 없음",
       "movedOutOfFolder": "폴더 밖으로 옮겼습니다"

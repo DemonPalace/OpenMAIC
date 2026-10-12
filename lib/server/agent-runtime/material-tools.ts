@@ -49,6 +49,8 @@ import {
   type OwnerMaterialEntry,
 } from '@/lib/persistence/session-material-links';
 import { getServerPersistenceProvider } from '@/lib/persistence/server-provider';
+import { defaultLocale, type Locale } from '@/lib/i18n/types';
+import type { MaterialExtractionReasonCode } from '@/lib/types/material-extraction-failure';
 
 import {
   listSessionScopeMaterials,
@@ -61,6 +63,11 @@ import {
   type ResolvedMaterial,
 } from './material-resolver';
 import type { ExtractionWatcher } from './extraction-watcher';
+import {
+  MATERIAL_USER_WORDING,
+  materialModelCopy,
+  type MaterialModelCopy,
+} from './material-model-copy';
 import type { MaterialLibraryChange } from './material-library-tools';
 import { getAgentSessionMaterialStore, getSessionMaterialQueryable } from './session-materials';
 
@@ -209,6 +216,12 @@ export interface MaterialToolDependencies {
    * the run's `library_changed`, whether or not the agent waits for it.
    */
   extractionWatcher?: Pick<ExtractionWatcher, 'watch' | 'observe'>;
+  /**
+   * The interface language in effect for this call -- the user message the
+   * run is answering -- read on every call, so a message in another language
+   * changes the words from its own turn on. Defaults to the project default.
+   */
+  locale?: () => Locale;
 }
 
 /** The fail-closed answer: a referenced id does not exist or is not visible here. */
@@ -357,20 +370,53 @@ function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) throw new Error('aborted');
 }
 
-/** The extraction state of a library source as the tools report it. */
-function ownerExtractionOf(entry: OwnerMaterialEntry): {
+/** A parse state as the tools report it: the code, and the page's words (`./material-model-copy`). */
+interface ReportedExtraction {
   status: ExtractionStatus;
+  statusLabel: string;
+  reasonCode?: MaterialExtractionReasonCode;
   reason?: string;
-} {
-  const status = (entry.extraction?.status ?? 'idle') as ExtractionStatus;
+  guidance?: string;
+}
+
+/** A state and, when it failed, its stored code -- never the diagnostic text. */
+function reportedExtraction(
+  status: ExtractionStatus,
+  storedReasonCode: unknown,
+  copy: MaterialModelCopy,
+): ReportedExtraction {
   return {
     status,
-    ...(status === 'failed' && entry.extractionError ? { reason: entry.extractionError } : {}),
+    statusLabel: copy.statusLabel(status),
+    ...(status === 'failed' ? copy.failure(storedReasonCode) : {}),
+  };
+}
+
+/** The extraction state of a library source as the tools report it. */
+function ownerExtractionOf(entry: OwnerMaterialEntry, copy: MaterialModelCopy): ReportedExtraction {
+  const status = (entry.extraction?.status ?? 'idle') as ExtractionStatus;
+  return reportedExtraction(status, entry.extraction?.reasonCode, copy);
+}
+
+/**
+ * A session row's extraction state as the tools report it: its stored code
+ * through the same filter as a library source's; never the diagnostic text
+ * (`error`, `stats.diagnostics`).
+ */
+function publicSessionExtractionOf(
+  extraction: AgentSessionMaterial['extraction'],
+  copy: MaterialModelCopy,
+) {
+  const { error: _diagnostic, reasonCode, stats, status, ...rest } = extraction;
+  return {
+    ...rest,
+    ...reportedExtraction(status, reasonCode, copy),
+    ...(stats ? { stats: (({ diagnostics: _hidden, ...counts }) => counts)(stats) } : {}),
   };
 }
 
 /** The model-visible projection of one session row. */
-function publicSessionMaterialOf(record: AgentSessionMaterial) {
+function publicSessionMaterialOf(record: AgentSessionMaterial, copy: MaterialModelCopy) {
   return {
     materialId: record.id,
     kind: record.kind,
@@ -378,12 +424,16 @@ function publicSessionMaterialOf(record: AgentSessionMaterial) {
     ...(record.sourceUrl ? { sourceUrl: record.sourceUrl } : {}),
     textChars: record.textChars,
     createdAt: record.createdAt,
-    extraction: record.extraction,
+    extraction: publicSessionExtractionOf(record.extraction, copy),
   };
 }
 
 /** The model-visible projection of one owner material. Pool pointers stay private. */
-function publicOwnerMaterialOf(entry: OwnerMaterialEntry, attached?: boolean) {
+function publicOwnerMaterialOf(
+  entry: OwnerMaterialEntry,
+  copy: MaterialModelCopy,
+  attached?: boolean,
+) {
   return {
     materialId: entry.id,
     kind: entry.kind,
@@ -391,11 +441,13 @@ function publicOwnerMaterialOf(entry: OwnerMaterialEntry, attached?: boolean) {
     ...(entry.mime ? { mime: entry.mime } : {}),
     bytes: entry.bytes,
     folderId: entry.folderId,
+    // The page's word for "not in a folder", for the model to use with the user.
+    ...(entry.folderId === null ? { folderLabel: copy.topLevel } : {}),
     ...(entry.derivedFrom ? { derivedFrom: entry.derivedFrom } : {}),
     ...(entry.lineage ?? {}),
     ...(entry.kind === 'source'
       ? {
-          extraction: ownerExtractionOf(entry),
+          extraction: ownerExtractionOf(entry, copy),
           ...(entry.extractionResult ? { textChars: entry.extractionResult.text.chars } : {}),
         }
       : {}),
@@ -404,10 +456,10 @@ function publicOwnerMaterialOf(entry: OwnerMaterialEntry, attached?: boolean) {
   };
 }
 
-function publicMaterialOf(material: ResolvedMaterial) {
+function publicMaterialOf(material: ResolvedMaterial, copy: MaterialModelCopy) {
   return material.origin === 'session'
-    ? publicSessionMaterialOf(material.record)
-    : publicOwnerMaterialOf(material.entry);
+    ? publicSessionMaterialOf(material.record, copy)
+    : publicOwnerMaterialOf(material.entry, copy);
 }
 
 /** Whether a material has text to search: session text rows, and sources with a result. */
@@ -429,38 +481,57 @@ function isSource(material: ResolvedMaterial): boolean {
     : material.entry.kind === 'source';
 }
 
-function extractionStatusOf(material: ResolvedMaterial): {
-  status: ExtractionStatus;
-  reason?: string;
-  stats?: unknown;
-} {
-  if (material.origin === 'owner') return ownerExtractionOf(material.entry);
-  const { extraction } = material.record;
+function extractionStatusOf(
+  material: ResolvedMaterial,
+  copy: MaterialModelCopy,
+): ReportedExtraction & { stats?: unknown } {
+  if (material.origin === 'owner') return ownerExtractionOf(material.entry, copy);
+  const { status, statusLabel, reasonCode, reason, guidance, stats } = publicSessionExtractionOf(
+    material.record.extraction,
+    copy,
+  );
   return {
-    status: extraction.status,
-    ...(extraction.error ? { reason: extraction.error } : {}),
-    ...(extraction.stats ? { stats: extraction.stats } : {}),
+    status,
+    statusLabel,
+    ...(reasonCode ? { reasonCode } : {}),
+    ...(reason ? { reason } : {}),
+    ...(guidance ? { guidance } : {}),
+    ...(stats ? { stats } : {}),
   };
 }
 
 /** What a library source that has no text yet tells the agent to do next. */
-function sourceTextPendingResult(entry: OwnerMaterialEntry) {
-  const { status, reason } = ownerExtractionOf(entry);
+function sourceTextPendingResult(entry: OwnerMaterialEntry, copy: MaterialModelCopy) {
+  const { status, statusLabel, reasonCode, reason, guidance } = ownerExtractionOf(entry, copy);
   const nextAction =
     status === 'pending' || status === 'running'
-      ? 'Extraction is in progress: call wait_for_materials with this id, then read_material with the same id.'
+      ? 'Parsing: call wait_for_materials with this id, then read_material with the same id.'
       : status === 'failed'
-        ? 'Extraction failed: call extract_material with this id to retry, then wait_for_materials, then read_material with the same id.'
-        : 'This source has not been extracted yet: call extract_material with this id, then wait_for_materials, then read_material with the same id.';
+        ? 'Parse failed: call extract_material with this id to retry, then wait_for_materials, then read_material with the same id.'
+        : 'Stored, not parsed yet: call extract_material with this id, then wait_for_materials, then read_material with the same id.';
   return {
     content: [
-      { type: 'text' as const, text: reason ? `${nextAction}\nReason: ${reason}` : nextAction },
+      {
+        type: 'text' as const,
+        // The model reads this text, not `details`: the page's words go here too.
+        text: [
+          nextAction,
+          `statusLabel: ${statusLabel}`,
+          reason ? `reason: ${reason}` : '',
+          guidance ? `guidance: ${guidance}` : '',
+        ]
+          .filter(Boolean)
+          .join('\n'),
+      },
     ],
     details: {
       status: 'extraction_required' as const,
       materialId: entry.id,
       extraction: status,
+      statusLabel,
+      ...(reasonCode ? { reasonCode } : {}),
       ...(reason ? { reason } : {}),
+      ...(guidance ? { guidance } : {}),
     },
   };
 }
@@ -522,6 +593,8 @@ export function buildMaterialTools(deps: MaterialToolDependencies): AgentTool<ne
   const waitPollIntervalMs = deps.waitPollIntervalMs ?? MATERIAL_WAIT_POLL_MS;
   const now = deps.now ?? Date.now;
   const scopeOf = (scope: MaterialScope | undefined): MaterialScope => scope ?? 'session';
+  // Read per call: the words follow the message the run is answering.
+  const copyNow = () => materialModelCopy(deps.locale?.() ?? defaultLocale);
 
   const listTool: AgentTool<typeof LIST_MATERIALS_SCHEMA> = {
     name: 'list_materials',
@@ -530,10 +603,12 @@ export function buildMaterialTools(deps: MaterialToolDependencies): AgentTool<ne
       'List materials and their ids. Session scope (default) lists what this conversation has ' +
       "attached or made; library scope lists the user's whole knowledge base, newest first, with " +
       'whether each one is attached. Library sources are read by their own id after extraction; ' +
-      'derivatives (images, keyframes) carry derivedFrom and any page or time.',
+      'derivatives (images, keyframes) carry derivedFrom and any page or time. ' +
+      MATERIAL_USER_WORDING,
     parameters: LIST_MATERIALS_SCHEMA,
     execute: async (_callId, params, signal) => {
       throwIfAborted(signal);
+      const copy = await copyNow();
       const query = params.query?.toLowerCase();
       const folderId = params.folderId === 'top-level' ? null : params.folderId;
       if (scopeOf(params.scope) === 'library') {
@@ -548,7 +623,7 @@ export function buildMaterialTools(deps: MaterialToolDependencies): AgentTool<ne
           entries.map((entry) => entry.id),
         );
         const materials = entries.map((entry) =>
-          publicOwnerMaterialOf(entry, attached.has(entry.id)),
+          publicOwnerMaterialOf(entry, copy, attached.has(entry.id)),
         );
         const nextBefore = entries.length >= 100 ? entries.at(-1)!.id : undefined;
         return {
@@ -596,7 +671,7 @@ export function buildMaterialTools(deps: MaterialToolDependencies): AgentTool<ne
           ? []
           : filtered.slice(start, start + SESSION_LIST_PAGE);
       const materials = page.map((material) => ({
-        ...publicMaterialOf(material),
+        ...publicMaterialOf(material, copy),
         ...((material.origin === 'owner' ? material.entry.kind : material.record.kind) === 'source'
           ? { derivativeCount: counts.get(resolvedMaterialId(material)) ?? 0 }
           : {}),
@@ -665,7 +740,7 @@ export function buildMaterialTools(deps: MaterialToolDependencies): AgentTool<ne
       } else {
         const { entry } = material;
         if (entry.kind !== 'source') return unsupportedKindResult(entry.id, entry.kind);
-        if (!entry.extractionResult) return sourceTextPendingResult(entry);
+        if (!entry.extractionResult) return sourceTextPendingResult(entry, await copyNow());
       }
 
       const read = await readText(deps.sessionId, material, signal).catch((error) => {
@@ -895,16 +970,18 @@ export function buildMaterialTools(deps: MaterialToolDependencies): AgentTool<ne
     description:
       'Start extracting one source material, idempotently: an idle or failed source starts; a ' +
       'pending, running or completed one keeps its current state and is not extracted again. ' +
-      'Reports whether this call started it.',
+      'Reports whether this call started it. ' +
+      MATERIAL_USER_WORDING,
     parameters: EXTRACT_MATERIAL_SCHEMA,
     execute: async (_callId, params, signal) => {
       throwIfAborted(signal);
+      const copy = await copyNow();
       const material = await resolve(deps.sessionId, params.materialId, scopeOf(params.scope));
       throwIfAborted(signal);
       if (!material) return notFoundResult();
       if (!isSource(material)) throw new Error('extract_material only accepts source materials.');
 
-      let state: { status: ExtractionStatus; reason?: string; stats?: unknown };
+      let state: ReportedExtraction & { stats?: unknown };
       let started = false;
       if (material.origin === 'owner') {
         const observation = deps.extractionWatcher?.observe();
@@ -926,8 +1003,8 @@ export function buildMaterialTools(deps: MaterialToolDependencies): AgentTool<ne
         }
         state =
           ensured.queued || ensured.status !== material.entry.extraction?.status
-            ? { status: ensured.status }
-            : ownerExtractionOf(material.entry);
+            ? reportedExtraction(ensured.status, undefined, copy)
+            : ownerExtractionOf(material.entry, copy);
       } else {
         let record = material.record;
         if (record.extraction.status === 'idle' || record.extraction.status === 'failed') {
@@ -941,7 +1018,7 @@ export function buildMaterialTools(deps: MaterialToolDependencies): AgentTool<ne
             if (current?.origin === 'session') record = current.record;
           }
         }
-        state = extractionStatusOf({ origin: 'session', record });
+        state = extractionStatusOf({ origin: 'session', record }, copy);
       }
       const result = { materialId: resolvedMaterialId(material), ...state, started };
       return {
@@ -955,9 +1032,10 @@ export function buildMaterialTools(deps: MaterialToolDependencies): AgentTool<ne
     name: 'wait_for_materials',
     label: 'Wait for material extraction',
     description:
-      'Wait until selected materials finish extraction (done or failed), or until the bounded ' +
+      'Wait until selected materials finish parsing (done or failed), or until the bounded ' +
       'timeout. In session scope, omit materialIds to wait for every source of this conversation; ' +
-      'library scope requires materialIds.',
+      'library scope requires materialIds. ' +
+      MATERIAL_USER_WORDING,
     parameters: WAIT_FOR_MATERIALS_SCHEMA,
     execute: async (_callId, params, signal) => {
       const scope = scopeOf(params.scope);
@@ -985,15 +1063,22 @@ export function buildMaterialTools(deps: MaterialToolDependencies): AgentTool<ne
         } else {
           resolved = (await listSessionScope(deps.sessionId)).filter(isSource);
         }
+        const copy = await copyNow();
         const materials = resolved.map((material) => {
-          const { status, reason, stats } = extractionStatusOf(material);
+          const { status, statusLabel, reasonCode, reason, guidance, stats } = extractionStatusOf(
+            material,
+            copy,
+          );
           return {
             materialId: resolvedMaterialId(material),
             status,
+            statusLabel,
             ...(status === 'idle'
               ? { nextAction: 'Call extract_material before waiting or reading.' }
               : {}),
+            ...(reasonCode ? { reasonCode } : {}),
             ...(reason ? { reason } : {}),
+            ...(guidance ? { guidance } : {}),
             ...(stats ? { stats } : {}),
           };
         });
