@@ -639,6 +639,39 @@ describe('material agent tools', () => {
     },
   );
 
+  // The model reads a tool result's text, not its details: the page's words
+  // must be in the text it actually receives (#1880).
+  it.each([
+    ['idle', ['已存入 · 未解析']],
+    ['running', ['解析中']],
+    ['failed', ['解析失败', '解析服务不可用', '请联系管理员完成配置']],
+  ] as const)(
+    'puts the page’s words for a %s library source without text into what the model reads',
+    async (status, words) => {
+      const read = tool(
+        buildMaterialTools({
+          sessionId: 'ses_1',
+          resolveMaterial: vi.fn().mockResolvedValue({
+            origin: 'owner',
+            entry: ownerSource({
+              status,
+              ...(status === 'failed'
+                ? { error: 'set PARSER_API_KEY', reasonCode: 'service_unavailable' }
+                : {}),
+            }),
+          }),
+          readText: vi.fn(),
+          locale: () => 'zh-CN',
+        }),
+        'read_material',
+      );
+      const result = await read.execute('call_1', { materialId: 'src_a' } as never);
+      const text = result.content.map((part) => (part as { text?: string }).text ?? '').join('\n');
+      for (const word of words) expect(text).toContain(word);
+      expect(text).not.toContain('PARSER_API_KEY');
+    },
+  );
+
   it('reads an unknown or missing stored code as the generic failure', async () => {
     const tools = buildMaterialTools({
       sessionId: 'ses_1',

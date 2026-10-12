@@ -1390,14 +1390,20 @@ export async function runSession(ctx: RunContext, meta: ClaimedAgentSession): Pr
       idleAttach,
     });
     // The language of the message this run answers first: the one it starts
-    // from (not the newest queued), or -- a first prompt, or a resume after the
-    // last delivered message -- what was in effect at the delivered cursor. It
-    // moves only when a steered message is actually consumed (below).
+    // from (not the newest queued), or -- a first prompt, or a resume -- what
+    // was in effect at the last consumed message. A user frame in the retained
+    // transcript was consumed even when the delivered cursor, a separate
+    // write, did not land before the worker stopped. It moves only when a
+    // steered message is actually consumed (below).
+    const consumedInTranscript = plannedMessages.reduce(
+      (latest, message) => Math.max(latest, durableUserMessageSeq(message) ?? 0),
+      0,
+    );
     let runLocale = localeThrough(
       messageLocales,
       plannedStart.kind === 'prompt' && plannedStart.durableMessageSeq !== undefined
         ? plannedStart.durableMessageSeq
-        : deliveredThrough,
+        : Math.max(deliveredThrough, consumedInTranscript),
       meta.locale,
     );
     // The owner probe is the tool layer's legality boundary: every course call

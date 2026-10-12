@@ -631,6 +631,28 @@ describe('runSession material wording follows the consumed message', () => {
     mocks.store.hasSessionRunHistory.mockResolvedValue(false);
   });
 
+  it('resumes in the language of a frame saved before its delivered cursor landed', async () => {
+    // The worker saved user frame 6 to the transcript, then stopped before the
+    // separate delivered-cursor write: the cursor still says 5. The takeover
+    // continues the turn answering 6, so it must speak 6's language.
+    mocks.entrySeed.push({
+      role: 'user',
+      content: 'message 6',
+      timestamp: 6,
+      openmaicDurableUserMessageSeq: 6,
+    });
+    mocks.store.hasSessionRunHistory.mockResolvedValue(true);
+    mocks.store.listUserMessages.mockResolvedValue([message(5, 'en-US'), message(6, 'ja-JP')]);
+    const run = runSession(
+      { running: new Map(), shuttingDown: false },
+      { ...SESSION, locale: 'zh-CN', claimReason: 'orphaned', deliveredUserMessageSeq: 5 },
+    );
+    await waitForReady();
+    expect(await listedReason()).toBe(REASON['ja-JP']);
+    await settle(run);
+    mocks.store.hasSessionRunHistory.mockResolvedValue(false);
+  });
+
   it('keeps two sessions apart: one run’s language never reaches the next', async () => {
     const first = runSession(
       { running: new Map(), shuttingDown: false },

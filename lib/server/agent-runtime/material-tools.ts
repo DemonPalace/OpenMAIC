@@ -513,7 +513,13 @@ function sourceTextPendingResult(entry: OwnerMaterialEntry, copy: MaterialModelC
     content: [
       {
         type: 'text' as const,
-        text: [nextAction, reason ? `Reason: ${reason}` : '', guidance ?? '']
+        // The model reads this text, not `details`: the page's words go here too.
+        text: [
+          nextAction,
+          `statusLabel: ${statusLabel}`,
+          reason ? `reason: ${reason}` : '',
+          guidance ? `guidance: ${guidance}` : '',
+        ]
           .filter(Boolean)
           .join('\n'),
       },
