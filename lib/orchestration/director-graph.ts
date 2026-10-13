@@ -36,9 +36,13 @@ import { buildStructuredPrompt } from './prompt-builder';
 import { summarizeConversation } from './summarizers/conversation-summary';
 import { convertMessagesToOpenAI } from './summarizers/message-converter';
 import { buildDirectorPrompt, parseDirectorDecision } from './director-prompt';
-import { getEffectiveActions } from './tool-schemas';
+import { getEffectiveActions } from '@/lib/chat/pi/tool-schemas';
 import type { AgentTurnSummary, WhiteboardActionRecord } from './types';
-import { parseStructuredChunk, createParserState, finalizeParser } from './stateless-generate';
+import {
+  parseStructuredChunk,
+  createParserState,
+  finalizeParser,
+} from '@/lib/chat/structured-output';
 import { createLogger } from '@/lib/logger';
 
 const log = createLogger('DirectorGraph');

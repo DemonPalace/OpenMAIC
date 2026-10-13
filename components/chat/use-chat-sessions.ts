@@ -30,7 +30,8 @@ import { classroomChatUsable, loadModelCapabilities } from '@/lib/model-settings
 import { USER_AVATAR } from '@/lib/types/roundtable';
 import { StreamBuffer } from '@/lib/buffer/stream-buffer';
 import type { AgentStartItem, ActionItem } from '@/lib/buffer/stream-buffer';
-import { runAgentLoop, type AgentLoopStoreState } from '@/lib/chat/agent-loop';
+import { runAgentLoop } from '@/lib/chat/agent-loop';
+import type { AgentLoopStoreState } from '@/lib/chat/store-state';
 import { ActionEngine } from '@/lib/action/engine';
 import {
   buildQuizResultsForStoreState,

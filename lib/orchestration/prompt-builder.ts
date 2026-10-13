@@ -7,7 +7,7 @@
 import type { StatelessChatRequest } from '@/lib/types/chat';
 import type { AgentConfig } from '@/lib/orchestration/registry/types';
 import type { WhiteboardActionRecord, AgentTurnSummary } from './types';
-import { getActionDescriptions, getEffectiveActions } from './tool-schemas';
+import { getActionDescriptions, getEffectiveActions } from '@/lib/chat/pi/tool-schemas';
 import { buildStateContext } from './summarizers/state-context';
 import { buildVirtualWhiteboardContext } from './summarizers/whiteboard-ledger';
 import { buildPeerContextSection } from './summarizers/peer-context';

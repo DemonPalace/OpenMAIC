@@ -49,7 +49,7 @@ import {
   createParserState,
   parseStructuredChunk,
   finalizeParser,
-} from '@/lib/orchestration/stateless-generate';
+} from '@/lib/chat/structured-output';
 import { type AgentConfig, getActionsForRole } from '@/lib/orchestration/registry/types';
 import type { AgentTurnSummary } from '@/lib/orchestration/types';
 import type { StatelessChatRequest } from '@/lib/types/chat';

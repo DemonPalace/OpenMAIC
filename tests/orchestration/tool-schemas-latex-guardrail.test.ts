@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import { buildStructuredPrompt } from '@/lib/orchestration/prompt-builder';
 import type { AgentConfig } from '@/lib/orchestration/registry/types';
-import { getActionDescriptions } from '@/lib/orchestration/tool-schemas';
+import { getActionDescriptions } from '@/lib/chat/pi/tool-schemas';
 import type { StatelessChatRequest } from '@/lib/types/chat';
 
 const agent: AgentConfig = {

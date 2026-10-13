@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { runAgentLoop, type AgentLoopStoreState } from '@/lib/chat/agent-loop';
+import { runAgentLoop } from '@/lib/chat/agent-loop';
+import type { AgentLoopStoreState } from '@/lib/chat/store-state';
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
