@@ -4,7 +4,7 @@ import { fileURLToPath } from 'url';
 import { parseArgs } from 'util';
 import type { EvalScenario, ScenarioRunResult, CheckpointResult, EvalReport } from './types';
 import type { Action } from '@/lib/types/action';
-import { runAgentLoop, type AgentLoopIterationResult } from '@/lib/chat/agent-loop';
+import type { DirectorState, StatelessEvent } from '@/lib/types/chat';
 import { EvalStateManager } from './state-manager';
 import { initCapture, captureWhiteboard, closeCapture } from './capture';
 import { scoreScreenshot } from './scorer';
@@ -75,6 +75,46 @@ function loadScenarios(): EvalScenario[] {
   return scenarios;
 }
 
+// ==================== Pi SSE Stream ====================
+
+type DoneData = Extract<StatelessEvent, { type: 'done' }>['data'];
+
+interface AgentMessageDraft {
+  agentId: string;
+  textParts: string[];
+  actionParts: Array<{ type: string; actionName: string; params: unknown }>;
+  sealed: boolean;
+}
+
+async function* readSseEvents(response: Response): AsyncGenerator<StatelessEvent> {
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error('No response body');
+  const decoder = new TextDecoder();
+  let buffer = '';
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const chunks = buffer.split('\n\n');
+      buffer = chunks.pop() || '';
+      for (const chunk of chunks) {
+        const line = chunk.trim();
+        if (!line.startsWith('data: ')) continue;
+        let event: StatelessEvent;
+        try {
+          event = JSON.parse(line.slice(6));
+        } catch {
+          continue; // Skip malformed events (heartbeats, etc.)
+        }
+        yield event;
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 // ==================== Single Scenario Run ====================
 
 async function runScenario(
@@ -99,9 +139,13 @@ async function runScenario(
     metadata?: unknown;
   }> = [];
 
-  // Per-turn wall-clock latency around runAgentLoop. Used to compare cost
+  // Per-turn wall-clock latency around the Pi request. Used to compare cost
   // when toggling EVAL_ENABLE_THINKING.
   const turnDurationsMs: number[] = [];
+
+  // Carried from each turn's done event into the next request, as the app
+  // does within a session; starts empty for every scenario run.
+  let directorState: DirectorState | undefined;
 
   try {
     for (let turnIdx = 0; turnIdx < scenario.turns.length; turnIdx++) {
@@ -115,142 +159,137 @@ async function runScenario(
         metadata: { createdAt: Date.now() },
       });
 
-      // Per-iteration state for the eval callbacks
-      let iterResult: AgentLoopIterationResult | null = null;
-      let currentAgentId: string | null = null;
+      // One Pi request per scripted user turn. Within it the director may hand
+      // the turn to several agents, so text and actions are grouped by the
+      // messageId of each agent_start and sealed into its own history message
+      // at agent_end.
+      const turnStartMs = Date.now();
+      const response = await fetch(`${BASE_URL}/api/chat/pi`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messages,
+          storeState: stateManager.getStoreState(),
+          // The app enables whiteboard tools for in-class requests; without
+          // this flag Pi offers only spotlight/laser and the board stays empty.
+          config: { ...scenario.config, piEnableWhiteboardTools: true },
+          directorState,
+          // The server resolves the key from its configuration.
+          model,
+          // Inject thinking config when EVAL_ENABLE_THINKING is set. The chat
+          // route defaults to disabled; this opt-in lets us measure latency /
+          // quality tradeoff without changing prod.
+          ...(ENABLE_THINKING ? { thinking: { enabled: true } } : {}),
+        }),
+      });
+      if (!response.ok) {
+        throw new Error(`API error: ${response.status} - ${await response.text()}`);
+      }
+
+      const agentMessages = new Map<string, AgentMessageDraft>();
       let currentMessageId: string | null = null;
-      const textParts: string[] = [];
-      const actionParts: Array<{ type: string; actionName: string; params: unknown }> = [];
-      let cueUserReceived = false;
+      let done: DoneData | null = null;
       // Serial action queue: `wb_*` actions must apply in emission order because
       // ActionEngine.ensureWhiteboardOpen() awaits an internal delay on first
       // call, which would let later actions race ahead and insert elements
       // out of order. We chain each execute() onto the previous one and await
-      // the tail in onIterationEnd before the screenshot.
+      // the tail after the stream ends, before the screenshot.
       let actionChain: Promise<void> = Promise.resolve();
 
-      // Use the shared agent loop — same logic as frontend
-      const controller = new AbortController();
-      const turnStartMs = Date.now();
-      await runAgentLoop(
-        {
-          config: scenario.config,
-          // The server resolves the key from its configuration.
-          model,
-        },
-        {
-          getStoreState: () => stateManager.getStoreState(),
-          getMessages: () => messages,
+      const draftFor = (messageId: string | undefined): AgentMessageDraft | undefined =>
+        agentMessages.get(messageId ?? currentMessageId ?? '');
+      const seal = (draft: AgentMessageDraft) => {
+        if (draft.sealed) return;
+        draft.sealed = true;
+        if (draft.textParts.length === 0 && draft.actionParts.length === 0) return;
+        const text = draft.textParts.join('');
+        const parts: unknown[] = text ? [{ type: 'text', text }] : [];
+        for (const ap of draft.actionParts) {
+          parts.push({ ...ap, state: 'result', output: { success: true } });
+        }
+        messages.push({
+          role: 'assistant',
+          content: text,
+          parts,
+          metadata: {
+            senderName: draft.agentId,
+            originalRole: 'agent',
+            agentId: draft.agentId,
+            createdAt: Date.now(),
+          },
+        });
+      };
 
-          fetchChat: async (body, signal) => {
-            // Reset per-iteration accumulators
-            currentAgentId = null;
-            currentMessageId = null;
-            textParts.length = 0;
-            actionParts.length = 0;
-            cueUserReceived = false;
-            iterResult = null;
-            actionChain = Promise.resolve();
-
-            // Inject thinking config when EVAL_ENABLE_THINKING is set.
-            // The chat route defaults to disabled; this opt-in lets us
-            // measure latency / quality tradeoff without changing prod.
-            const bodyWithThinking = ENABLE_THINKING
-              ? { ...body, thinking: { enabled: true } }
-              : body;
-
-            return fetch(`${BASE_URL}/api/chat`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(bodyWithThinking),
-              signal,
+      for await (const event of readSseEvents(response)) {
+        switch (event.type) {
+          case 'agent_start':
+            currentMessageId = event.data.messageId;
+            agentMessages.set(event.data.messageId, {
+              agentId: event.data.agentId,
+              textParts: [],
+              actionParts: [],
+              sealed: false,
             });
-          },
+            break;
 
-          onEvent: (event) => {
-            switch (event.type) {
-              case 'agent_start':
-                currentAgentId = event.data.agentId;
-                currentMessageId = event.data.messageId;
-                break;
+          case 'text_delta':
+            draftFor(event.data.messageId)?.textParts.push(event.data.content);
+            break;
 
-              case 'text_delta':
-                textParts.push(event.data.content);
-                break;
+          case 'action': {
+            const action: Action = {
+              id: event.data.actionId,
+              type: event.data.actionName,
+              ...event.data.params,
+            } as Action;
+            actionChain = actionChain.then(() => stateManager.executeAction(action));
+            draftFor(event.data.messageId)?.actionParts.push({
+              type: `action-${event.data.actionName}`,
+              actionName: event.data.actionName,
+              params: event.data.params,
+            });
+            break;
+          }
 
-              case 'action': {
-                const action: Action = {
-                  id: event.data.actionId,
-                  type: event.data.actionName,
-                  ...event.data.params,
-                } as Action;
-                // Serialize execution: chain each action onto the previous
-                // one so they apply in emission order. We await `actionChain`
-                // in onIterationEnd before screenshotting.
-                actionChain = actionChain.then(() => stateManager.executeAction(action));
-                actionParts.push({
-                  type: `action-${event.data.actionName}`,
-                  actionName: event.data.actionName,
-                  params: event.data.params,
-                });
-                break;
-              }
+          case 'agent_end': {
+            const draft = agentMessages.get(event.data.messageId);
+            if (draft) seal(draft);
+            break;
+          }
 
-              case 'cue_user':
-                cueUserReceived = true;
-                break;
+          case 'whiteboard':
+            // Only the native child runtime emits these; its board lives in the
+            // server RuntimeStore, which this harness cannot observe. Not seeing
+            // one does not prove the server runs the legacy child.
+            throw new Error(
+              'Server emitted a native whiteboard event; run the eval against a server with the legacy child runtime',
+            );
 
-              case 'done':
-                iterResult = {
-                  directorState: event.data.directorState,
-                  totalAgents: event.data.totalAgents,
-                  agentHadContent: event.data.agentHadContent ?? true,
-                  cueUserReceived,
-                };
-                break;
+          case 'done':
+            done = event.data;
+            break;
 
-              case 'error':
-                throw new Error(`API error: ${event.data.message}`);
-            }
-          },
+          case 'error':
+            throw new Error(`API error: ${event.data.message}`);
+        }
+      }
+      if (!done) {
+        throw new Error('Stream ended without a done event');
+      }
+      for (const draft of agentMessages.values()) seal(draft);
+      directorState = done.directorState ?? directorState;
+      if (done.sessionClosed) {
+        console.log(`      Session closed (${done.endReason ?? 'no reason'})`);
+      }
 
-          onIterationEnd: async () => {
-            // Wait for all queued actions to apply to the store before we
-            // use its state (message construction, screenshot capture).
-            try {
-              await actionChain;
-            } catch (err) {
-              const msg = err instanceof Error ? err.message : String(err);
-              console.error(`    Action execution error: ${msg.slice(0, 120)}`);
-            }
-
-            // Build assistant message for conversation history
-            if (currentMessageId && (textParts.length > 0 || actionParts.length > 0)) {
-              const parts: unknown[] = [];
-              if (textParts.length > 0) {
-                parts.push({ type: 'text', text: textParts.join('') });
-              }
-              for (const ap of actionParts) {
-                parts.push({ ...ap, state: 'result', output: { success: true } });
-              }
-              messages.push({
-                role: 'assistant',
-                content: textParts.join(''),
-                parts,
-                metadata: {
-                  senderName: currentAgentId || 'agent',
-                  originalRole: 'agent',
-                  agentId: currentAgentId,
-                  createdAt: Date.now(),
-                },
-              });
-            }
-
-            return iterResult;
-          },
-        },
-        controller.signal,
-      );
+      // Wait for all queued actions to apply to the store before the
+      // screenshot.
+      try {
+        await actionChain;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`    Action execution error: ${msg.slice(0, 120)}`);
+      }
       const turnDurationMs = Date.now() - turnStartMs;
       turnDurationsMs.push(turnDurationMs);
       console.log(
