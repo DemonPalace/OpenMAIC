@@ -187,6 +187,61 @@ describe('PPTX export of inline formulas in slide prose', () => {
   });
 });
 
+/** The paragraphs of each exported table cell, as their text. */
+async function exportedCellParagraphs(cells: string[]): Promise<string[][]> {
+  const slide = slideWith([
+    {
+      id: 'table-1',
+      type: 'table',
+      ...geometry,
+      colWidths: cells.map(() => 1 / cells.length),
+      data: [cells.map((text, index) => ({ id: `c${index}`, colspan: 1, rowspan: 1, text }))],
+    },
+  ]);
+  const scene = {
+    id: 'scene-1',
+    stageId: 'stage-1',
+    type: 'slide',
+    title: 'Scene',
+    order: 1,
+    content: { type: 'slide', canvas: slide },
+  } as Scene;
+  const blob = await buildPptxBlob([slide], [scene], 0.5625, 1000, 100, 1, 'stage-1');
+  const zip = await JSZip.loadAsync(await blob.arrayBuffer());
+  const xml = await zip.file('ppt/slides/slide1.xml')!.async('string');
+  const doc = new DOMParser().parseFromString(xml, 'application/xml');
+  expect(doc.getElementsByTagName('parsererror')).toHaveLength(0);
+  return Array.from(doc.getElementsByTagName('a:tc'), (cell) =>
+    Array.from(cell.getElementsByTagName('a:p'), (paragraph) =>
+      Array.from(paragraph.getElementsByTagName('a:t'), (node) => node.textContent ?? '').join(''),
+    ),
+  );
+}
+
+describe('PPTX export of table cell lines', () => {
+  it('keeps newlines in plain cell text as paragraphs, with or without an ampersand', async () => {
+    expect(await exportedCellParagraphs(['R&D\nSales', 'A\nB', 'R&amp;D\nSales'])).toEqual([
+      ['R&D', 'Sales'],
+      ['A', 'B'],
+      ['R&D', 'Sales'],
+    ]);
+  });
+
+  it('keeps empty paragraphs, line breaks and newlines in cell markup', async () => {
+    expect(
+      await exportedCellParagraphs([
+        '<p>A</p><p></p><p>B</p>',
+        '<p>A<br>B</p><p><br></p><p>C</p>',
+        '<p>R&amp;D\nSales <span data-inline-math="x^2">x^2</span></p>',
+      ]),
+    ).toEqual([
+      ['A', '', 'B'],
+      ['A', 'B', '', 'C'],
+      ['R&D', 'Sales x^2'],
+    ]);
+  });
+});
+
 describe('proseToPlainText', () => {
   it('returns text without markup unchanged', () => {
     expect(proseToPlainText('Topic sentence')).toBe('Topic sentence');
@@ -196,6 +251,19 @@ describe('proseToPlainText', () => {
     expect(proseToPlainText('<p>a &lt; b &amp; c</p><p>d<br/>e&#xA0;f</p>')).toBe(
       'a < b & c\nd\ne f',
     );
+  });
+
+  it('decodes references in plain text without touching its lines', () => {
+    expect(proseToPlainText('R&D\nSales')).toBe('R&D\nSales');
+    expect(proseToPlainText('a &lt; b\n&amp; c')).toBe('a < b\n& c');
+    expect(proseToPlainText('a < b')).toBe('a < b');
+  });
+
+  it('keeps empty paragraphs and does not add lines for trailing or nested breaks', () => {
+    expect(proseToPlainText('<p>A</p><p></p><p>B</p>')).toBe('A\n\nB');
+    expect(proseToPlainText('<p>A<br></p><p>B</p>')).toBe('A\nB');
+    expect(proseToPlainText('<li><p>A</p></li><li><p>B</p></li>')).toBe('A\nB');
+    expect(proseToPlainText('a<br><br>b')).toBe('a\n\nb');
   });
 
   it('turns inline formulas into their source', () => {

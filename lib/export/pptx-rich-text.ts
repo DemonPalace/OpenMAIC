@@ -80,14 +80,20 @@ export function inlineMathSource(item: AST): string | null {
 
 const BLOCK_TAGS = new Set(['p', 'div', 'li']);
 
+/** A tag or comment; a bare `<` or `&` in plain text is not markup. */
+const MARKUP = /<\/?[a-z][^>]*>|<!--/i;
+
 /**
  * Plain text of a table cell for the PPTX table, which takes one string per
  * cell. Cell text is stored as prose HTML: tags are dropped, character
- * references decoded, line breaks and paragraphs become newlines, and inline
- * formulas become their LaTeX source. Text without markup is returned as is.
+ * references decoded, and inline formulas become their LaTeX source. Lines
+ * follow what the slide renderer shows: a newline in the text (the renderer
+ * turns it into a line break), a `<br>`, and each paragraph, empty ones
+ * included, start a new line. Text without markup only has its character
+ * references decoded.
  */
 export function proseToPlainText(html: string): string {
-  if (!/[<&]/.test(html)) return html;
+  if (!MARKUP.test(html)) return html.includes('&') ? decodeHtmlEntities(html) : html;
   const lines: string[] = [];
   let line = '';
   const breakLine = () => {
@@ -97,7 +103,12 @@ export function proseToPlainText(html: string): string {
   const walk = (items: AST[]) => {
     for (const item of items) {
       if (item.type === 'text') {
-        line += decodeHtmlEntities(item.content).replace(/\n/g, '');
+        const [first, ...rest] = decodeHtmlEntities(item.content).split('\n');
+        line += first;
+        for (const next of rest) {
+          breakLine();
+          line += next;
+        }
         continue;
       }
       if (item.type !== 'element') continue;
@@ -110,10 +121,18 @@ export function proseToPlainText(html: string): string {
         line += source;
         continue;
       }
-      const block = BLOCK_TAGS.has(item.tagName);
-      if (block && line) breakLine();
+      if (!BLOCK_TAGS.has(item.tagName)) {
+        walk(item.children);
+        continue;
+      }
+      if (line) breakLine();
+      const linesBefore = lines.length;
       walk(item.children);
-      if (block && line) breakLine();
+      // End the paragraph. One that produced nothing is an empty line; one
+      // that already ended on a break (a trailing <br>, a nested block) adds
+      // no further line.
+      if (line) breakLine();
+      else if (lines.length === linesBefore) lines.push('');
     }
   };
   walk(toAST(html));
