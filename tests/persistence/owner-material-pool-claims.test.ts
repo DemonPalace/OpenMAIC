@@ -79,7 +79,6 @@ describe('owner material pool uploads with extraction and claims', () => {
     registerOwnerMaterial(
       h.pool as unknown as ConnectableQueryable,
       {
-        retention: 'library',
         id,
         ownerId: ACCOUNT,
         kind: 'source',
@@ -147,6 +146,10 @@ describe('owner material pool uploads with extraction and claims', () => {
     await reserve(h, 'src-legacy', bytes, 'objects/src-legacy');
     await finalizeOwnerMaterial(h.pool as never, 'src-legacy', bytes.byteLength, digest(bytes));
 
+    // A pre-pool source already queued on the owner parser retains that queue.
+    await h.pool.query(
+      'UPDATE owner_material SET extraction = \'{"status":"pending"}\' WHERE id = \'src-legacy\'',
+    );
     await ensure(h, 'src-legacy');
     expect(await drain(h, h.deps({ readSource: undefined }))).toBe(1);
 
@@ -188,7 +191,6 @@ describe('owner material pool uploads with extraction and claims', () => {
     await registerOwnerMaterial(
       h.pool as unknown as ConnectableQueryable,
       {
-        retention: 'library',
         id: 'src-mid-claim',
         ownerId: ANON,
         kind: 'source',
@@ -241,7 +243,6 @@ describe('owner material pool uploads with extraction and claims', () => {
     await registerOwnerMaterial(
       h.pool as unknown as ConnectableQueryable,
       {
-        retention: 'library',
         id: 'src-claimed',
         ownerId: ANON,
         kind: 'source',

@@ -41,7 +41,6 @@ import {
 import {
   allocateOwnerMaterialBytes,
   ensureOwnerMaterialSchema,
-  finalizeOwnerMaterial,
   publicMaterial,
   publishOwnerMaterialUpload,
   registerOwnerMaterial,
@@ -195,7 +194,6 @@ export async function seedSource(
   await registerOwnerMaterial(
     h.pool as unknown as ConnectableQueryable,
     {
-      retention: 'library',
       id,
       ownerId: owner,
       kind: 'source',
@@ -209,7 +207,21 @@ export async function seedSource(
   );
   const digest =
     seed.sha256 === undefined ? createHash('sha256').update(bytes).digest('hex') : seed.sha256;
-  await finalizeOwnerMaterial(h.pool as never, id, bytes.byteLength, digest ?? 'pending');
+  // These scenarios exercise the pool/owner parser, as current library uploads do.
+  const assetId = await allocateOwnerMaterialBytes(
+    h.provider,
+    owner,
+    bytes,
+    seed.mime ?? 'application/pdf',
+  );
+  await publishOwnerMaterialUpload(h.provider, owner, id, {
+    assetId,
+    bytes: bytes.byteLength,
+    sha256: digest ?? 'pending',
+  });
+  await h.pool.query(`UPDATE owner_material SET extraction = '{"status":"idle"}' WHERE id = $1`, [
+    id,
+  ]);
   if (seed.sha256 === null) {
     await h.pool.query('UPDATE owner_material SET sha256 = NULL WHERE id = $1', [id]);
   }
@@ -259,6 +271,18 @@ export async function rootsOf(h: ExtractionHarness, rootId: string): Promise<str
   return result.rows.map((row) => row.asset_id);
 }
 
+/** Extraction assertions exclude the original root created by the upload fixture. */
+async function extractionRootsOf(h: ExtractionHarness, id: string): Promise<string[]> {
+  const roots = await rootsOf(h, id);
+  const original = await h.pool.query<{ asset_id: string | null }>(
+    "SELECT asset_id FROM owner_material WHERE id = $1 AND kind = 'source'",
+    [id],
+  );
+  const assetId = original.rows[0]?.asset_id;
+  if (assetId) expect(roots).toContain(assetId);
+  return roots.filter((root) => root !== assetId);
+}
+
 async function entryCount(h: ExtractionHarness): Promise<number> {
   const result = await h.pool.query<{ count: string }>(
     'SELECT COUNT(*)::text AS count FROM asset_entries',
@@ -268,7 +292,7 @@ async function entryCount(h: ExtractionHarness): Promise<number> {
 
 async function rootCount(h: ExtractionHarness): Promise<number> {
   const result = await h.pool.query<{ count: string }>(
-    'SELECT COUNT(*)::text AS count FROM asset_root_refs',
+    `SELECT COUNT(*)::text AS count FROM asset_root_refs r WHERE NOT EXISTS (SELECT 1 FROM owner_material m WHERE m.kind = 'source' AND m.id = r.root_id AND m.asset_id = r.asset_id)`,
   );
   return Number(result.rows[0]!.count);
 }
@@ -304,7 +328,6 @@ export async function ensureStartedScenario(h: ExtractionHarness): Promise<void>
   await registerOwnerMaterial(
     h.pool as unknown as ConnectableQueryable,
     {
-      retention: 'library',
       id: 'src-uploading',
       ownerId: ACCOUNT,
       kind: 'source',
@@ -343,7 +366,6 @@ export async function uploadQueuesExtractionScenario(h: ExtractionHarness): Prom
     await registerOwnerMaterial(
       h.pool as unknown as ConnectableQueryable,
       {
-        retention: 'library',
         id,
         ownerId: ACCOUNT,
         kind: 'source',
@@ -429,7 +451,7 @@ export async function twoConversationsOneExtractionScenario(h: ExtractionHarness
   // and the text's reference to it becomes its alt text rather than a file
   // nothing holds. (Kept images: documentImagesScenario.)
   expect(result.derivatives).toEqual([]);
-  expect(await rootsOf(h, 'src-shared')).toEqual([result.text.assetId]);
+  expect(await extractionRootsOf(h, 'src-shared')).toEqual([result.text.assetId]);
   const text = await h.provider.assetStore.resolve(
     { key: `owner:${ACCOUNT}` },
     result.text.assetId as never,
@@ -519,10 +541,10 @@ export async function supersededClaimScenario(h: ExtractionHarness): Promise<voi
     status: 'running',
     extraction_token: b.token,
   });
-  expect(await rootsOf(h, 'src-race')).toEqual([]);
+  expect(await extractionRootsOf(h, 'src-race')).toEqual([]);
   expect(await runClaimedOwnerExtraction(b, h.deps())).toBe('published');
   const won = await stateOf(h, 'src-race');
-  const roots = await rootsOf(h, 'src-race');
+  const roots = await extractionRootsOf(h, 'src-race');
   const entries = await entryCount(h);
 
   expect(await heartbeatOwnerMaterialExtraction(h.pool as never, a, h.clock.now)).toBe(false);
@@ -551,7 +573,7 @@ export async function supersededClaimScenario(h: ExtractionHarness): Promise<voi
     ),
   ).toBe('not-authorized');
   expect(await stateOf(h, 'src-race')).toEqual(won);
-  expect(await rootsOf(h, 'src-race')).toEqual(roots);
+  expect(await extractionRootsOf(h, 'src-race')).toEqual(roots);
   expect(await entryCount(h)).toBe(entries);
 
   // W claims, loses the lease to X, X fails for good; the teacher restarts it
@@ -624,7 +646,7 @@ export async function deletedSourceScenario(h: ExtractionHarness): Promise<void>
     OwnerExtractionClaimLostError,
   );
   expect(await entryCount(h)).toBe(before);
-  expect(await rootsOf(h, 'src-gone-running')).toEqual([]);
+  expect(await extractionRootsOf(h, 'src-gone-running')).toEqual([]);
   expect((await stateOf(h, 'src-gone-running')).extraction_result).toBeNull();
 }
 
@@ -661,7 +683,7 @@ export async function ownerClaimMidRunScenario(h: ExtractionHarness): Promise<vo
     [textAssetId],
   );
   expect(entry.rows[0]).toEqual({ principal: `owner:${ACCOUNT}`, committed: true });
-  expect(await rootsOf(h, 'src-anon')).toEqual([textAssetId]);
+  expect(await extractionRootsOf(h, 'src-anon')).toEqual([textAssetId]);
 
   // The claim forwards the old owner, but the old token is still not current.
   expect(
@@ -762,7 +784,7 @@ export async function publishRollbackScenario(h: ExtractionHarness): Promise<voi
       h.clock.now,
     ),
   ).toBe('published');
-  expect(await rootsOf(h, 'src-rollback')).toEqual([allocated]);
+  expect(await extractionRootsOf(h, 'src-rollback')).toEqual([allocated]);
   // The same raise, committed this time.
   const raised = await h.pool.query<{ v: number }>(
     'SELECT rule_version AS v FROM asset_reference_tracking',
@@ -799,8 +821,8 @@ export async function ownerCacheScenario(h: ExtractionHarness): Promise<void> {
   // Named after the source that reuses it, not the donor.
   expect(donorFrame.title).toBe('vid-1 at 1.500 seconds');
   expect(reusedFrame.title).toBe('vid-2 at 1.500 seconds');
-  expect(await rootsOf(h, 'vid-2')).toEqual([donor.text.assetId]);
-  expect(await rootsOf(h, reusedFrame.id)).toEqual([donorFrame.assetId]);
+  expect(await extractionRootsOf(h, 'vid-2')).toEqual([donor.text.assetId]);
+  expect(await extractionRootsOf(h, reusedFrame.id)).toEqual([donorFrame.assetId]);
   const frameRow = await h.pool.query<{
     derived_from: string;
     folder_id: string;
@@ -867,7 +889,7 @@ export async function ownerCacheScenario(h: ExtractionHarness): Promise<void> {
     status: 'running',
     extraction_result: null,
   });
-  expect(await rootsOf(h, 'vid-late-hit')).toEqual([]);
+  expect(await extractionRootsOf(h, 'vid-late-hit')).toEqual([]);
   await settleOwnerMaterialExtractionFailure(h.pool as never, lateHit, {
     reason: 'test',
     retryable: false,
@@ -888,7 +910,7 @@ export async function ownerCacheScenario(h: ExtractionHarness): Promise<void> {
   expect(h.mediaExtract).toHaveBeenCalledTimes(6);
   const fresh = (await stateOf(h, 'vid-5')).extraction_result!;
   expect(fresh.reusedFrom).toBeUndefined();
-  expect(await rootsOf(h, 'vid-5')).toEqual([fresh.text.assetId]);
+  expect(await extractionRootsOf(h, 'vid-5')).toEqual([fresh.text.assetId]);
 }
 
 /** Media derivatives: own ids, lineage, page/time, the source's folder, a root each. */
@@ -925,7 +947,7 @@ export async function mediaDerivativeScenario(h: ExtractionHarness): Promise<voi
     status: 'ready',
     oss_key: '',
   });
-  expect(await rootsOf(h, frame.id)).toEqual([frame.assetId]);
+  expect(await extractionRootsOf(h, frame.id)).toEqual([frame.assetId]);
   const text = await h.provider.assetStore.resolve(
     { key: `owner:${ACCOUNT}` },
     result.text.assetId as never,
@@ -953,7 +975,7 @@ export async function quotaFailureScenario(h: ExtractionHarness): Promise<void> 
   // The transcript's entry fitted, then the keyframe's was refused: the run
   // can never publish, so it removed the transcript's entry instead of
   // leaving it to hold quota until it expires. The refused one stored nothing.
-  expect(await entryCount(h)).toBe(0);
+  expect(await entryCount(h)).toBe(1); // The original upload remains rooted.
   expect(await ensure(h, 'vid-big')).toEqual({ status: 'pending', queued: true });
 }
 
@@ -1102,7 +1124,7 @@ export async function cacheCollectorOrderScenario(h: ExtractionHarness): Promise
   await collectEntries(h);
   expect(await entryExists(h, shared.text.assetId)).toBe(true);
   expect(await entryExists(h, shared.derivatives[0].assetId)).toBe(true);
-  expect(await rootsOf(h, 'vid-reuser')).toEqual([shared.text.assetId]);
+  expect(await extractionRootsOf(h, 'vid-reuser')).toEqual([shared.text.assetId]);
 
   // Collector first. A new donor with other bytes, and a source of the same
   // bytes whose run finds it, then loses it before the hit is published.
@@ -1135,7 +1157,7 @@ export async function cacheCollectorOrderScenario(h: ExtractionHarness): Promise
   const fresh = (await stateOf(h, 'vid-late')).extraction_result!;
   expect(fresh.reusedFrom).toBeUndefined();
   expect(fresh.text.assetId).not.toBe(doomed.text.assetId);
-  expect(await rootsOf(h, 'vid-late')).toEqual([fresh.text.assetId]);
+  expect(await extractionRootsOf(h, 'vid-late')).toEqual([fresh.text.assetId]);
 }
 
 /**
@@ -1176,7 +1198,7 @@ export async function sameKeyConcurrentSourcesScenario(h: ExtractionHarness): Pr
   ] as const) {
     const result = state.extraction_result!;
     expect(result.reusedFrom).toBeUndefined();
-    expect(await rootsOf(h, id)).toEqual([result.text.assetId]);
+    expect(await extractionRootsOf(h, id)).toEqual([result.text.assetId]);
     const frames = await h.pool.query<{ id: string }>(
       'SELECT id FROM owner_material WHERE derived_from = $1',
       [id],
@@ -1214,7 +1236,7 @@ export async function claimIntoSameContentScenario(h: ExtractionHarness): Promis
     const state = await stateOf(h, id);
     expect(state).toMatchObject({ owner_id: ACCOUNT, status: 'done' });
     expect(state.extraction_result).toEqual(result);
-    expect(await rootsOf(h, id)).toEqual([result.text.assetId]);
+    expect(await extractionRootsOf(h, id)).toEqual([result.text.assetId]);
     const entries = await h.pool.query<{ principal: string }>(
       'SELECT DISTINCT principal FROM asset_entries WHERE id = ANY($1::text[])',
       [[result.text.assetId, ...result.derivatives.map((d) => d.assetId)]],
@@ -1232,7 +1254,7 @@ export async function claimIntoSameContentScenario(h: ExtractionHarness): Promis
   expect(h.mediaExtract).toHaveBeenCalledTimes(2);
   const reused = (await stateOf(h, 'vid-next')).extraction_result!;
   expect(['vid-anon', 'vid-account']).toContain(reused.reusedFrom);
-  expect(await rootsOf(h, 'vid-next')).toEqual([reused.text.assetId]);
+  expect(await extractionRootsOf(h, 'vid-next')).toEqual([reused.text.assetId]);
 }
 
 /**
@@ -1264,7 +1286,7 @@ export async function fallbackReuseScenario(h: ExtractionHarness): Promise<void>
   const second = (await stateOf(h, 'doc-second')).extraction_result!;
   expect(first.extractor).toMatchObject({ id: 'test-doc' });
   expect(second).toMatchObject({ reusedFrom: 'doc-first', text: first.text });
-  expect(await rootsOf(h, 'doc-second')).toEqual([first.text.assetId]);
+  expect(await extractionRootsOf(h, 'doc-second')).toEqual([first.text.assetId]);
 }
 
 /**
@@ -1456,7 +1478,7 @@ export async function parserFailureScenario(h: ExtractionHarness): Promise<void>
     expect(await runNextOwnerExtraction(h.deps({ providers }))).toBe(false);
     expect(h.documentExtract).toHaveBeenCalledTimes(MAX_OWNER_EXTRACTION_CLAIMS);
     expect(fallback).not.toHaveBeenCalled();
-    expect(await rootsOf(h, 'parser-timeout')).toEqual([]);
+    expect(await extractionRootsOf(h, 'parser-timeout')).toEqual([]);
   } finally {
     parser.mockRestore();
   }

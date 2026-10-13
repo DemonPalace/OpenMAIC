@@ -106,8 +106,8 @@ export async function bootLibraryHarness(
   // Seeded sources name `objects/<id>` (see seedSource); session copies their own keys.
   const objects = h.objects;
   setMaterialByteStoreForTests({
-    deletePrefix: async () => {
-      throw new Error('Unexpected deletePrefix in this byte-store fixture');
+    deletePrefix: async (prefix) => {
+      for (const key of objects.keys()) if (key.startsWith(prefix)) objects.delete(key);
     },
     list: async () => {
       throw new Error('Unexpected list in this byte-store fixture');
@@ -696,7 +696,6 @@ export async function seedPoolSource(
   await registerOwnerMaterial(
     h.pool as never,
     {
-      retention: 'library',
       id,
       ownerId: ACCOUNT,
       kind: 'source',
@@ -736,6 +735,7 @@ export async function rawConsumersScenario(h: LibraryHarness): Promise<void> {
     materialIds: ['src-pool', 'src-old', 'src-bad'],
   });
   // The stored object changes after its digest was recorded.
+  await h.pool.query("UPDATE owner_material SET asset_id = NULL WHERE id = 'src-bad'");
   h.sources.set('src-bad', Buffer.from('tampered'));
 
   const read = async (id: string) => (await resolveRawMaterial('ses-1', id))!.read();
@@ -953,7 +953,9 @@ export async function mediaLibraryScopeScenario(h: ExtractionHarness): Promise<v
 }
 
 async function entryIds(h: ExtractionHarness): Promise<string[]> {
-  const result = await h.pool.query<{ id: string }>('SELECT id FROM asset_entries ORDER BY id');
+  const result = await h.pool.query<{ id: string }>(
+    `SELECT id FROM asset_entries a WHERE NOT EXISTS (SELECT 1 FROM owner_material m WHERE m.kind = 'source' AND m.asset_id = a.id) ORDER BY id`,
+  );
   return result.rows.map((row) => row.id);
 }
 
@@ -1938,7 +1940,6 @@ export async function deleteRefusalScenario(h: ExtractionHarness): Promise<void>
   await registerOwnerMaterial(
     h.pool as never,
     {
-      retention: 'library',
       id: 'delete-uploading',
       ownerId: ACCOUNT,
       kind: 'source',
@@ -2130,8 +2131,8 @@ export async function deleteLegacyScenario(h: LibraryHarness): Promise<void> {
   };
   const keys: string[] = [];
   setMaterialByteStoreForTests({
-    deletePrefix: async () => {
-      throw new Error('Unexpected deletePrefix in this byte-store fixture');
+    deletePrefix: async (prefix) => {
+      for (const key of h.objects.keys()) if (key.startsWith(prefix)) h.objects.delete(key);
     },
     list: async () => {
       throw new Error('Unexpected list in this byte-store fixture');

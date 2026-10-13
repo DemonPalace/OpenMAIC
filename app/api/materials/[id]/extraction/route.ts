@@ -1,3 +1,4 @@
+import { usesClassicExtraction } from '@/lib/persistence/material-extraction-format';
 import { fenceOwnerWrite } from '@/lib/persistence/owner-merges';
 import {
   getOwnerMaterial,
@@ -32,8 +33,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         await fenceOwnerWrite(tx, ownerId);
         return getOwnerMaterial(tx, ownerId, id);
       });
-      if (!record) return libraryNotFound(headers);
-      if (record.retention === 'temporary') {
+      if (!record || record.kind !== 'source' || record.derivedFrom)
+        return libraryNotFound(headers);
+      if (usesClassicExtraction(record)) {
         const started = await startOwnerMaterialExtractions(
           persistence.pool,
           ownerId,

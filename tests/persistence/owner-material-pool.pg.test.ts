@@ -141,7 +141,6 @@ describe.skipIf(!contractUrl)('owner material pool uploads on PostgreSQL', () =>
     registerOwnerMaterial(
       h.pool as unknown as ConnectableQueryable,
       {
-        retention: 'library',
         id,
         ownerId: ANON,
         kind: 'source',

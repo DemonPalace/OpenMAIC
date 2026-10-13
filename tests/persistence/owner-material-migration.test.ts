@@ -105,8 +105,8 @@ describe('backfilling pre-pool material uploads into the asset pool', { timeout:
     onRead = undefined;
     failDelete = false;
     setMaterialByteStoreForTests({
-      deletePrefix: async () => {
-        throw new Error('Unexpected deletePrefix in this byte-store fixture');
+      deletePrefix: async (prefix) => {
+        for (const key of objects.keys()) if (key.startsWith(prefix)) objects.delete(key);
       },
       list: async () => {
         throw new Error('Unexpected list in this byte-store fixture');
@@ -144,7 +144,6 @@ describe('backfilling pre-pool material uploads into the asset pool', { timeout:
     await registerOwnerMaterial(
       h.pool as unknown as ConnectableQueryable,
       {
-        retention: 'library',
         id,
         ownerId: seed.owner ?? ANON,
         kind: 'source',
@@ -152,7 +151,7 @@ describe('backfilling pre-pool material uploads into the asset pool', { timeout:
         bytes: bytes.byteLength,
         originalName: `${id}.pdf`,
         ossKey: `objects/${id}`,
-        extraction: { status: 'idle' },
+        extraction: { status: 'pending' },
       },
       { maxCount: 100, maxTotalBytes: 1_000_000 },
     );
@@ -240,6 +239,49 @@ describe('backfilling pre-pool material uploads into the asset pool', { timeout:
     expect(objects.get('materials/session-1/copy/raw')).toEqual(a);
     // A reader holding the record from before still reads the bytes.
     expect(await readOwnerMaterialBytes(before)).toEqual(a);
+  });
+
+  it('does not backfill classic originals or results, regardless of obsolete retention values', async () => {
+    await boot();
+    for (const status of ['idle', 'failed', 'extracting', 'ready']) {
+      const id = `classic-${status}`;
+      await legacySource(id);
+      const extraction =
+        status === 'ready'
+          ? { status, resultKey: `objects/${id}.extraction/result.json` }
+          : { status };
+      await h.pool.query(
+        `UPDATE owner_material SET extraction = $2::jsonb, retention = 'library' WHERE id = $1`,
+        [id, JSON.stringify(extraction)],
+      );
+      if (status === 'ready') objects.set(extraction.resultKey!, Buffer.from('preserved result'));
+    }
+    expect(await run()).toEqual(zero);
+    for (const status of ['idle', 'failed', 'extracting', 'ready']) {
+      expect(await rowOf(`classic-${status}`)).toMatchObject({
+        asset_id: null,
+        oss_key: `objects/classic-${status}`,
+      });
+      expect(objects.has(`objects/classic-${status}`)).toBe(true);
+    }
+    expect(objects.has('objects/classic-ready.extraction/result.json')).toBe(true);
+    expect(deletes).toEqual([]);
+  });
+
+  it('rechecks processing format before publishing a backfill selected before a retry', async () => {
+    await boot();
+    await legacySource('format-changed');
+    onRead = async () => {
+      await h.pool.query(
+        `UPDATE owner_material SET extraction = '{"status":"extracting"}' WHERE id = 'format-changed'`,
+      );
+    };
+    expect(await run()).toMatchObject({ scanned: 1, migrated: 0, skippedLost: 1 });
+    expect(await rowOf('format-changed')).toMatchObject({
+      asset_id: null,
+      oss_key: 'objects/format-changed',
+    });
+    expect(deletes).toEqual([]);
   });
 
   it('changes nothing on a second pass', async () => {
@@ -364,7 +406,6 @@ describe('backfilling pre-pool material uploads into the asset pool', { timeout:
     await registerOwnerMaterial(
       h.pool as unknown as ConnectableQueryable,
       {
-        retention: 'library',
         id: 'mat-uploading',
         ownerId: ANON,
         kind: 'source',

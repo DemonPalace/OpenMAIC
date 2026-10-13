@@ -126,7 +126,7 @@ it.each(['read_material', 'search_material'])(
       originalName: 'lesson.pdf',
       ossKey: '',
       assetId: 'source-bytes',
-      retention: 'library',
+
       sha256: 'source-sha',
       status: 'ready',
       extraction: { status: 'done' },
@@ -165,3 +165,49 @@ it.each(['read_material', 'search_material'])(
     expect(state.parse).toHaveBeenCalledOnce();
   },
 );
+
+it('reads an immutable classic result with a private revision and rejects unreadable stored JSON', async () => {
+  const { setMaterialByteStoreForTests } = await import('@/lib/server/materials/bytes');
+  const get = vi.fn(async () =>
+    Buffer.from(JSON.stringify({ version: 1, text: 'old result', images: [] })),
+  );
+  setMaterialByteStoreForTests({
+    get,
+    put: vi.fn(),
+    delete: vi.fn(),
+    deletePrefix: vi.fn(),
+    list: vi.fn(),
+  });
+  const legacy = {
+    id: 'classic',
+    ownerId: 'user:alice',
+    extractionResult: null,
+    extraction: { status: 'ready' as const, resultKey: 'private/results/attempt-1' },
+  };
+  state.row = {
+    owner_id: legacy.ownerId,
+    deleted_at: null,
+    extraction_result: null,
+    extraction: legacy.extraction,
+  };
+  try {
+    const first = await readOwnerMaterialText(legacy);
+    expect(first?.text).toBe('old result');
+    expect(first?.revision).toMatch(/^[a-f0-9]{64}$/);
+    expect(await readOwnerMaterialText(legacy)).toEqual(first);
+    expect(
+      (
+        await readOwnerMaterialText({
+          ...legacy,
+          extraction: { ...legacy.extraction, resultKey: 'private/results/attempt-2' },
+        })
+      )?.revision,
+    ).not.toBe(first?.revision);
+    get.mockResolvedValue(Buffer.from('{"version":1,"images":[]}'));
+    expect(await readOwnerMaterialText(legacy)).toBeNull();
+    get.mockRejectedValue(new Error('private diagnostic: missing object'));
+    expect(await readOwnerMaterialText(legacy)).toBeNull();
+  } finally {
+    setMaterialByteStoreForTests(null);
+  }
+});

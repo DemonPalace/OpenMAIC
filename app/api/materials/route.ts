@@ -1,12 +1,12 @@
 /**
- * Shared owner-material upload endpoint. The default is a classic temporary
+ * Shared owner-material upload endpoint. The default keeps the classic
  * attachment: bytes stay in the material byte store and extraction uses the
  * existing classic worker (`extract=false` leaves it idle).
  *
  * The workbench explicitly sends `scope=library`. Its durable upload is
  * published into the owner asset pool with a material root and pending
- * extraction in one transaction. The library scanner processes it; classic
- * unused-upload and run-release cleanup never remove it.
+ * extraction in one transaction. Both upload paths produce durable library
+ * sources; only unfinished reservations may expire.
  *
  * Both paths reserve quota before consuming the body and enforce the same
  * per-type byte limits (413 includes maxBytes), MIME policy, owner fence,
@@ -302,7 +302,6 @@ export async function POST(req: NextRequest) {
             originalName,
             // Library bytes go to the pool; classic bytes keep their reserved key.
             ossKey,
-            retention: library ? 'library' : 'temporary',
             extraction: { status: 'idle' },
           },
           {
@@ -363,11 +362,9 @@ export async function POST(req: NextRequest) {
       // was lost -- a published row is `ready` and is left as it is.
       const hash = createHash('sha256').update(bytes).digest('hex');
       let row: Awaited<ReturnType<typeof publishOwnerMaterialUpload>>;
-      let classicBytesStored = false;
       try {
         if (!library) {
           await byteStore.put(ossKey, bytes, mime);
-          classicBytesStored = true;
           row = await finalizeOwnerMaterial(
             provider.pool,
             createdMaterialId,
@@ -390,22 +387,11 @@ export async function POST(req: NextRequest) {
         if (library) {
           await abandon();
         } else {
-          // Keep main's classic failure cleanup: only drop the reservation
-          // after its byte deletion succeeded; otherwise stale reclaim retries.
-          let bytesDeleted = !classicBytesStored;
-          if (classicBytesStored) {
-            try {
-              await byteStore.delete(ossKey);
-              bytesDeleted = true;
-            } catch (cleanupError) {
-              console.warn(
-                'material byte cleanup failed; keeping its reservation for stale reclaim',
-                context(),
-                cleanupError,
-              );
-            }
-          }
-          if (bytesDeleted) await abandon();
+          // A lost finalize response may already have committed. Recheck under
+          // the reservation lock before deleting any original bytes.
+          await abandonOwnerMaterial(provider, ownerId, createdMaterialId, (key) =>
+            byteStore.delete(key),
+          );
         }
         if (error instanceof AssetQuotaExceededError) {
           return reject(

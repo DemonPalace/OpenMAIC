@@ -1,3 +1,4 @@
+import { usesClassicExtraction } from '@/lib/persistence/material-extraction-format';
 import { fenceOwnerWrite } from '@/lib/persistence/owner-merges';
 /**
  * GET /api/materials/[id]?sessionId= — one material an owned session
@@ -25,8 +26,6 @@ import { fenceOwnerWrite } from '@/lib/persistence/owner-merges';
  * only after commit, with failures retried by a cleanup pass on every start.
  * Page-only: no agent deletion tool and no library event.
  */
-import type { ConnectableQueryable } from '@openmaic/storage/server/reference';
-import { deleteMaterialObjects, getMaterialByteStore } from '@/lib/server/materials/bytes';
 import type { NextRequest } from 'next/server';
 
 import {
@@ -38,7 +37,6 @@ import {
   publicMaterial,
   touchOwnerMaterial,
   getOwnerMaterial,
-  deleteOwnerMaterial,
 } from '@/lib/persistence/owner-materials';
 import { getServerPersistenceProvider } from '@/lib/persistence/server-provider';
 import { isMaterialId } from '@/lib/server/materials/material-id';
@@ -136,18 +134,9 @@ export async function DELETE(req: NextRequest, { params }: Params) {
         return getOwnerMaterial(tx, ownerId, id);
       });
       if (!record) return libraryNotFound(headers);
-      if (record.retention === 'temporary') {
-        const deleted = await deleteOwnerMaterial(
-          persistence.pool as ConnectableQueryable,
-          ownerId,
-          id,
-          (key) => deleteMaterialObjects(getMaterialByteStore(), key),
-        );
-        return deleted
-          ? ownerJson({ materialId: id, deleted: true }, 200, headers)
-          : libraryNotFound(headers);
-      }
-      if (!isAgentRuntimeConfigured()) return new Response('Not found', { status: 404, headers });
+      const classic = usesClassicExtraction(record);
+      if (!classic && !isAgentRuntimeConfigured())
+        return new Response('Not found', { status: 404, headers });
       const outcome = await deleteMaterial(persistence, {
         ownerId,
         materialId: id,
@@ -159,7 +148,9 @@ export async function DELETE(req: NextRequest, { params }: Params) {
         case 'derivative':
           return libraryRefusal(409, 'derivative', 'Delete the source instead', headers);
         case 'deleted':
-          return new Response(null, { status: 204, headers });
+          return classic
+            ? ownerJson({ materialId: id, deleted: true }, 200, headers)
+            : new Response(null, { status: 204, headers });
       }
     } catch (error) {
       return libraryWriteError(error, headers);

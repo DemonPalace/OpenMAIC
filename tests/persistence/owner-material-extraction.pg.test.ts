@@ -391,7 +391,12 @@ describe.skipIf(!contractUrl)('owner-level material extraction on PostgreSQL', (
         `SELECT original_name FROM owner_material WHERE derived_from = 'src-race'`,
       );
       expect(frames.rows).toEqual([{ original_name: 'current' }]);
-      expect(await rootsOf(h, 'src-race')).toEqual([text]);
+      const original = (
+        await h.pool.query<{ asset_id: string }>(
+          "SELECT asset_id FROM owner_material WHERE id = 'src-race'",
+        )
+      ).rows[0].asset_id;
+      expect(await rootsOf(h, 'src-race')).toEqual([original, text].sort());
     });
   });
 });

@@ -1,3 +1,7 @@
+import {
+  hasClassicText,
+  libraryExtractionStatus,
+} from '@/lib/persistence/material-extraction-format';
 /**
  * The agent's material tools: list, read, search, extract and wait -- ported
  * from the reference product's lib/server/agent-runtime/material-tools.ts and
@@ -394,7 +398,7 @@ function reportedExtraction(
 
 /** The extraction state of a library source as the tools report it. */
 function ownerExtractionOf(entry: OwnerMaterialEntry, copy: MaterialModelCopy): ReportedExtraction {
-  const status = (entry.extraction?.status ?? 'idle') as ExtractionStatus;
+  const status = libraryExtractionStatus(entry.extraction?.status);
   return reportedExtraction(status, entry.extraction?.reasonCode, copy);
 }
 
@@ -471,7 +475,10 @@ function isSearchable(material: ResolvedMaterial): boolean {
       record.textAssetId !== null
     );
   }
-  return material.entry.kind === 'source' && material.entry.extractionResult !== null;
+  return (
+    material.entry.kind === 'source' &&
+    (material.entry.extractionResult !== null || hasClassicText(material.entry))
+  );
 }
 
 /** Whether a material is a source whose extraction can be started or waited for. */
@@ -740,7 +747,8 @@ export function buildMaterialTools(deps: MaterialToolDependencies): AgentTool<ne
       } else {
         const { entry } = material;
         if (entry.kind !== 'source') return unsupportedKindResult(entry.id, entry.kind);
-        if (!entry.extractionResult) return sourceTextPendingResult(entry, await copyNow());
+        if (!entry.extractionResult && !hasClassicText(entry))
+          return sourceTextPendingResult(entry, await copyNow());
       }
 
       const read = await readText(deps.sessionId, material, signal).catch((error) => {
@@ -1094,9 +1102,8 @@ export function buildMaterialTools(deps: MaterialToolDependencies): AgentTool<ne
         );
         observation?.watch(
           owned
-            .filter(
-              (entry) =>
-                entry.extraction?.status === 'pending' || entry.extraction?.status === 'running',
+            .filter((entry) =>
+              ['pending', 'running'].includes(libraryExtractionStatus(entry.extraction?.status)),
             )
             .map((entry) => entry.id),
         );
@@ -1107,7 +1114,9 @@ export function buildMaterialTools(deps: MaterialToolDependencies): AgentTool<ne
           const isSettled = (status: string | undefined) =>
             status === 'done' || status === 'failed';
           observation?.settled(
-            owned.filter((entry) => isSettled(entry.extraction?.status)).map((entry) => entry.id),
+            owned
+              .filter((entry) => isSettled(libraryExtractionStatus(entry.extraction?.status)))
+              .map((entry) => entry.id),
           );
           const summary = {
             complete,

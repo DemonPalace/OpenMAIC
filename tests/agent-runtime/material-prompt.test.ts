@@ -42,7 +42,7 @@ function entry(overrides: Partial<OwnerMaterialEntry>): ResolvedMaterial {
       bytes: 3,
       originalName: 'lesson.pdf',
       ossKey: 'objects/secret-key',
-      retention: 'library',
+
       assetId: 'ast_secret_pool',
       sha256: 'digest',
       status: 'ready',

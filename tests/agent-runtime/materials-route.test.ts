@@ -19,7 +19,7 @@ const mocks = vi.hoisted(() => ({
   allocateOwnerMaterialBytes: vi.fn(),
   publishOwnerMaterialUpload: vi.fn(),
   abandonOwnerMaterial: vi.fn(),
-  deleteOwnerMaterial: vi.fn(),
+  deleteMaterial: vi.fn(),
   getOwnerMaterial: vi.fn(),
   byteStore: {
     put: vi.fn(),
@@ -90,10 +90,11 @@ vi.mock('@/lib/persistence/owner-materials', async (importOriginal) => {
     allocateOwnerMaterialBytes: mocks.allocateOwnerMaterialBytes,
     publishOwnerMaterialUpload: mocks.publishOwnerMaterialUpload,
     abandonOwnerMaterial: mocks.abandonOwnerMaterial,
-    deleteOwnerMaterial: mocks.deleteOwnerMaterial,
     getOwnerMaterial: mocks.getOwnerMaterial,
   };
 });
+
+vi.mock('@/lib/persistence/material-library', () => ({ deleteMaterial: mocks.deleteMaterial }));
 
 import { GET, POST } from '@/app/api/materials/route';
 import { DELETE } from '@/app/api/materials/[id]/route';
@@ -129,7 +130,7 @@ function ownerMaterial(overrides: Partial<OwnerMaterialRecord> = {}): OwnerMater
     bytes: 5,
     originalName: '讲义.pdf',
     ossKey: '',
-    retention: 'library',
+
     assetId: 'ast_00000000000000000000000000',
     sha256: '2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824',
     status: 'ready',
@@ -150,13 +151,13 @@ beforeEach(() => {
   mocks.getSessionMaterial.mockResolvedValue(material());
   mocks.listLinkedOwnerMaterials.mockResolvedValue([]);
   mocks.getOwnerMaterial.mockImplementation(async (_pool, _owner, id) =>
-    id === 'mat_00000000000000000000000000' ? ownerMaterial({ retention: 'temporary' }) : null,
+    id === 'mat_00000000000000000000000000' ? ownerMaterial({ assetId: null }) : null,
   );
   mocks.registerOwnerMaterial.mockResolvedValue(ownerMaterial());
   mocks.finalizeOwnerMaterial.mockImplementation(async (_pool, id, _bytes, _sha, options) =>
     ownerMaterial({
       id,
-      retention: 'temporary',
+      assetId: null,
       extraction: { status: options.extract ? 'extracting' : 'idle' },
     }),
   );
@@ -327,7 +328,7 @@ describe('POST /api/materials', () => {
     );
   });
 
-  it('keeps the default upload temporary, with classic extraction and no pool allocation', async () => {
+  it('keeps the default upload on its classic extraction and byte-store path', async () => {
     const response = await POST(
       new NextRequest('http://localhost/api/materials', {
         method: 'POST',
@@ -340,7 +341,6 @@ describe('POST /api/materials', () => {
     expect(mocks.registerOwnerMaterial).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
-        retention: 'temporary',
         ossKey: expect.stringContaining('materials/owner-1/'),
       }),
       expect.anything(),
@@ -360,11 +360,14 @@ describe('POST /api/materials', () => {
       }),
     );
     expect(response.status).toBe(500);
-    expect(mocks.byteStore.delete).toHaveBeenCalledOnce();
-    expect(mocks.abandonOwnerMaterial).toHaveBeenCalledOnce();
-    expect(mocks.byteStore.delete.mock.invocationCallOrder[0]).toBeLessThan(
-      mocks.abandonOwnerMaterial.mock.invocationCallOrder[0]!,
+    expect(mocks.byteStore.delete).not.toHaveBeenCalled();
+    expect(mocks.abandonOwnerMaterial).toHaveBeenCalledWith(
+      expect.anything(),
+      'owner-1',
+      expect.any(String),
+      expect.any(Function),
     );
+    // Persistence owns the locked ready/uploading recheck and invokes cleanup only if safe.
   });
 
   it('uploads raw bytes into the owner library and returns the flat 201 view', async () => {
@@ -677,40 +680,26 @@ describe('DELETE /api/materials/[id]', () => {
     });
 
   it("deletes the owner's material and removes its bytes", async () => {
-    mocks.deleteOwnerMaterial.mockImplementation(
-      async (
-        _pool: unknown,
-        _owner: string,
-        _id: string,
-        deleteBytes: (key: string) => Promise<void>,
-      ) => {
-        await deleteBytes('materials/owner-1/key');
-        return true;
-      },
-    );
+    mocks.deleteMaterial.mockResolvedValue({ status: 'deleted', materialIds: [MATERIAL_ID] });
     const response = await del();
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ materialId: MATERIAL_ID, deleted: true });
-    expect(mocks.deleteOwnerMaterial).toHaveBeenCalledWith(
-      mocks.queryPool,
-      'owner-1',
-      MATERIAL_ID,
-      expect.any(Function),
-    );
-    // The bytes, and the extraction result stored next to them.
-    expect(mocks.byteStore.delete).toHaveBeenCalledWith('materials/owner-1/key');
-    expect(mocks.byteStore.deletePrefix).toHaveBeenCalledWith('materials/owner-1/key.extraction/');
+    expect(mocks.deleteMaterial).toHaveBeenCalledWith(expect.anything(), {
+      ownerId: 'owner-1',
+      materialId: MATERIAL_ID,
+      fence: 'request',
+    });
   });
 
   it('answers a plain 404 for a material the owner does not have', async () => {
-    mocks.deleteOwnerMaterial.mockResolvedValue(false);
+    mocks.deleteMaterial.mockResolvedValue(false);
     const response = await del(`mat_${'z'.repeat(26)}`);
     expect(response.status).toBe(404);
     await expect(response.text()).resolves.toBe('Not found');
   });
 
   it('maps a retired owner to the owner-retired response', async () => {
-    mocks.deleteOwnerMaterial.mockRejectedValue(new OwnerRetiredError('owner-1'));
+    mocks.deleteMaterial.mockRejectedValue(new OwnerRetiredError('owner-1'));
     const response = await del();
     expect(response.status).toBe(403);
     await expect(response.json()).resolves.toMatchObject({
@@ -721,11 +710,11 @@ describe('DELETE /api/materials/[id]', () => {
   it('answers a malformed id with the same 404 before touching the database', async () => {
     const response = await del(`mat_${'0'.repeat(25)}\u0000`);
     expect(response.status).toBe(404);
-    expect(mocks.deleteOwnerMaterial).not.toHaveBeenCalled();
+    expect(mocks.deleteMaterial).not.toHaveBeenCalled();
   });
 
   it('serves without the agent runtime and 404s without server persistence', async () => {
-    mocks.deleteOwnerMaterial.mockResolvedValue(true);
+    mocks.deleteMaterial.mockResolvedValue({ status: 'deleted', materialIds: [MATERIAL_ID] });
     mocks.runtimeConfigured = false;
     expect((await del()).status).toBe(200);
     mocks.persistenceConfigured = false;

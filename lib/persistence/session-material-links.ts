@@ -104,7 +104,6 @@ function entryColumns(alias: string): string {
     'folder_id',
     'display_name',
     'extraction_error',
-    'extraction_result',
   ].map((column) => `${alias}.${column}`);
   columns.push(`(SELECT jsonb_build_object('pageNumber', recorded->'pageNumber',
                                          'timeMs', recorded->'timeMs')
@@ -150,7 +149,7 @@ const LINKED_SOURCES = `
     JOIN owner_material AS source
       ON source.id = link.material_id AND source.owner_id = session.owner_id
    WHERE link.session_id = $1
-     AND source.kind = 'source' AND source.retention = 'library' AND source.status = 'ready' AND source.deleted_at IS NULL`;
+     AND source.kind = 'source' AND source.status = 'ready' AND source.deleted_at IS NULL`;
 
 /** Each linked source and its live derivatives (`linked` is {@link LINKED_SOURCES}). */
 const LINKED_MATERIALS = `
@@ -159,7 +158,7 @@ const LINKED_MATERIALS = `
     JOIN owner_material AS material
       ON material.id = linked.id
       OR (material.derived_from = linked.id AND material.owner_id = linked.owner_id
-          AND material.status = 'ready' AND material.retention = 'library' AND material.deleted_at IS NULL)`;
+          AND material.status = 'ready' AND material.deleted_at IS NULL)`;
 
 /**
  * Every material a session reaches through its links: each linked source,
@@ -210,7 +209,7 @@ export async function getSessionOwnerMaterial(
        JOIN owner_material AS material ON material.owner_id = session.owner_id
        LEFT JOIN owner_material AS source ON source.id = material.derived_from
       WHERE session.id = $1 AND session.deleted_at IS NULL AND material.id = $2
-        AND material.status = 'ready' AND material.retention = 'library' AND material.deleted_at IS NULL
+        AND material.status = 'ready' AND material.deleted_at IS NULL
         AND (material.derived_from IS NULL
           OR (source.owner_id = material.owner_id AND source.status = 'ready'
               AND source.deleted_at IS NULL))
@@ -301,7 +300,9 @@ async function listLibrary(
     );
   }
   if (options.withTextOnly) {
-    where.push(`material.kind = 'source' AND material.extraction_result IS NOT NULL`);
+    where.push(
+      `material.kind = 'source' AND (material.extraction_result IS NOT NULL OR (material.extraction->>'status' = 'ready' AND material.extraction->>'resultKey' IS NOT NULL))`,
+    );
   }
   if (options.sourcesOnly) where.push(`material.kind = 'source'`);
   if (options.before !== undefined) {
@@ -322,7 +323,7 @@ async function listLibrary(
        }
        LEFT JOIN owner_material AS source ON source.id = material.derived_from
       WHERE ${bySession ? 'session.id = $1 AND session.deleted_at IS NULL' : 'material.owner_id = $1'}
-        AND material.status = 'ready' AND material.retention = 'library' AND material.deleted_at IS NULL
+        AND material.status = 'ready' AND material.deleted_at IS NULL
         AND (material.derived_from IS NULL
           OR (source.owner_id = material.owner_id AND source.status = 'ready'
               AND source.deleted_at IS NULL))
@@ -415,7 +416,7 @@ export async function attachOwnerMaterialsToSession(
       `SELECT ${OWNER_MATERIAL_COLUMNS}
          FROM owner_material
         WHERE id = ANY($1::text[]) AND owner_id = $2 AND kind = 'source'
-          AND status = 'ready' AND retention = 'library' AND deleted_at IS NULL
+          AND status = 'ready' AND deleted_at IS NULL
         ORDER BY id
           FOR SHARE`,
       [ids, ownerId],

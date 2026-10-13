@@ -10,6 +10,7 @@ import {
 import { OwnerRetiredError } from '@/lib/persistence/owner-merges';
 import {
   deleteOwnerMaterial,
+  sweepUnusedOwnerMaterials,
   ensureOwnerMaterialSchema,
   getReadyOwnerMaterials,
   finalizeOwnerMaterial,
@@ -373,7 +374,7 @@ describe('owner material reservations', () => {
     expect(await rowById(pool.db, 'mat_ready')).toMatchObject({ status: 'ready' });
   });
 
-  it('keeps a deleted row whose byte deletion failed until the reclaim sweep removes it', async () => {
+  it('retries explicit byte deletion through the sweep and retains its tombstone', async () => {
     const limits = { maxCount: 1, maxTotalBytes: 1_000 };
     await insertRawUpload(pool.db, {
       id: 'mat_ready',
@@ -393,9 +394,9 @@ describe('owner material reservations', () => {
     await registerOwnerMaterial(pool as unknown as ConnectableQueryable, input(), limits);
 
     const deleteBytes = vi.fn().mockResolvedValue(undefined);
-    await reclaimStaleOwnerMaterialUploads(persistence(), 'owner-1', deleteBytes);
+    await sweepUnusedOwnerMaterials(pool, { untouchedBefore: 0, deleteObjects: deleteBytes });
     expect(deleteBytes).toHaveBeenCalledWith('materials/owner-1/mat_ready');
-    expect(await rowById(pool.db, 'mat_ready')).toBeNull();
+    expect(await rowById(pool.db, 'mat_ready')).toMatchObject({ oss_key: '' });
     // The fresh reservation is untouched.
     expect(await rowById(pool.db, 'mat_1')).toMatchObject({ status: 'uploading' });
   });

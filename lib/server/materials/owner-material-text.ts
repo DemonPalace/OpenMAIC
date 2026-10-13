@@ -1,3 +1,6 @@
+import { createHash } from 'node:crypto';
+import type { OwnerMaterialExtraction } from '@/lib/persistence/owner-materials';
+import { readMaterialExtractionResult } from './extraction';
 /**
  * Read a source's extracted text: the latest successful extraction, with the
  * revision it was published at.
@@ -42,6 +45,7 @@ export interface OwnerMaterialText {
 /** What the caller read of the source: its id, its owner then, and its result then. */
 export interface OwnerMaterialTextLocation {
   id: string;
+  extraction?: OwnerMaterialExtraction | null;
   ownerId: string;
   extractionResult: Pick<OwnerExtractionResult, 'revision' | 'text' | 'derivatives'> | null;
 }
@@ -74,12 +78,33 @@ async function textOf(
   };
 }
 
+async function readClassicText(
+  location: Pick<OwnerMaterialTextLocation, 'id' | 'extraction'>,
+): Promise<OwnerMaterialText | null> {
+  if (location.extraction?.status !== 'ready' || !location.extraction.resultKey) return null;
+  try {
+    const result = await readMaterialExtractionResult({
+      id: location.id,
+      extraction: location.extraction,
+    });
+    return {
+      text: result.text,
+      // Each attempt has an immutable result key; never expose that private key.
+      revision: createHash('sha256')
+        .update(JSON.stringify([location.id, location.extraction.resultKey]))
+        .digest('hex'),
+    };
+  } catch {
+    return null;
+  }
+}
+
 async function readOnce(
   location: OwnerMaterialTextLocation,
   signal?: AbortSignal,
 ): Promise<OwnerMaterialText | null> {
   const result = location.extractionResult;
-  if (!result) return null;
+  if (!result) return readClassicText(location);
   try {
     const read = await (
       await provider()
@@ -104,7 +129,7 @@ interface ReadTextBytes {
 
 async function rereadUnderFence(
   location: OwnerMaterialTextLocation,
-): Promise<ReadTextBytes | null> {
+): Promise<ReadTextBytes | OwnerMaterialText | null> {
   const persistence = await provider();
   try {
     return await persistence.withTransaction(async (tx) => {
@@ -113,12 +138,15 @@ async function rereadUnderFence(
         owner_id: string;
         deleted_at: number | string | null;
         extraction_result: OwnerExtractionResult | null;
-      }>('SELECT owner_id, deleted_at, extraction_result FROM owner_material WHERE id = $1', [
-        location.id,
-      ]);
+        extraction: OwnerMaterialExtraction | null;
+      }>(
+        'SELECT owner_id, deleted_at, extraction_result, extraction FROM owner_material WHERE id = $1',
+        [location.id],
+      );
       const row = found.rows[0];
       const result = row?.extraction_result;
-      if (!row || row.deleted_at !== null || !result) return null;
+      if (!row || row.deleted_at !== null) return null;
+      if (!result) return readClassicText({ id: location.id, extraction: row.extraction });
       try {
         const read = await persistence
           .assetStoreIn(tx)
@@ -154,6 +182,7 @@ export async function readOwnerMaterialText(
   if (signal?.aborted) throw new Error('aborted');
   const read = await rereadUnderFence(location);
   if (!read) return null;
+  if ('text' in read) return read;
   // The forwarded fence protects the row and byte read, not the parser. The
   // transaction has committed before a legacy parse can wait on its worker.
   try {

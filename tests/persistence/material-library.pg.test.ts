@@ -359,7 +359,10 @@ describe.skipIf(!contractUrl)('material library on PostgreSQL', { timeout: 20_00
         ).rows,
       ).toEqual([]);
       expect((await h.pool.query('SELECT * FROM asset_root_refs')).rows).toEqual([]);
-      expect((await h.pool.query('SELECT * FROM asset_entries')).rows).toEqual([]);
+      // The deleted original is unrooted for the collector; refused extraction outputs are gone.
+      expect((await h.pool.query('SELECT unreferenced_at FROM asset_entries')).rows).toEqual([
+        { unreferenced_at: expect.anything() },
+      ]);
     });
 
     it.each(['reuse', 'delete'] as const)(

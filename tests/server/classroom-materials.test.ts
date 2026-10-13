@@ -52,7 +52,7 @@ beforeEach(() => {
 describe('resolveClassroomMaterials', () => {
   it('does not hand durable library results to the classic result reader', async () => {
     mocks.getReadyOwnerMaterials.mockResolvedValue([
-      { ...record('mat_a', 'a.pdf'), retention: 'library' },
+      { ...record('mat_a', 'a.pdf'), assetId: 'pool-original' },
     ]);
     await expect(resolveClassroomMaterials('owner-1', ['mat_a'])).rejects.toBeInstanceOf(
       ClassroomMaterialsUnavailableError,

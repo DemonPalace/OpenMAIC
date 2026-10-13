@@ -1,3 +1,5 @@
+import { deleteMaterialObjects } from './bytes';
+import { CLASSIC_EXTRACTION_SQL } from '@/lib/persistence/material-extraction-format';
 /**
  * Move owner materials uploaded before the asset pool into it.
  *
@@ -129,7 +131,7 @@ async function removeCommittedOldObject(
   }>('SELECT asset_id, oss_key, deleted_at FROM owner_material WHERE id = $1', [id]);
   const row = committed.rows[0];
   if (!row || (!row.asset_id && row.deleted_at === null) || !row.oss_key) return false;
-  await byteStore.delete(row.oss_key);
+  await deleteMaterialObjects(byteStore, row.oss_key);
   const cleared = await provider.pool.query(
     `UPDATE owner_material SET oss_key = ''
       WHERE id = $1 AND (asset_id IS NOT NULL OR deleted_at IS NOT NULL) AND oss_key = $2
@@ -139,7 +141,7 @@ async function removeCommittedOldObject(
   return cleared.rows.length > 0;
 }
 
-/** Run one bounded pass over every pre-pool source; see the module docstring. */
+/** Backfill only originals whose current extraction format supports pool reads. */
 export async function migrateOwnerMaterialsToPool(
   options: OwnerMaterialMigrationOptions = {},
 ): Promise<OwnerMaterialMigrationReport> {
@@ -210,16 +212,19 @@ export async function migrateOwnerMaterialsToPool(
           status: string;
           deleted_at: unknown;
           asset_id: string | null;
-        }>('SELECT owner_id, status, deleted_at, asset_id FROM owner_material WHERE id = $1', [
-          row.id,
-        ]);
+          classic: boolean;
+        }>(
+          `SELECT owner_id, status, deleted_at, asset_id, COALESCE(${CLASSIC_EXTRACTION_SQL}, false) AS classic FROM owner_material WHERE id = $1`,
+          [row.id],
+        );
         const locked = current.rows[0];
         if (
           !locked ||
           locked.owner_id !== ownerId ||
           locked.status !== 'ready' ||
           locked.deleted_at !== null ||
-          locked.asset_id !== null
+          locked.asset_id !== null ||
+          locked.classic
         ) {
           return false;
         }
@@ -242,7 +247,7 @@ export async function migrateOwnerMaterialsToPool(
     const batch = await provider.pool.query<CandidateRow>(
       `SELECT id, owner_id, mime, sha256, oss_key, asset_id
          FROM owner_material
-        WHERE kind = 'source' AND retention = 'library' AND status = 'ready' AND deleted_at IS NULL
+        WHERE kind = 'source' AND NOT COALESCE(${CLASSIC_EXTRACTION_SQL}, false) AND status = 'ready' AND deleted_at IS NULL
           AND oss_key <> '' AND id > $1
         ORDER BY id
         LIMIT $2`,
@@ -300,7 +305,7 @@ export async function removeDeletedOriginals(
     const batch = await provider.pool.query<{ id: string }>(
       `SELECT id
          FROM owner_material
-        WHERE kind = 'source' AND retention = 'library' AND status = 'ready' AND deleted_at IS NOT NULL
+        WHERE kind = 'source' AND status = 'ready' AND deleted_at IS NOT NULL
           AND oss_key <> '' AND id > $1
         ORDER BY id
         LIMIT $2`,

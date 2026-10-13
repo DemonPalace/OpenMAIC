@@ -1,3 +1,4 @@
+import { libraryExtractionStatus } from '@/lib/persistence/material-extraction-format';
 /**
  * What the material library shows outside the agent: the public view of one
  * library material, and the limits and usage the page and the composer show
@@ -45,7 +46,7 @@ export function libraryMaterialView(
   entry: OwnerMaterialEntry,
   context: { folderNames?: ReadonlyMap<string, string>; attached?: ReadonlySet<string> } = {},
 ): LibraryMaterialView {
-  const status = entry.extraction?.status ?? 'idle';
+  const status = libraryExtractionStatus(entry.extraction?.status);
   const reasonCode =
     status === 'failed' ? extractionReasonCodeOf(entry.extraction?.reasonCode) : undefined;
   const folderName = entry.folderId ? context.folderNames?.get(entry.folderId) : undefined;

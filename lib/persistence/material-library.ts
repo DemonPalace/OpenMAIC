@@ -1,3 +1,4 @@
+import { deleteMaterialObjects } from '@/lib/server/materials/bytes';
 /**
  * Organizing the material library: folders, moving and renaming (RFC #1716
  * §5). These are the shared operations: the library page's HTTP routes and
@@ -364,7 +365,7 @@ export async function moveMaterials(
       folder_id: string | null;
     }>(
       `SELECT id, owner_id, derived_from, status, deleted_at, folder_id FROM owner_material
-        WHERE id = ANY($1::text[]) AND retention = 'library' AND derived_from IS NULL ORDER BY id FOR UPDATE`,
+        WHERE id = ANY($1::text[]) AND derived_from IS NULL ORDER BY id FOR UPDATE`,
       [ids],
     );
     // A derivative named here is never locked (lock order, module docstring),
@@ -425,7 +426,7 @@ export async function renameMaterial(
       original_name: string | null;
     }>(
       `SELECT owner_id, derived_from, status, deleted_at, display_name, original_name
-         FROM owner_material WHERE id = $1 AND retention = 'library' FOR UPDATE`,
+         FROM owner_material WHERE id = $1 FOR UPDATE`,
       [input.materialId],
     );
     const row = current.rows[0];
@@ -533,7 +534,7 @@ export async function deleteMaterial(
       );
       const key = committed.rows[0]?.oss_key;
       if (key) {
-        await getMaterialByteStore().delete(key);
+        await deleteMaterialObjects(getMaterialByteStore(), key);
         await persistence.pool.query(
           `UPDATE owner_material SET oss_key = ''
             WHERE id = $1 AND deleted_at IS NOT NULL AND oss_key = $2`,
@@ -572,7 +573,7 @@ export async function ownerLibraryUsage(
   principalKey: string,
 ): Promise<OwnerLibraryUsage> {
   const sources = await queryable.query<{ count: string; total: string }>(
-    `SELECT COUNT(*)::text AS count, COALESCE(SUM(bytes), 0)::text AS total
+    `SELECT COUNT(*)::text AS count, COALESCE(SUM(bytes + COALESCE((extraction->>'resultBytes')::double precision, 0)), 0)::text AS total
        FROM owner_material
       WHERE owner_id = $1 AND kind = 'source' AND deleted_at IS NULL`,
     [ownerId],

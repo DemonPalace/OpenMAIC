@@ -95,7 +95,6 @@ describe('owner material uploads in the asset pool', () => {
     registerOwnerMaterial(
       pool as unknown as ConnectableQueryable,
       {
-        retention: 'library',
         id,
         ownerId: OWNER,
         kind: 'source',

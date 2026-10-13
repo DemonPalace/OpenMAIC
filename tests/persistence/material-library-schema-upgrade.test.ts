@@ -18,7 +18,6 @@ import {
   getOwnerMaterial,
   startOwnerMaterialExtractions,
 } from '@/lib/persistence/owner-materials';
-import { releaseRunMaterialsIn } from '@/lib/server/generation/run/store';
 import {
   listOwnerLibrary,
   ensureSessionMaterialLinkSchema,
@@ -62,6 +61,10 @@ it('appends library migrations to a recorded main schema without losing material
       extraction: { status: 'ready', resultKey: 'parsed-key' },
     },
   ]);
+  expect(
+    (await listOwnerLibrary(db, 'owner', { withTextOnly: true })).map((row) => row.id),
+  ).toEqual(['existing']);
+  expect(await listOwnerLibrary(db, 'foreign')).toEqual([]);
   const existing = await getOwnerMaterial(db, 'owner', 'existing');
   const oldResult = { version: 1, text: 'already parsed before upgrade', images: [] };
   const get = vi.fn(async () => Buffer.from(JSON.stringify(oldResult)));
@@ -87,7 +90,7 @@ it('appends library migrations to a recorded main schema without losing material
   expect((await db.query(`SELECT * FROM agent_session_material_links`)).rows).toEqual([]);
 });
 
-it('classic cleanup and run release leave durable library files and their results intact', async () => {
+it('cleanup keeps all successful uploads regardless of historical retention', async () => {
   db = new PGlite();
   await db.waitReady;
   await ensureOwnerMaterialSchema(db);
@@ -103,27 +106,17 @@ it('classic cleanup and run release leave durable library files and their result
       [id, retention],
     );
   }
-  expect((await listOwnerLibrary(db, 'owner')).map((row) => row.id)).toEqual(['lib']);
-  expect(await startOwnerMaterialExtractions(db, 'owner', ['temp', 'lib'], ['idle'])).toEqual([
-    'temp',
-  ]);
+  expect((await listOwnerLibrary(db, 'owner')).map((row) => row.id)).toEqual(['temp', 'lib']);
+  expect(
+    (await startOwnerMaterialExtractions(db, 'owner', ['temp', 'lib'], ['idle'])).sort(),
+  ).toEqual(['lib', 'temp'].sort());
   const deleteObjects = vi.fn(async () => {});
   expect(await sweepUnusedOwnerMaterials(db, { untouchedBefore: 2, deleteObjects })).toEqual({
-    marked: 1,
-    removed: 1,
+    marked: 0,
+    removed: 0,
   });
-  expect(deleteObjects).toHaveBeenCalledExactlyOnceWith('temp');
+  expect(deleteObjects).not.toHaveBeenCalled();
   expect(await getOwnerMaterial(db, 'owner', 'lib')).toMatchObject({
-    retention: 'library',
-    extraction: { status: 'idle' },
+    extraction: { status: 'extracting' },
   });
-  await db.query(`INSERT INTO owner_material
-    (id, owner_id, kind, bytes, oss_key, status, created_at)
-    VALUES ('temp-used', 'owner', 'source', 1, 'temp-used', 'ready', 1)`);
-  await db.query(
-    `INSERT INTO generation_runs VALUES ('run', 'owner', '{"releaseMaterials":true,"materialIds":["lib","temp-used"]}', 'completed')`,
-  );
-  expect(await db.transaction((tx) => releaseRunMaterialsIn(tx, 'run'))).toBe(1);
-  expect(await getOwnerMaterial(db, 'owner', 'temp-used')).toBeNull();
-  expect(await getOwnerMaterial(db, 'owner', 'lib')).not.toBeNull();
 });

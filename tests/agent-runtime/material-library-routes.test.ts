@@ -1,3 +1,15 @@
+import {
+  claimOwnerMaterialExtraction,
+  getOwnerMaterial,
+  finalizeOwnerMaterial,
+  abandonOwnerMaterial,
+  reclaimStaleOwnerMaterialUploads,
+} from '@/lib/persistence/owner-materials';
+import { claimNextOwnerMaterialExtraction } from '@/lib/persistence/owner-material-extraction';
+import { runClaimedOwnerMaterialExtraction } from '@/lib/server/materials/extraction';
+import { defaultRunStepServices } from '@/lib/server/generation/run/services';
+import { createLogger } from '@/lib/logger';
+import { listOwnerLibrary } from '@/lib/persistence/session-material-links';
 /**
  * The material library's organizing routes and agent tools over PGlite: the
  * thin adapters answer what the shared operations decide, under the request
@@ -49,7 +61,7 @@ import {
 } from '@/app/api/materials/folders/route';
 import { GET as libraryRoute } from '@/app/api/materials/library/route';
 import { POST as moveRoute } from '@/app/api/materials/move/route';
-import { setMaterialByteStoreForTests } from '@/lib/server/materials/bytes';
+import { type MaterialByteInput, setMaterialByteStoreForTests } from '@/lib/server/materials/bytes';
 import * as libraryView from '@/lib/server/materials/library-view';
 import * as materialLibrary from '@/lib/persistence/material-library';
 import { registerOwnerMaterial } from '@/lib/persistence/owner-materials';
@@ -57,7 +69,10 @@ import { claimOwner } from '@/lib/persistence/owner-claims';
 import { attachOwnerMaterialsToSession } from '@/lib/persistence/session-material-links';
 import { ensureOwnerMaterialExtraction } from '@/lib/persistence/owner-material-extraction';
 import { buildMaterialTools } from '@/lib/server/agent-runtime/material-tools';
-import { startExtractionWatcher } from '@/lib/server/agent-runtime/extraction-watcher';
+import {
+  readSettledSources,
+  startExtractionWatcher,
+} from '@/lib/server/agent-runtime/extraction-watcher';
 import { runNextOwnerExtraction } from '@/lib/server/material-extraction/owner-extraction';
 import { buildMaterialLibraryTools } from '@/lib/server/agent-runtime/material-library-tools';
 import { contentDisposition } from '@/lib/server/materials/original-response';
@@ -126,6 +141,180 @@ describe('material library routes and tools (PGlite)', () => {
     mocks.invalidCredential = false;
     await db?.close();
     db = undefined;
+  });
+
+  it('includes old classic uploads, reads/searches their results, and preserves classic retry results across entry points', async () => {
+    const h = await boot();
+    await seedSession(h, 'legacy-session');
+    const result = { version: 1, text: 'legacy searchable lesson', images: [] };
+    const stored = Buffer.from(JSON.stringify(result));
+    const objects = new Map([
+      ['classic-original', Buffer.from('original')],
+      ['classic-result', stored],
+    ]);
+    const byteStore = {
+      get: vi.fn(async (key: string) => {
+        const bytes = objects.get(key);
+        if (!bytes) throw new Error('missing private key');
+        return bytes;
+      }),
+      put: vi.fn(async (key: string, bytes: MaterialByteInput) => {
+        expect(bytes).toBeInstanceOf(Buffer);
+        objects.set(key, Buffer.from(bytes as Uint8Array));
+      }),
+      delete: vi.fn(async (key: string) => {
+        objects.delete(key);
+      }),
+      deletePrefix: vi.fn(async (prefix: string) => {
+        for (const key of objects.keys()) if (key.startsWith(prefix)) objects.delete(key);
+      }),
+      list: vi.fn(async () => []),
+    };
+    setMaterialByteStoreForTests(byteStore);
+    try {
+      await h.pool.query(
+        `INSERT INTO owner_material
+        (id, owner_id, kind, mime, bytes, oss_key, status, extraction, created_at)
+        VALUES ('classic', $1, 'source', 'text/plain', 8, 'classic-original', 'ready', $2::jsonb, 1)`,
+        [
+          ACCOUNT,
+          JSON.stringify({
+            status: 'ready',
+            resultKey: 'classic-result',
+            resultBytes: stored.length,
+          }),
+        ],
+      );
+      await seedPoolSource(h, 'pool-source', Buffer.from('pool'), 'text/plain');
+      const listed = await libraryRoute(request('GET', '/api/materials/library'));
+      const body = await listed.json();
+      expect(JSON.stringify(body)).toContain('classic');
+      expect(JSON.stringify(body)).not.toContain('classic-result');
+      expect(
+        body.materials.find((m: { materialId: string }) => m.materialId === 'classic').extraction
+          .status,
+      ).toBe('done');
+      expect(body.limits.usedBytes).toBe(
+        8 + stored.length + (await getOwnerMaterial(h.pool, ACCOUNT, 'pool-source'))!.bytes,
+      );
+      expect(
+        (await listOwnerLibrary(h.pool, ACCOUNT, { withTextOnly: true })).map((r) => r.id),
+      ).toContain('classic');
+      await attachOwnerMaterialsToSession(h.provider, {
+        ownerId: ACCOUNT,
+        sessionId: 'legacy-session',
+        materialIds: ['classic'],
+      });
+      const tools = buildMaterialTools({ sessionId: 'legacy-session' });
+      const call = async (name: string, args: Record<string, unknown>) =>
+        tools.find((t) => t.name === name)!.execute('call', args as never);
+      const read = await call('read_material', { materialId: 'classic', scope: 'library' });
+      expect(JSON.stringify(read)).toContain('legacy searchable lesson');
+      expect(JSON.stringify(read)).not.toContain('classic-result');
+      expect(await readSettledSources(h.pool, ['classic'])).toEqual(['classic']);
+      const search = await call('search_material', { query: 'searchable', scope: 'library' });
+      expect(JSON.stringify(search)).toContain('classic');
+      expect(
+        JSON.stringify(
+          await call('wait_for_materials', { materialIds: ['classic'], timeoutSec: 0 }),
+        ),
+      ).toContain('"complete":true');
+      // Both page and agent retries preserve the existing classic result contract.
+      for (const entry of ['page', 'agent']) {
+        await h.pool.query(
+          `UPDATE owner_material SET extraction = '{"status":"failed"}' WHERE id = 'classic'`,
+        );
+        if (entry === 'page') {
+          expect(
+            (
+              await extractionRoute(
+                request('POST', '/api/materials/classic/extraction'),
+                params('classic'),
+              )
+            ).status,
+          ).toBe(200);
+        } else await call('extract_material', { materialId: 'classic', scope: 'library' });
+        expect((await getOwnerMaterial(h.pool, ACCOUNT, 'classic'))!.extraction?.status).toBe(
+          'extracting',
+        );
+        // Pool worker can claim the unrelated pool upload, never the classic source.
+        const poolClaim = await claimNextOwnerMaterialExtraction(h.pool, {
+          now: Date.now(),
+          leaseTtlMs: 60000,
+          createToken: randomUUID,
+        });
+        expect(poolClaim?.materialId ?? null).toBe(entry === 'page' ? 'pool-source' : null);
+        const claimed = await claimOwnerMaterialExtraction(h.pool as never, 'classic-worker', {
+          leaseTtlMs: 60000,
+          perOwnerLimit: 2,
+        });
+        expect(claimed?.material.id).toBe('classic');
+        // No competing classic job exists: the pool upload stays on its own worker.
+        expect(
+          await claimOwnerMaterialExtraction(h.pool as never, 'other-classic-worker', {
+            leaseTtlMs: 60000,
+            perOwnerLimit: 2,
+          }),
+        ).toBeNull();
+        await runClaimedOwnerMaterialExtraction(claimed!, {
+          byteStore,
+          services: async () => ({ document: null }),
+          heartbeatIntervalMs: 60000,
+        });
+        const completed = (await getOwnerMaterial(h.pool, ACCOUNT, 'classic'))!;
+        expect(completed.extraction?.status).toBe('ready');
+        expect(completed.extraction?.resultKey).not.toBe('classic-result');
+        expect(objects.has(completed.extraction!.resultKey!)).toBe(true);
+        // This is the production generation consumer, including owner/format
+        // resolution and reading/bundling the newly extracted result.
+        const consumed = await defaultRunStepServices.analyzeMaterials(ACCOUNT, ['classic'], {
+          log: createLogger('classic-retry-test'),
+        });
+        expect(consumed.text).toContain('original');
+        expect(consumed.text).not.toContain('legacy searchable lesson');
+        expect(consumed.images).toEqual([]);
+      }
+      // Explicit deletion still removes originals and old result objects.
+      expect(
+        (await deleteMaterialRoute(request('DELETE', '/api/materials/classic'), params('classic')))
+          .status,
+      ).toBe(200);
+      expect(byteStore.delete).toHaveBeenCalledWith('classic-original');
+      expect(byteStore.deletePrefix).toHaveBeenCalledWith('classic-original.extraction/');
+    } finally {
+      setMaterialByteStoreForTests(null);
+    }
+  });
+
+  it('does not remove committed bytes after a lost finalize response or a stale reservation scan', async () => {
+    const h = await boot();
+    await registerOwnerMaterial(
+      h.pool as never,
+      { id: 'late-finalize', ownerId: ACCOUNT, kind: 'source', bytes: 8, ossKey: 'late-key' },
+      { maxCount: 100, maxTotalBytes: 1000 },
+    );
+    await h.pool.query(`UPDATE owner_material SET created_at = 1 WHERE id = 'late-finalize'`);
+    const remove = vi.fn(async () => {});
+    const query = h.pool.query.bind(h.pool);
+    let published = false;
+    const scanning = {
+      ...h.provider,
+      pool: {
+        query: async <T extends Record<string, unknown>>(text: string, params?: unknown[]) => {
+          const answer = await query<T>(text, params);
+          if (!published && text.includes("status = 'uploading' AND created_at")) {
+            published = true;
+            await finalizeOwnerMaterial(h.pool, 'late-finalize', 8, 'digest');
+          }
+          return answer;
+        },
+      },
+    };
+    await reclaimStaleOwnerMaterialUploads(scanning, ACCOUNT, remove);
+    expect(published).toBe(true);
+    await abandonOwnerMaterial(h.provider, ACCOUNT, 'late-finalize', remove);
+    expect(remove).not.toHaveBeenCalled();
+    expect(await getOwnerMaterial(h.pool, ACCOUNT, 'late-finalize')).not.toBeNull();
   });
 
   it('creates, lists, renames and deletes folders for the request owner', async () => {
@@ -750,7 +939,6 @@ describe('material library routes and tools (PGlite)', () => {
     await registerOwnerMaterial(
       h.pool as never,
       {
-        retention: 'library',
         id: 'uploading',
         ownerId: ACCOUNT,
         kind: 'source',
@@ -799,7 +987,7 @@ describe('material library routes and tools (PGlite)', () => {
       maxTotalBytes: expect.any(Number),
       documentMaxBytes: expect.any(Number),
       mediaMaxBytes: expect.any(Number),
-      assetUsedBytes: 14,
+      assetUsedBytes: 22,
     });
 
     const unfiled = await libraryRoute(request('GET', '/api/materials/library?folderId=unfiled'));
@@ -1156,7 +1344,6 @@ describe('material library routes and tools (PGlite)', () => {
     await registerOwnerMaterial(
       h.pool as never,
       {
-        retention: 'library',
         id: 'r6-uploading',
         ownerId: ACCOUNT,
         kind: 'source',
@@ -1360,7 +1547,6 @@ describe('material library routes and tools (PGlite)', () => {
     await registerOwnerMaterial(
       h.pool as never,
       {
-        retention: 'library',
         id: 'src-uploading',
         ownerId: ACCOUNT,
         kind: 'source',
@@ -1385,6 +1571,7 @@ describe('material library routes and tools (PGlite)', () => {
     const h = await boot();
     await seedSource(h, 'src-bad', { bytes: Buffer.from('%PDF-bad') });
     // The stored object no longer matches the digest recorded at upload.
+    await h.pool.query("UPDATE owner_material SET asset_id = NULL WHERE id = 'src-bad'");
     h.sources.set('src-bad', Buffer.from('tampered'));
     const answer = await originalRoute(
       request('GET', '/api/materials/src-bad/original'),

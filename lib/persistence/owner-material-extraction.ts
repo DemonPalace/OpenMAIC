@@ -63,6 +63,7 @@ import {
 import type { Queryable, WithTransaction } from '@openmaic/storage/document/pg';
 import { encodeJson } from '@openmaic/storage/pg-json';
 
+import { CLASSIC_EXTRACTION_SQL, libraryExtractionStatus } from './material-extraction-format';
 import { MATERIAL_ROOT_KIND, withMaterialRoots } from './material-roots';
 import { fenceOwnerWrite, forwardOwnerWrite } from './owner-merges';
 
@@ -201,26 +202,31 @@ export async function ensureOwnerMaterialExtraction(
   return withTransaction(async (tx) => {
     if ((options.fence ?? 'request') === 'request') await fenceOwnerWrite(tx, ownerId);
     else ownerId = await forwardOwnerWrite(tx, ownerId);
-    const queued = await tx.query<{ id: string }>(
+    const queued = await tx.query<{ id: string; status: string }>(
       `UPDATE owner_material
-          SET extraction = $3::jsonb, extraction_claims = 0, extraction_token = NULL,
+          SET extraction = CASE WHEN ${CLASSIC_EXTRACTION_SQL}
+                THEN jsonb_build_object('status', 'extracting', 'updatedAt', $4::double precision)
+                ELSE $3::jsonb END,
+              extraction_worker = NULL, extraction_heartbeat_at = NULL,
+              extraction_claims = 0, extraction_token = NULL,
               extraction_lease_at = NULL, extraction_error = NULL
-        WHERE id = $1 AND owner_id = $2 AND kind = 'source' AND retention = 'library' AND status = 'ready'
+        WHERE id = $1 AND owner_id = $2 AND kind = 'source' AND status = 'ready'
           AND deleted_at IS NULL
           AND (extraction IS NULL OR ${STATUS} IS NULL OR ${STATUS} IN ('idle', 'failed'))
-        RETURNING id`,
-      [materialId, ownerId, statusJson('pending')],
+        RETURNING id, extraction->>'status' AS status`,
+      [materialId, ownerId, statusJson('pending'), Date.now()],
     );
-    if (queued.rows.length > 0) return { status: 'pending' as const, queued: true };
+    if (queued.rows.length > 0)
+      return { status: libraryExtractionStatus(queued.rows[0].status), queued: true };
     const current = await tx.query<{ status: string | null }>(
       `SELECT ${STATUS} AS status FROM owner_material
-        WHERE id = $1 AND owner_id = $2 AND kind = 'source' AND retention = 'library' AND status = 'ready'
+        WHERE id = $1 AND owner_id = $2 AND kind = 'source' AND status = 'ready'
           AND deleted_at IS NULL`,
       [materialId, ownerId],
     );
     const row = current.rows[0];
     if (!row) return null;
-    return { status: (row.status ?? 'idle') as OwnerExtractionStatus, queued: false };
+    return { status: libraryExtractionStatus(row.status ?? undefined), queued: false };
   });
 }
 
@@ -253,7 +259,7 @@ export async function claimNextOwnerMaterialExtraction(
     const result = await queryable.query<ClaimRow>(
       `WITH candidate AS (
          SELECT id FROM owner_material
-          WHERE kind = 'source' AND retention = 'library' AND status = 'ready' AND deleted_at IS NULL
+          WHERE kind = 'source' AND status = 'ready' AND deleted_at IS NULL
             AND (${STATUS} = 'pending'
               OR (${STATUS} = 'running' AND extraction_lease_at < $1::double precision))
           ORDER BY created_at, id
@@ -483,9 +489,9 @@ export async function publishOwnerMaterialExtraction(
       await tx.query(
         `INSERT INTO owner_material
            (id, owner_id, kind, derived_from, mime, bytes, original_name, oss_key, sha256,
-            status, extraction, created_at, asset_id, folder_id, retention)
+            status, extraction, created_at, asset_id, folder_id)
          SELECT derivative.id, $1, derivative.kind, $2, derivative.mime, derivative.bytes,
-                derivative.title, '', derivative.sha256, 'ready', NULL, $3, derivative.asset_id, $4, 'library'
+                derivative.title, '', derivative.sha256, 'ready', NULL, $3, derivative.asset_id, $4
            FROM unnest($5::text[], $6::text[], $7::text[], $8::double precision[], $9::text[],
                        $10::text[], $11::text[])
              AS derivative(id, kind, mime, bytes, title, sha256, asset_id)`,

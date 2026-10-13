@@ -52,7 +52,7 @@ function ownerSource(
     bytes: 3,
     originalName: 'lesson.pdf',
     ossKey: '',
-    retention: 'library',
+
     assetId: 'pool-src',
     sha256: 'digest',
     status: 'ready',

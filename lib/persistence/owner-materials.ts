@@ -6,14 +6,14 @@
  * The workbench's material uploader (`uploadWorkbenchMaterial`) is owner-
  * scoped: it posts a file with no session id and expects a flat 201 view. The
  * branch's agent-session materials stay session-scoped (the agent tools' list
- * surface). The table holds both classic temporary attachments and durable
- * library materials; retention keeps their cleanup and extraction separate.
+ * surface). Every successful upload is a durable library source; existing
+ * storage and extraction formats remain readable.
  *
  * A library upload's bytes live in the asset pool, under the owner's own partition:
  * the row's `asset_id` points at the entry and a `('material', id)` reference
  * root keeps it alive. Rows from before the pool hold a private object key in
  * the material byte store (`oss_key`) instead, until the backfill moves them.
- * Classic temporary attachments keep that byte-store representation;
+ * Classic uploads keep that byte-store representation;
  * readers take the pool pointer first.
  *
  * ## Upload lifecycle
@@ -44,6 +44,7 @@ import type { WithTransaction } from '@openmaic/storage/document/pg';
 import type { AssetStore } from '@openmaic/storage';
 
 import { MATERIAL_ROOT_KIND, withMaterialRoots } from './material-roots';
+import { CLASSIC_EXTRACTION_SQL, usesClassicExtraction } from './material-extraction-format';
 import { statusJson } from './owner-material-extraction';
 import { assetPrincipalForOwner } from './owner-assets';
 import { ensureOwnerMergeSchema, fenceOwnerWrite, forwardOwnerWrite } from './owner-merges';
@@ -56,7 +57,7 @@ export const OWNER_MATERIAL_KINDS = ['source', 'web', 'image'] as const;
 export type OwnerMaterialKind = (typeof OWNER_MATERIAL_KINDS)[number];
 
 // Both established workflows share this record reader, but each worker claims
-// only its own retention class and keeps its original result format.
+// its existing queue states and keeps its original result format.
 export const OWNER_MATERIAL_EXTRACTION_STATUSES = [
   'idle',
   'pending',
@@ -118,7 +119,6 @@ export interface OwnerMaterialExtraction {
 }
 
 export interface OwnerMaterialRecord {
-  retention: 'temporary' | 'library';
   id: string;
   ownerId: string;
   kind: OwnerMaterialKind;
@@ -134,6 +134,7 @@ export interface OwnerMaterialRecord {
   sha256: string | null;
   status: OwnerMaterialStatus;
   extraction: OwnerMaterialExtraction | null;
+  extractionResult?: import('./owner-material-extraction').OwnerExtractionResult | null;
   createdAt: number;
   deletedAt: number | null;
 }
@@ -172,7 +173,6 @@ export interface OwnerMaterialRegistrationLimits {
 }
 
 export interface RegisterOwnerMaterialInput {
-  retention?: 'temporary' | 'library';
   id: string;
   ownerId: string;
   kind: OwnerMaterialKind;
@@ -335,6 +335,8 @@ $$;
 
 `;
 
+// Historical v5 retention DDL remains unchanged for ledger compatibility;
+// the column has no runtime membership, processing or lifecycle semantics.
 export const OWNER_MATERIAL_MIGRATIONS: SchemaMigrationSet = {
   store: 'owner-material',
   migrations: [
@@ -362,10 +364,10 @@ export interface RawOwnerMaterialRow extends Record<string, unknown> {
   original_name: string | null;
   oss_key: string;
   asset_id: string | null;
-  retention: 'temporary' | 'library';
   sha256: string | null;
   status: string;
   extraction: unknown;
+  extraction_result?: unknown;
   created_at: number | string;
   deleted_at: number | string | null;
 }
@@ -380,10 +382,10 @@ export const OWNER_MATERIAL_COLUMNS = `id,
   original_name,
   oss_key,
   asset_id,
-  retention,
   sha256,
   status,
   extraction,
+  extraction_result,
   created_at,
   deleted_at`;
 
@@ -398,10 +400,12 @@ export function ownerMaterialRowToRecord(row: RawOwnerMaterialRow): OwnerMateria
     originalName: row.original_name,
     ossKey: row.oss_key,
     assetId: row.asset_id,
-    retention: row.retention,
     sha256: row.sha256,
     status: row.status as OwnerMaterialStatus,
     extraction: extractionOf(row.extraction),
+    extractionResult: (row.extraction_result ?? null) as
+      | import('./owner-material-extraction').OwnerExtractionResult
+      | null,
     createdAt: Number(row.created_at),
     deletedAt: row.deleted_at === null ? null : Number(row.deleted_at),
   };
@@ -427,9 +431,9 @@ export function publicMaterial(record: OwnerMaterialRecord): OwnerMaterialView {
   delete extraction?.identityKey;
   delete extraction?.resultKey;
   delete extraction?.claimedAt;
-  // Library diagnostics are private on every HTTP projection, including this
-  // compatibility view used by the shared route. Classic errors keep their contract.
-  if (record.retention === 'library') delete extraction?.error;
+  // Preserve the classic composer error contract; library views and tools
+  // independently strip diagnostics from every source format.
+  if (!usesClassicExtraction(record)) delete extraction?.error;
   return {
     materialId: record.id,
     kind: record.kind,
@@ -496,20 +500,11 @@ export async function reclaimStaleOwnerMaterialUploads(
     `SELECT id, oss_key
        FROM owner_material
       WHERE owner_id = $1
-        AND ((status = 'uploading' AND created_at < $2) OR deleted_at IS NOT NULL)`,
+        AND status = 'uploading' AND created_at < $2`,
     [ownerId, staleBefore],
   );
   for (const row of stale.rows) {
-    if (row.oss_key !== '') {
-      try {
-        await deleteBytes(row.oss_key);
-      } catch {
-        // The byte object is not confirmed gone; keep the reservation so the
-        // next pass retries with the pointer intact.
-        continue;
-      }
-    }
-    await deleteUploadingRow(persistence, ownerId, row.id, true);
+    await deleteUploadingRow(persistence, ownerId, row.id, false, { deleteBytes, staleBefore });
   }
 }
 
@@ -520,8 +515,8 @@ export async function reclaimStaleOwnerMaterialUploads(
  * (every read filters `deleted_at`) and it no longer counts against the
  * owner's quota. Its byte object is removed next and only then the row, the
  * same pointer-last order the reclaim sweep keeps; a byte deletion that throws
- * leaves the marked row, whose recorded key {@link reclaimStaleOwnerMaterialUploads}
- * retries on the owner's next upload. Agent sessions hold their own copy of a
+ * leaves the marked row, whose recorded key {@link sweepUnusedOwnerMaterials}
+ * retries on the next cleanup pass. Agent sessions hold their own copy of a
  * bound upload's bytes, so deleting a library material does not affect them;
  * binding a deleted id fails as unavailable.
  *
@@ -545,7 +540,8 @@ export async function deleteOwnerMaterial(
           SET deleted_at = $3
         WHERE id = $1
           AND owner_id = $2
-          AND status = 'ready' AND retention = 'temporary'
+          AND status = 'ready' AND asset_id IS NULL AND extraction_result IS NULL
+          AND NOT EXISTS (SELECT 1 FROM asset_root_refs WHERE root_kind = 'material' AND root_id = owner_material.id)
           AND deleted_at IS NULL
         RETURNING oss_key`,
       [materialId, ownerId, Date.now()],
@@ -620,8 +616,8 @@ export async function registerOwnerMaterial(
     const inserted = await tx.query<RawOwnerMaterialRow>(
       `INSERT INTO owner_material
          (id, owner_id, kind, derived_from, mime, bytes, original_name,
-          oss_key, sha256, status, extraction, created_at, retention)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULL, 'uploading', $9::jsonb, $10, $11)
+          oss_key, sha256, status, extraction, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULL, 'uploading', $9::jsonb, $10)
        RETURNING ${OWNER_MATERIAL_COLUMNS}`,
       [
         input.id,
@@ -634,7 +630,6 @@ export async function registerOwnerMaterial(
         input.ossKey,
         input.extraction ? encodeJson(input.extraction, 'owner material extraction') : null,
         Date.now(),
-        input.retention ?? 'temporary',
       ],
     );
     return ownerMaterialRowToRecord(inserted.rows[0]);
@@ -644,8 +639,7 @@ export async function registerOwnerMaterial(
 /**
  * Finalize a reservation whose bytes were stored in the material byte store:
  * the row shape uploads had before the asset pool (`oss_key`, no pointer, no
- * root). The upload route no longer calls it; it stays because tests build the
- * pre-pool rows the read path and the backfill must still handle with it.
+ * root). The default upload route keeps this classic storage/result contract.
  * Reserved bytes may only shrink.
  */
 export async function finalizeOwnerMaterial(
@@ -744,7 +738,7 @@ export async function publishOwnerMaterialUpload(
       await changeRoots({ add: [{ materialId, assetIds: [input.assetId] }] });
       const published = await tx.query<RawOwnerMaterialRow>(
         `UPDATE owner_material
-            SET bytes = $2, sha256 = $3, status = 'ready', asset_id = $4, retention = 'library',
+            SET bytes = $2, sha256 = $3, status = 'ready', asset_id = $4,
                 extraction = $5::jsonb
           WHERE id = $1
           RETURNING ${OWNER_MATERIAL_COLUMNS}`,
@@ -771,18 +765,34 @@ async function deleteUploadingRow(
   ownerId: string,
   materialId: string,
   includeDeleted = false,
+  cleanup?: { deleteBytes: (key: string) => Promise<void>; staleBefore?: number },
 ): Promise<void> {
   await withMaterialRoots(
     persistence,
     { ownerId, fence: 'background', materialIds: [materialId] },
     async ({ tx, changeRoots }) => {
-      const current = await tx.query<{ status: string; deleted_at: number | null }>(
-        'SELECT status, deleted_at FROM owner_material WHERE id = $1',
-        [materialId],
-      );
+      const current = await tx.query<{
+        status: string;
+        deleted_at: number | null;
+        oss_key: string;
+        created_at: string | number;
+      }>('SELECT status, deleted_at, oss_key, created_at FROM owner_material WHERE id = $1', [
+        materialId,
+      ]);
       const row = current.rows[0];
       if (!row || (row.status !== 'uploading' && !(includeDeleted && row.deleted_at !== null)))
         return;
+      if (cleanup?.staleBefore !== undefined && Number(row.created_at) >= cleanup.staleBefore)
+        return;
+      // The row lock is held through deletion: publication cannot turn a
+      // previously selected reservation into a ready source meanwhile.
+      if (cleanup && row.oss_key) {
+        try {
+          await cleanup.deleteBytes(row.oss_key);
+        } catch {
+          return;
+        } // Keep its key for the next reservation cleanup.
+      }
       const roots = await tx.query<{ asset_id: string }>(
         `SELECT asset_id FROM asset_root_refs
           WHERE root_kind = $1 AND root_id = $2
@@ -807,8 +817,15 @@ export async function abandonOwnerMaterial(
   persistence: Pick<OwnerMaterialPersistence, 'withTransaction'>,
   ownerId: string,
   materialId: string,
+  deleteBytes?: (key: string) => Promise<void>,
 ): Promise<void> {
-  await deleteUploadingRow(persistence, ownerId, materialId);
+  await deleteUploadingRow(
+    persistence,
+    ownerId,
+    materialId,
+    false,
+    deleteBytes ? { deleteBytes } : undefined,
+  );
 }
 
 /** List the owner's ready library materials, newest first. */
@@ -819,7 +836,7 @@ export async function listOwnerMaterials(
   const result = await queryable.query<RawOwnerMaterialRow>(
     `SELECT ${OWNER_MATERIAL_COLUMNS}
        FROM owner_material
-      WHERE retention = 'temporary' AND owner_id = $1 AND status = 'ready' AND deleted_at IS NULL
+      WHERE owner_id = $1 AND status = 'ready' AND deleted_at IS NULL
       ORDER BY created_at DESC`,
     [ownerId],
   );
@@ -1041,7 +1058,7 @@ export async function startOwnerMaterialExtractions(
         AND status = 'ready'
         AND deleted_at IS NULL
         AND COALESCE(extraction->>'status', 'idle') = ANY($2::text[])
-        AND owner_id = $4 AND retention = 'temporary'
+        AND owner_id = $4 AND ${CLASSIC_EXTRACTION_SQL}
       RETURNING id`,
     [[...materialIds], [...from], Date.now(), ownerId],
   );
@@ -1106,7 +1123,7 @@ export async function claimOwnerMaterialExtraction(
          SELECT m.id
            FROM owner_material m
            LEFT JOIN running r ON r.owner_id = m.owner_id
-          WHERE m.retention = 'temporary' AND m.extraction->>'status' = 'extracting'
+          WHERE m.extraction->>'status' = 'extracting'
             AND m.deleted_at IS NULL
             AND m.status = 'ready'
             AND (m.extraction_worker IS NULL OR m.extraction_heartbeat_at < $3)
@@ -1278,9 +1295,9 @@ export async function findReusableOwnerMaterialExtraction(
   return result.rows[0] ? ownerMaterialRowToRecord(result.rows[0]) : null;
 }
 
-/** Materials nobody used: old enough, and no run or agent session names them. */
+/** Cleanup of unfinished reservations and already-deleted objects. */
 export interface UnusedOwnerMaterialSweep {
-  /** Ready uploads last touched (or, never touched, created) before this (epoch ms) that nothing references are deleted. */
+  /** Unfinished uploads created before this epoch-ms horizon may be reclaimed. */
   untouchedBefore: number;
   /** Deletes one material's objects; throws to keep its row for the next pass. */
   deleteObjects: (ossKey: string) => Promise<void>;
@@ -1289,51 +1306,27 @@ export interface UnusedOwnerMaterialSweep {
 }
 
 /**
- * Delete the uploads nobody used and finish deletes left behind, for every
- * owner: a ready material untouched since `untouchedBefore` that no generation run
- * (in any state) and no agent session names is marked deleted (it stops
- * counting against its owner's quota); then every material marked deleted
- * (released by a run, swept, or a delete whose byte removal failed) has its
- * objects removed and its row deleted, pointer last. Answers how many rows it
- * marked and how many it removed.
+ * Expire unfinished reservations with an atomic status recheck, then finish
+ * byte cleanup for tombstones. Successful uploads never expire. Ready-source
+ * tombstones remain for library deletion semantics; abandoned reservations go.
  */
 export async function sweepUnusedOwnerMaterials(
   queryable: Queryable,
   sweep: UnusedOwnerMaterialSweep,
 ): Promise<{ marked: number; removed: number }> {
   const limit = sweep.limit ?? 200;
-  const present = await queryable.query<{ runs: string | null; sessions: string | null }>(
-    `SELECT to_regclass('generation_runs')::text AS runs,
-            to_regclass('agent_session_materials')::text AS sessions`,
-  );
-  const runs = Boolean(present.rows[0]?.runs);
-  const sessions = Boolean(present.rows[0]?.sessions);
   const marked = await queryable.query<{ id: string }>(
-    `UPDATE owner_material m
-        SET deleted_at = $2
-      WHERE m.id IN (
-        SELECT c.id FROM owner_material c
-         WHERE c.status = 'ready' AND c.retention = 'temporary'
-           AND c.deleted_at IS NULL
-           AND COALESCE(c.touched_at, c.created_at) < $1
-         ORDER BY c.created_at
-         LIMIT $3
-      )
-        -- The conditions again on the row itself: PostgreSQL rechecks them
-        -- on the row's latest version after waiting for its lock, so a read
-        -- (a touch) that commits meanwhile keeps the material.
-        AND m.status = 'ready' AND m.retention = 'temporary'
-        AND m.deleted_at IS NULL
-        -- Age from the last time a composer that holds it read it.
-        AND COALESCE(m.touched_at, m.created_at) < $1
-        ${runs ? `AND NOT EXISTS (SELECT 1 FROM generation_runs r WHERE r.input->'materialIds' ? m.id)` : ''}
-        ${sessions ? `AND NOT EXISTS (SELECT 1 FROM agent_session_materials s WHERE s.owner_material_id = m.id)` : ''}
+    `UPDATE owner_material m SET deleted_at = $2
+      WHERE m.id IN (SELECT id FROM owner_material
+        WHERE status = 'uploading' AND deleted_at IS NULL AND created_at < $1
+        ORDER BY created_at LIMIT $3)
+        AND m.status = 'uploading' AND m.deleted_at IS NULL AND m.created_at < $1
       RETURNING m.id`,
     [sweep.untouchedBefore, Date.now(), limit],
   );
   const doomed = await queryable.query<{ id: string; oss_key: string }>(
     `SELECT id, oss_key FROM owner_material
-      WHERE deleted_at IS NOT NULL AND retention = 'temporary'
+      WHERE deleted_at IS NOT NULL AND (oss_key <> '' OR status = 'uploading')
       ORDER BY deleted_at
       LIMIT $1`,
     [limit],
@@ -1348,9 +1341,14 @@ export async function sweepUnusedOwnerMaterials(
         continue;
       }
     }
-    await queryable.query(`DELETE FROM owner_material WHERE id = $1 AND deleted_at IS NOT NULL`, [
-      row.id,
-    ]);
+    await queryable.query(
+      `UPDATE owner_material SET oss_key = '' WHERE id = $1 AND deleted_at IS NOT NULL`,
+      [row.id],
+    );
+    await queryable.query(
+      `DELETE FROM owner_material WHERE id = $1 AND status = 'uploading' AND deleted_at IS NOT NULL`,
+      [row.id],
+    );
     removed += 1;
   }
   return { marked: marked.rows.length, removed };

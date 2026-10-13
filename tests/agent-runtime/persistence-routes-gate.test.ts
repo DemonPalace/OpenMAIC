@@ -535,19 +535,20 @@ for (const state of STATES) {
       mocks.assetStore.put.mockResolvedValue('asset-1');
       mocks.assetStore.remove.mockResolvedValue(undefined);
       mocks.queryPool.query.mockImplementation(async (text: string) => {
+        if (text.includes('asset_root_refs') || text.includes('WHERE derived_from'))
+          return { rows: [] };
         if (text.includes('owner_material')) {
           return {
             rows: [
               {
                 id: MATERIAL_ID,
-                retention: 'temporary',
                 owner_id: 'owner-1',
                 kind: 'source',
                 derived_from: null,
                 mime: 'application/pdf',
                 bytes: 5,
                 original_name: 'notes.pdf',
-                asset_id: 'asset-1',
+                asset_id: null,
                 oss_key: '',
                 sha256: 'abc',
                 status: 'ready',

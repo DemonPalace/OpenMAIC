@@ -1,3 +1,4 @@
+import { hasClassicText } from '@/lib/persistence/material-extraction-format';
 /**
  * One material id, whichever kind of row it names (RFC #1716 §4, §9).
  *
@@ -206,7 +207,7 @@ export async function readResolvedMaterialText(
   }
   const { entry } = material;
   // Read just now: a source without a result has no text to look for.
-  if (entry.kind !== 'source' || !entry.extractionResult) return null;
+  if (entry.kind !== 'source' || (!entry.extractionResult && !hasClassicText(entry))) return null;
   return readOwnerMaterialText(entry, signal);
 }
 
