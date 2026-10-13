@@ -282,19 +282,23 @@ describe.skipIf(!contractUrl)('owner material pool uploads on PostgreSQL', () =>
     expect(moved.rows).toEqual([{ owner_id: ACCOUNT }]);
   });
 
-  /** A ready pre-pool source of ANON, its object in a byte store the test controls. */
+  /** A ready pre-pool library source on the owner extraction queue, eligible for backfill. */
   async function legacyRow(h: ExtractionHarness, id: string, objects: Map<string, Buffer>) {
     const bytes = Buffer.from(`%PDF-${id}`);
     objects.set(`objects/${id}`, bytes);
     await reserve(h, id, bytes, `objects/${id}`);
     await finalizeOwnerMaterial(h.pool as never, id, bytes.byteLength, digest(bytes));
+    await h.pool.query(
+      `UPDATE owner_material SET extraction = '{"status":"pending"}'::jsonb WHERE id = $1`,
+      [id],
+    );
     return bytes;
   }
   const memoryObjects = () => {
     const objects = new Map<string, Buffer>();
     setMaterialByteStoreForTests({
-      deletePrefix: async () => {
-        throw new Error('Unexpected deletePrefix in this byte-store fixture');
+      deletePrefix: async (prefix) => {
+        for (const key of objects.keys()) if (key.startsWith(prefix)) objects.delete(key);
       },
       list: async () => {
         throw new Error('Unexpected list in this byte-store fixture');
@@ -335,7 +339,8 @@ describe.skipIf(!contractUrl)('owner material pool uploads on PostgreSQL', () =>
     let firstPid = 0;
     let secondPid = 0;
     hooked.hook = {
-      match: /SELECT owner_id, status, deleted_at, asset_id FROM owner_material WHERE id = \$1/,
+      match:
+        /SELECT owner_id, status, deleted_at, asset_id, [\s\S]* AS classic FROM owner_material WHERE id = \$1/,
       async run(client) {
         firstPid = await backendPid(client);
         second = migrateOwnerMaterialsToPool({ pauseMs: 0 });
