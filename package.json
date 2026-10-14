@@ -70,7 +70,6 @@
     "@fontsource/zcool-kuaile": "^5.2.8",
     "@joplin/turndown-plugin-gfm": "^1.0.67",
     "@langchain/core": "^1.1.16",
-    "@langchain/langgraph": "^1.1.1",
     "@modelcontextprotocol/sdk": "^1.27.1",
     "@mozilla/readability": "^0.6.0",
     "@napi-rs/canvas": "^0.1.88",
