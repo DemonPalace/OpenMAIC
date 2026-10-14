@@ -68,7 +68,7 @@ import type {
   PlaybackInteractiveComponentPick,
   PlaybackInteractivePickerState,
 } from '@/components/scene-renderers/InteractiveIframeHost';
-import { isCoursewareReferenceEnabled, isPiChatEnabled } from '@/lib/config/feature-flags';
+import { isCoursewareReferenceEnabled } from '@/lib/config/feature-flags';
 import {
   getSlideElementPresentation,
   getSlideElementTypeLabel,
@@ -157,7 +157,6 @@ export const PlaybackChromeRoot = forwardRef<PlaybackChromeRootHandle, PlaybackC
     const generationInterrupted = useStageStore.use.generationInterrupted();
 
     const currentScene = getCurrentScene();
-    const piChatEnabled = isPiChatEnabled();
     const coursewareReferenceEnabled = isCoursewareReferenceEnabled();
     const [elementPickActive, setElementPickActiveState] = useState(false);
     const elementPickActiveRef = useRef(false);
@@ -1043,7 +1042,7 @@ export const PlaybackChromeRoot = forwardRef<PlaybackChromeRootHandle, PlaybackC
     }, [playbackSpeed]);
 
     /**
-     * Handle discussion SSE — POST /api/chat and push events to engine
+     * Start a discussion in ChatArea, which sends it through the classroom chat hook
      */
     const handleDiscussionSSE = useCallback(
       async (topic: string, prompt?: string, agentId?: string) => {
@@ -1252,7 +1251,7 @@ export const PlaybackChromeRoot = forwardRef<PlaybackChromeRootHandle, PlaybackC
       ? scenes.length
       : scenes.findIndex((s) => s.id === currentSceneId);
     const totalScenesCount = scenes.length + (canAdvanceToPendingSlot ? 1 : 0);
-    const showElementReference = piChatEnabled && coursewareReferenceEnabled && mode === 'playback';
+    const showElementReference = coursewareReferenceEnabled && mode === 'playback';
     const canPickSlideElement = Boolean(
       showElementReference &&
       !whiteboardOpen &&
