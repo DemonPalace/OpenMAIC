@@ -111,6 +111,7 @@ describe('POST /api/chat/pi — classroom model precedence', () => {
     expect(mocks.getModelCalls.at(-1)).toMatchObject({
       providerId: 'anthropic',
       modelId: 'claude-sonnet-4',
+      apiKey: 'server-key',
     });
     expectRuntimeModel('claude-sonnet-4');
   });

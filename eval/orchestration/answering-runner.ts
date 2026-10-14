@@ -24,9 +24,17 @@
  *                   The director cannot cue the user or close the session
  *                   before an agent has spoken in the request, so this is not
  *                   an END.
- *   - ERROR       : the run itself failed (threw, aborted, or ended without
- *                   done). Excluded from the correct-rate denominator, as
- *                   before; if every sample errors the correct rate is 0.
+ *   - ERROR       : the run itself failed (threw, was aborted, or ended
+ *                   without done), even when the director had already
+ *                   dispatched an agent before the failure. Excluded from the
+ *                   correct-rate denominator, as before; if every sample
+ *                   errors the correct rate is 0.
+ *
+ * Limits: the correct rate is over non-ERROR samples only. It is not an
+ * unconditional routing accuracy over every request, nor an end-to-end
+ * completion rate. Excluding failed runs that had already dispatched can raise
+ * the score, so read it together with the ERROR share and the number of valid
+ * samples.
  *
  * Only recorded attempts count. A call_agent whose arguments fail the tool
  * schema is rejected by the agent runtime before the tool runs and is not in
@@ -260,7 +268,10 @@ function writeReport(
   lines.push(`- **Samples per scenario**: ${samples}`);
   lines.push(`- **Correct-rate threshold**: ${pct(threshold)}`);
   lines.push(
-    `- **Classification**: first recorded call_agent tool attempt in the director tool trace. Attempts rejected by the tool schema are not recorded, so a later recorded attempt is classified instead (or NO_DISPATCH if none). ERROR samples are excluded from the correct rate.`,
+    `- **Classification**: first recorded call_agent tool attempt in the director tool trace. Attempts rejected by the tool schema are not recorded, so a later recorded attempt is classified instead (or NO_DISPATCH if none). A run that threw, was aborted or ended without done is ERROR, even if it had already dispatched an agent, and ERROR samples are excluded from the correct rate.`,
+  );
+  lines.push(
+    `- **Limits**: the correct rate covers non-ERROR samples only. It is not an unconditional routing accuracy over every request, nor an end-to-end completion rate. Excluding failed runs that had already dispatched can raise it, so read it together with the Errors and Valid columns. If every sample errors, the correct rate is 0.`,
   );
   lines.push(
     `- **Baseline**: Pi in-process run (legacy child, whiteboard tools on); not comparable with the retired single-step director A/B. Route authorization and tool-capability checks are not exercised.`,
