@@ -68,6 +68,8 @@ export async function register(): Promise<void> {
   const { startAssetCollectorSchedule } =
     await import('@/lib/persistence/asset-collector-schedule');
   const assetSchedule = startAssetCollectorSchedule();
+  const { startCheckpointCollector } = await import('@/lib/server/sandbox/checkpoint-collector');
+  const checkpointSchedule = startCheckpointCollector();
 
   // Warn-first boot-time validation of model routing config (MODEL_ROUTES,
   // DEFAULT_MODEL, <PREFIX>_MODELS). Cheap and non-throwing: broken config
@@ -175,6 +177,7 @@ export async function register(): Promise<void> {
       } catch (error) {
         console.error('[instrumentation] Asset collector drain failed', error);
       }
+      await checkpointSchedule?.stop();
       const connectionString = process.env.DATABASE_URL?.trim();
       if (connectionString) {
         try {
