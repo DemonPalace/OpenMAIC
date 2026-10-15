@@ -190,7 +190,6 @@ describe('sandbox recovery semantics', () => {
   it('never releases after export or checkpoint persistence failure', async () => {
     provider.exportWorkspace.mockImplementation(async function* () {
       throw new Error('export failed');
-      yield bytes;
     });
     await expect(service().saveWorkspace(id, 0, true)).rejects.toThrow();
     expect(provider.destroy).not.toHaveBeenCalled();
