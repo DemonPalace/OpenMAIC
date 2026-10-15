@@ -104,7 +104,7 @@ export function buildMaterialMediaTool(deps: MaterialMediaDeps): AgentTool<never
       }
       if (!material?.hasBytes) {
         return {
-          content: [{ type: 'text', text: copy.error('materialNotFound') }],
+          content: [{ type: 'text', text: copy.error('mediaNotFound') }],
           details: { materialId: params.materialId },
           isError: true,
         };
