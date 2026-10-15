@@ -1,5 +1,6 @@
 'use client';
 
+import { MEDIA_MAX_DURATION_SEC } from '@/lib/types/media-limits';
 import { extractionLabelKey } from '@/lib/workbench/material-library-client';
 
 /**
@@ -392,7 +393,11 @@ export function CourseMentionMenu({
                 const label = unavailable
                   ? t('workspace.courseMention.materialUnavailable', {
                       name: candidate.name,
-                      reason: status,
+                      reason: candidate.reasonCode
+                        ? t(`workspace.knowledgeBase.failure.${candidate.reasonCode}.description`, {
+                            minutes: MEDIA_MAX_DURATION_SEC / 60,
+                          })
+                        : status,
                     })
                   : t('workspace.courseMention.attachMaterial', { name: candidate.name });
                 const option = (
