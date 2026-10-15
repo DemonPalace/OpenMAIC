@@ -128,7 +128,7 @@ it('uses the existing locale for labels, state and unavailable capability messag
   expect(host.querySelector('[aria-label="File editor"]')).not.toBeNull();
 });
 
-it.each(['not-found', 'timeout', 'unknown', 'other-404'])(
+it.each(['not-found', 'timeout', 'unknown', 'other-404', 'destroyed'])(
   'handles cached creation UUID after %s',
   async (kind) => {
     const key = 'openmaic.workspace.operation:project';
@@ -157,7 +157,10 @@ it.each(['not-found', 'timeout', 'unknown', 'other-404'])(
                 },
                 { status: 404 },
               );
-            return Response.json({ success: true, data: { ...environment, state: 'unknown' } });
+            return Response.json({
+              success: true,
+              data: { ...environment, state: kind === 'destroyed' ? 'destroyed' : 'unknown' },
+            });
           }
           expect(JSON.parse(String(init.body)).requestId).not.toBe(environment.id);
           return Response.json({ success: true, data: environment });
@@ -179,6 +182,37 @@ it.each(['not-found', 'timeout', 'unknown', 'other-404'])(
       expect(cache.has(key)).toBe(false);
       await act(async () => open.click());
       expect(attempts).toBe(2);
+    } else if (kind === 'destroyed') {
+      expect(attempts).toBe(2);
+      expect(cache.get(key)).not.toBe(environment.id);
     } else expect(cache.get(key)).toBe(environment.id);
   },
 );
+
+it('keeps an unresolved terminal reachable after refresh so it can be closed', async () => {
+  const originalFetch = fetch;
+  let closed = false;
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (url: string, init: RequestInit) => {
+      if (url.endsWith('/terminals'))
+        return Response.json({
+          success: true,
+          data: closed ? [] : [{ id: 'terminal-id', state: 'unknown' }],
+        });
+      if (url.endsWith('/terminals/terminal-id') && init.method === 'DELETE') {
+        closed = true;
+        return Response.json({ success: true, data: { id: 'terminal-id', state: 'closed' } });
+      }
+      return originalFetch(url, init);
+    }),
+  );
+  await act(async () => root!.render(workspace()));
+  const close = [...host.querySelectorAll('button')].find((b) => b.textContent === 'Close shell');
+  expect(close).toBeDefined();
+  await act(async () => close!.click());
+  expect(closed).toBe(true);
+  expect([...host.querySelectorAll('button')].some((b) => b.textContent === 'Open terminal')).toBe(
+    true,
+  );
+});

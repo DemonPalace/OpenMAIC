@@ -50,7 +50,7 @@ export function ProjectWorkspace({ workspaceId }: { workspaceId: string }) {
       setFiles(contents.files);
       setCommands(await api(`/${current.id}/commands`));
       const terminals = await api<Array<{ id: string; state: string }>>(`/${current.id}/terminals`);
-      setTerminal(terminals.find((t) => t.state === 'running')?.id ?? '');
+      setTerminal(terminals.find((t) => t.state !== 'closed')?.id ?? '');
     } else {
       const checkpoints =
         await sandboxRequest<Array<Checkpoint & { workspaceId: string }>>(

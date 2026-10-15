@@ -204,6 +204,11 @@ Sandbox-writable receipts and output are untrusted, not authoritative grading ev
 ### PTY
 
 One active or unresolved terminal per environment. Input ≤16 KiB; size ≤400×200.
+After a failed creation, use **Close shell** to reconcile and retire the reservation.
+The close action shares the environment lock with creation. It closes a discovered PTY,
+or retires the reservation when the sandbox process lookup succeeds with no match.
+Failed or ambiguous discovery retains the reservation; ordinary status reads do not
+discard an unknown allocation. The workspace keeps unresolved terminals visible after refresh.
 SSE disconnection, slow clients or the 110-second stream deadline detach the reader, not
 the terminal. Reconnect to resume **new** output; offline output replay is not implemented.
 The project component uses xterm with bounded input/output queues; the lab remains a line console. Reverse proxies must disable

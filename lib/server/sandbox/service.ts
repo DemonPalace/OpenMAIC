@@ -233,6 +233,9 @@ export class SandboxService {
     }
     const { row, created } = reserved;
     if (!created) {
+      // reserve already checked ownership and request identity. A destroyed row
+      // has no live binding to protect; let the client rotate its old operation ID.
+      if (row.state === 'destroyed') return publicEnvironment(row);
       const existing = await this.binding(row.id);
       if (existing.state === 'running' && !existing.workspace_ready)
         return this.restoreWorkspace(row.id);
@@ -593,12 +596,18 @@ export class SandboxService {
   }
 
   async closeTerminal(id: string, terminalId: string) {
-    const { env, terminal } = await this.terminalBinding(id, terminalId);
-    if (terminal.state === 'closed') return { id: terminal.id, state: terminal.state };
-    if (terminal.pid === null) throw sandboxConflict('Terminal allocation is unresolved.');
-    await this.provider.closeTerminal(env.resource_id, env.id, terminal.pid, terminal.id);
-    const updated = await this.store.setTerminal(env, terminal.id, 'closed', terminal.pid);
-    return { id: updated.id, state: updated.state };
+    await this.binding(id);
+    return this.store.exclusive(id, async () => {
+      const { env, terminal } = await this.terminalBinding(id, terminalId);
+      if (terminal.state === 'closed') return { id: terminal.id, state: terminal.state };
+      // terminalBinding completed process discovery under the creation lock.
+      // A failed/ambiguous lookup throws and retains the reservation. An explicit
+      // close may retire a no-match reservation; reads never discard an unknown ID.
+      if (terminal.pid !== null)
+        await this.provider.closeTerminal(env.resource_id, env.id, terminal.pid, terminal.id);
+      const updated = await this.store.setTerminal(env, terminal.id, 'closed', terminal.pid);
+      return { id: updated.id, state: updated.state };
+    });
   }
 
   async terminalStream(id: string, terminalId: string, signal: AbortSignal) {

@@ -240,6 +240,28 @@ describe('sandbox recovery semantics', () => {
     await expect(service().get(id)).rejects.toThrow('different provider');
     expect(provider.inspect).not.toHaveBeenCalled();
   });
+  it('returns a destroyed creation operation after provider reconfiguration', async () => {
+    row.state = 'destroyed';
+    row.connection_fingerprint = 'previous-configuration';
+    store.reserve.mockResolvedValue({ row: { ...row }, created: false });
+    await expect(service().create(id, 'project')).resolves.toMatchObject({
+      id,
+      state: 'destroyed',
+    });
+    expect(provider.create).not.toHaveBeenCalled();
+    expect(provider.inspect).not.toHaveBeenCalled();
+    expect(provider.initializeWorkspace).not.toHaveBeenCalled();
+  });
+  it.each(['running', 'creating', 'unknown', 'destroying'])(
+    'still rejects a cached %s operation from another configuration',
+    async (state) => {
+      row.state = state;
+      row.connection_fingerprint = 'previous-configuration';
+      store.reserve.mockResolvedValue({ row: { ...row }, created: false });
+      await expect(service().create(id, 'project')).rejects.toThrow('different provider');
+      expect(provider.create).not.toHaveBeenCalled();
+    },
+  );
 });
 
 it('checks saved-project storage before reserving capacity or allocating compute', async () => {
