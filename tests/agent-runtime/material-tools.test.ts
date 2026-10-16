@@ -257,7 +257,6 @@ describe('material agent tools', () => {
       'search_material',
       'extract_material',
       'wait_for_materials',
-      'fetch_url',
     ]);
   });
 
