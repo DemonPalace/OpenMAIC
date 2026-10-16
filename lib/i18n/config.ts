@@ -31,7 +31,9 @@ i18n
   .use(
     resourcesToBackend(async (language: string) => {
       const localeModule = await import(`./locales/${language}.json`);
-      return deepMerge(localeModule.default, { workbench: workbenchResourceFor(language) });
+      return deepMerge(localeModule.default, {
+        workbench: workbenchResourceFor(language),
+      });
     }),
   )
   .init({

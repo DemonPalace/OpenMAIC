@@ -251,3 +251,29 @@ describe('S3AssetByteStore URL signing', () => {
     expect(signed.searchParams.get('X-Amz-Signature')).toBeTruthy();
   });
 });
+
+describe('isolated byte namespaces', () => {
+  test('keeps course and checkpoint bytes separate in both directions', async () => {
+    const client = new MemoryS3Client();
+    const course = makeStore(client);
+    const checkpoint = course.withPrefix('sandbox-checkpoints/v1/one/');
+    const { contentHash, bytes } = await contentHashOf(new Blob(['same content']));
+    await course.write(contentHash, new Uint8Array(bytes));
+    await checkpoint.write(contentHash, new Uint8Array(bytes));
+    expect([...client.objects.keys()]).toEqual([
+      contentHash,
+      'sandbox-checkpoints/v1/one/' + contentHash,
+    ]);
+    await course.delete(contentHash);
+    expect(await checkpoint.read(contentHash)).not.toBeNull();
+    await course.write(contentHash, new Uint8Array(bytes));
+    await checkpoint.delete(contentHash);
+    expect(await course.read(contentHash)).not.toBeNull();
+  });
+  test.each(['', '../', '/root/', 'with.dot/', 'no-trailing-slash'])(
+    'refuses unsafe namespace %j',
+    (prefix) => {
+      expect(() => makeStore().withPrefix(prefix)).toThrow();
+    },
+  );
+});

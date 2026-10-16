@@ -53,6 +53,14 @@ export interface AssetSignedReadHeaders {
 
 export interface AssetByteStore {
   /**
+   * Optional isolated object namespace, outside the course asset registry.
+   * The returned store must never read, write or delete keys in another prefix.
+   * Its consumer owns metadata, retention and collection. Never emulate this
+   * by passing a path as a ContentHash to the course store.
+   */
+  withPrefix?(prefix: string): AssetByteStore;
+
+  /**
    * Store bytes under their content hash.
    *
    * Unconditional and idempotent: writing bytes that are already stored MUST

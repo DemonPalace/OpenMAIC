@@ -8,6 +8,9 @@ import {
 // register() is exercised for its database requirement only.
 // register() starts the background workers. Real ones keep polling the
 // database after the file's tests end and log into a closing worker.
+vi.mock('@/lib/server/sandbox/checkpoint-collector', () => ({
+  startCheckpointCollector: vi.fn(),
+}));
 vi.mock('@/lib/server/generation/run/runner', () => ({
   startGenerationRunner: () => ({ workerId: 'test', wake: () => {}, stop: async () => {} }),
 }));

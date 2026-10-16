@@ -15,6 +15,11 @@ import {
   type ServerProviderEntry,
 } from '@/lib/server/provider-config';
 import { translateLegacyConfig } from '@/lib/server/model-config/legacy-config';
+import {
+  sandboxConfigurationSchema,
+  legacySandboxConfiguration,
+} from '@/lib/sandbox/config-schema';
+import { ModelConfigError } from './openmaic-yml';
 import { loadModelConfigFile } from '@/lib/server/model-config/openmaic-yml';
 import { presetIdFor } from '@/lib/config/preset-ids';
 import { usesServerCredentials, selectsUpstreamModel } from './model-authorization';
@@ -70,8 +75,10 @@ function hasLegacyConfiguration(): boolean {
  */
 export function loadDeploymentLayer(): DeploymentLayer {
   const file = loadModelConfigFile();
-  const legacy = hasLegacyConfiguration();
+  const legacySandbox = legacySandboxConfiguration(process.env);
+  const legacy = hasLegacyConfiguration() || !!legacySandbox;
   if (file) {
+    validateSandboxSdkEnvironment(file.sandbox?.enabled);
     return {
       layer: { source: 'deployment', config: file },
       legacy: false,
@@ -104,8 +111,19 @@ export function loadDeploymentLayer(): DeploymentLayer {
     globalFallback: process.env.MODEL_FALLBACK?.trim() || undefined,
     defaultImageProvider: process.env.DEFAULT_IMAGE_PROVIDER?.trim() || undefined,
   });
+  if (legacySandbox) {
+    const parsed = sandboxConfigurationSchema.safeParse(legacySandbox);
+    if (!parsed.success)
+      throw new ModelConfigError(
+        'legacy environment',
+        parsed.error.issues.map((issue) => `sandbox.${issue.path.join('.')}: ${issue.message}`),
+      );
+    config.sandbox = parsed.data;
+    validateSandboxSdkEnvironment(config.sandbox.enabled);
+  }
   return {
-    layer: config.providers || config.slots ? { source: 'deployment', config } : null,
+    layer:
+      config.providers || config.slots || config.sandbox ? { source: 'deployment', config } : null,
     legacy: true,
     notices: [
       'The model configuration comes from the legacy provider variables, server-providers.yml, DEFAULT_MODEL and MODEL_FALLBACK, which are deprecated; move it to openmaic.yml',
@@ -132,4 +150,14 @@ export function loadDeploymentLayer(): DeploymentLayer {
       ),
     ],
   };
+}
+
+function validateSandboxSdkEnvironment(enabled?: boolean) {
+  if (!enabled) return;
+  for (const name of ['E2B_SANDBOX_URL', 'E2B_ACCESS_TOKEN']) {
+    if (process.env[name])
+      throw new ModelConfigError('environment', [
+        `${name}: unset this SDK override; configure sandbox.apiUrl and sandbox.domain instead`,
+      ]);
+  }
 }

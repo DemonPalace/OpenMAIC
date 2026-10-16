@@ -74,6 +74,8 @@ export interface S3AssetByteStoreOptions {
   signer?: S3AssetByteStoreSigner;
   /** Bucket dedicated to content-hash-named asset objects. */
   bucket: string;
+  /** Empty for course assets; isolated consumers supply a validated prefix. */
+  prefix?: string;
 }
 
 const AWS_S3_CLIENT_PACKAGE = '@aws-sdk/client-s3';
@@ -223,6 +225,7 @@ function isNotFound(error: unknown): boolean {
 export class S3AssetByteStore implements AssetByteStore {
   private readonly client: S3AssetByteStoreClient;
   private readonly bucket: string;
+  private readonly prefix: string;
   /**
    * Objects live in the object store, never in the registry's own PostgreSQL,
    * so the plain `write` / `read` / `delete` can never contend for the
@@ -243,6 +246,21 @@ export class S3AssetByteStore implements AssetByteStore {
     this.resolvedCommands = options.commands;
     this.resolvedSigner = options.signer;
     this.bucket = options.bucket;
+    const prefix = options.prefix ?? '';
+    if (prefix && !/^(?:[A-Za-z0-9_-]+\/)+$/.test(prefix))
+      throw new Error('Invalid object namespace');
+    this.prefix = prefix;
+  }
+
+  withPrefix(prefix: string): AssetByteStore {
+    if (!prefix) throw new Error('An isolated namespace must not be empty');
+    return new S3AssetByteStore({
+      client: this.client,
+      bucket: this.bucket,
+      commands: this.resolvedCommands,
+      signer: this.resolvedSigner,
+      prefix: this.prefix + prefix,
+    });
   }
 
   /**
@@ -313,7 +331,7 @@ export class S3AssetByteStore implements AssetByteStore {
       await this.client.send(
         commands.put({
           Bucket: this.bucket,
-          Key: hash,
+          Key: this.prefix + hash,
           Body: bytes,
           ContentLength: bytes.byteLength,
         }),
@@ -327,7 +345,7 @@ export class S3AssetByteStore implements AssetByteStore {
     const commands = await this.commands();
     try {
       const output = (await this.client.send(
-        commands.get({ Bucket: this.bucket, Key: hash }),
+        commands.get({ Bucket: this.bucket, Key: this.prefix + hash }),
       )) as S3GetObjectOutput;
       if (!output.Body) throw s3Failure('read');
       return Uint8Array.from(await output.Body.transformToByteArray());
@@ -340,7 +358,7 @@ export class S3AssetByteStore implements AssetByteStore {
   async delete(hash: ContentHash): Promise<void> {
     const commands = await this.commands();
     try {
-      await this.client.send(commands.delete({ Bucket: this.bucket, Key: hash }));
+      await this.client.send(commands.delete({ Bucket: this.bucket, Key: this.prefix + hash }));
     } catch (error) {
       if (isNotFound(error)) return;
       throw s3Failure('delete');
@@ -381,7 +399,7 @@ export class S3AssetByteStore implements AssetByteStore {
         this.client,
         commands.get({
           Bucket: this.bucket,
-          Key: hash,
+          Key: this.prefix + hash,
           ResponseContentType: headers.contentType,
           ...(headers.contentDisposition === undefined
             ? {}
