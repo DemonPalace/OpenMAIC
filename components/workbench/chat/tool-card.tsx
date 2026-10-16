@@ -234,6 +234,8 @@ export function ToolCard({
             className="shrink-0 px-2 text-xs text-primary underline focus-visible:outline focus-visible:outline-2"
             onClick={(event) => {
               event.stopPropagation();
+              // Hand focus off before the chat is hidden beneath the library.
+              event.currentTarget.blur();
               openLibraryAt(presentation.libraryLink!.target);
             }}
           >

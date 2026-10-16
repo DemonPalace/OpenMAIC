@@ -730,7 +730,12 @@ export function StoredMaterialNotice({
       <button
         type="button"
         className="underline hover:text-foreground"
-        onClick={() => onView({ kind: 'materials', materialIds })}
+        onClick={(event) => {
+          // Surrender the opener's focus before its composer is hidden. React
+          // effects can run before the browser fixes focus on display:none.
+          event.currentTarget.blur();
+          onView({ kind: 'materials', materialIds });
+        }}
       >
         {t('workbench.material.view')}
       </button>
