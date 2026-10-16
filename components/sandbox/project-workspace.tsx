@@ -598,9 +598,13 @@ export function ProjectWorkspace({ workspaceId }: { workspaceId: string }) {
             onClick={() => {
               if (window.confirm(t('sandbox.releaseConfirm')))
                 void perform(async () => {
-                  await api(`/${env.id}`, 'DELETE');
-                  localStorage.removeItem(key);
-                  setPreview('');
+                  const released = await api<SandboxEnvironment>(`/${env.id}`, 'DELETE');
+                  if (released.state === 'destroyed') {
+                    localStorage.removeItem(key);
+                    setPreview('');
+                    setText('');
+                    setDirty(false);
+                  }
                   await refresh();
                 });
             }}

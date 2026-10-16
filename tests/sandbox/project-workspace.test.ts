@@ -217,3 +217,87 @@ it('keeps an unresolved terminal reachable after refresh so it can be closed', a
     true,
   );
 });
+
+it.each(['save', 'save-and-release', 'cancel', 'failure', 'uncertain', 'refresh-failure'])(
+  'discards the editor only after confirmed release (%s)',
+  async (outcome) => {
+    const cache = new Map([['openmaic.workspace.operation:project', environment.id]]);
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => cache.get(key) ?? null,
+      setItem: (key: string, value: string) => cache.set(key, value),
+      removeItem: (key: string) => cache.delete(key),
+    });
+    window.confirm = vi.fn(() => outcome !== 'cancel');
+    const originalFetch = fetch;
+    let active = true;
+    let deleted = false;
+    let deleteCalls = 0;
+    const writes: string[] = [];
+    const checkpoints: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init: RequestInit) => {
+        const method = init.method ?? 'GET';
+        const reply = (data: unknown) => Response.json({ success: true, data });
+        if (url === `/api/sandbox/environments/${environment.id}` && method === 'DELETE') {
+          deleteCalls++;
+          if (outcome === 'failure') throw new Error('release failed');
+          if (outcome === 'uncertain') return reply({ ...environment, state: 'destroying' });
+          active = false;
+          deleted = true;
+          return reply({ ...environment, state: 'destroyed' });
+        }
+        if (url === '/api/sandbox/environments') {
+          if (outcome === 'refresh-failure' && deleted) throw new Error('refresh failed');
+          if (method === 'POST') {
+            active = true;
+            return reply(environment);
+          }
+          return reply(active ? [environment] : []);
+        }
+        if (url === '/api/sandbox/workspaces') return reply([]);
+        if (url.endsWith('/files') && method === 'PUT') {
+          writes.push(JSON.parse(String(init.body)).text);
+          return reply({});
+        }
+        if (url.endsWith('/workspace') && method === 'POST') {
+          const action = JSON.parse(String(init.body)).action;
+          checkpoints.push(action);
+          return reply({
+            checkpoint: { revision: 1, bytes: 0 },
+            released: action === 'save-and-release',
+          });
+        }
+        return originalFetch(url, init);
+      }),
+    );
+    await act(async () => root!.render(workspace()));
+    const editor = host.querySelector<HTMLTextAreaElement>('[aria-label="File editor"]')!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(Object.getPrototypeOf(editor), 'value')!.set!.call(
+        editor,
+        'discard this buffer',
+      );
+      editor.dispatchEvent(new window.Event('input', { bubbles: true }));
+    });
+    const click = async (label: string) => {
+      const button = [...host.querySelectorAll('button')].find((b) => b.textContent === label)!;
+      expect(button).toBeDefined();
+      expect(button.hasAttribute('disabled')).toBe(false);
+      await act(async () => button.click());
+    };
+    expect(host.textContent).toContain('Write file *');
+    await click('Release environment');
+    expect(deleteCalls).toBe(outcome === 'cancel' ? 0 : 1);
+    const confirmed = !['cancel', 'failure', 'uncertain'].includes(outcome);
+    expect(editor.value).toBe(confirmed ? '' : 'discard this buffer');
+    expect(cache.size).toBe(confirmed ? 0 : 1);
+    expect(host.textContent?.includes('Write file *')).toBe(!confirmed);
+    if (outcome === 'save' || outcome === 'save-and-release') {
+      await click('Open / restore project');
+      await click(outcome === 'save' ? 'Save checkpoint' : 'Save and release');
+      expect(checkpoints).toEqual([outcome]);
+      expect(writes).toEqual([]);
+    }
+  },
+);
