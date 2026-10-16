@@ -120,7 +120,11 @@ export function buildMaterialLibraryTools(
       const rows = await (
         await getSessionMaterialQueryable()
       ).query<{ id: string }>(
-        'SELECT id FROM agent_session_materials WHERE session_id = $1 AND id = ANY($2::text[])',
+        `SELECT COALESCE(owner_material_id, id) AS id
+           FROM agent_session_materials
+          WHERE session_id = $1
+            AND (owner_material_id = ANY($2::text[])
+              OR (owner_material_id IS NULL AND id = ANY($2::text[])))`,
         [deps.sessionId, materialIds],
       );
       const copies = new Set(rows.rows.map((row) => row.id));

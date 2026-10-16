@@ -509,8 +509,15 @@ describe('material library routes and tools (PGlite)', () => {
     expect(refused).toMatchObject({ isError: true, details: { status: 'not_movable' } });
   });
 
-  it.each(['same id', 'absent', 'other session', 'different id'] as const)(
-    'reports legacy session copies only for this conversation and same id: %s',
+  it.each([
+    'same id',
+    'legacy id',
+    'absent',
+    'other session',
+    'different id',
+    'other source',
+  ] as const)(
+    'reports legacy session copies by source id only for this conversation: %s',
     async (copy) => {
       const h = await boot();
       await seedSource(h, 'shadow-source');
@@ -521,7 +528,11 @@ describe('material library routes and tools (PGlite)', () => {
           h,
           copy === 'other session' ? 'ses-other' : 'ses-run',
           copy === 'different id' ? 'different-copy' : 'shadow-source',
-          'shadow-source',
+          copy === 'legacy id'
+            ? null
+            : copy === 'other source'
+              ? 'another-source'
+              : 'shadow-source',
         );
       }
       const before = await h.pool.query(
@@ -542,18 +553,18 @@ describe('material library routes and tools (PGlite)', () => {
         await run('rename_material', { materialId: 'shadow-source', name: 'Library name' }),
         await run('move_materials', { materialIds: ['shadow-source'], folderId: target.id }),
       ];
+      const hasCopy = copy === 'same id' || copy === 'legacy id' || copy === 'different id';
       actual.forEach((value, index) => {
         const details = expectedResults[index]!;
         const text = JSON.stringify(details, null, 2);
         expect(value).toEqual({
-          details: copy === 'same id' ? { ...details, sessionCopyIds: ['shadow-source'] } : details,
+          details: hasCopy ? { ...details, sessionCopyIds: ['shadow-source'] } : details,
           content: [
             {
               type: 'text',
-              text:
-                copy === 'same id'
-                  ? `${text}\nThis conversation reads its own earlier copy of shadow-source; the copy keeps its previous name and folder.`
-                  : text,
+              text: hasCopy
+                ? `${text}\nThis conversation reads its own earlier copy of shadow-source; the copy keeps its previous name and folder.`
+                : text,
             },
           ],
         });
@@ -588,7 +599,7 @@ describe('material library routes and tools (PGlite)', () => {
       const tools = buildMaterialLibraryTools({ ownerId: ACCOUNT, sessionId: 'ses-run' });
       const originalQuery = h.pool.query.bind(h.pool);
       const query = vi.spyOn(h.pool, 'query').mockImplementation(async (sql, params) => {
-        if (sql.startsWith('SELECT id FROM agent_session_materials WHERE session_id')) {
+        if (sql.startsWith('SELECT COALESCE(owner_material_id, id) AS id')) {
           throw new Error('notice query unavailable');
         }
         return originalQuery(sql, params);
