@@ -50,8 +50,9 @@ read or edit it. The separate `sandbox:use` permission is required to operate a 
 No separate settings-UI opt-in is needed. These rules apply equally to a hosted installation
 and a local deployment; the page never changes a learner's personal model settings.
 
-The deployment provides defaults. Web edits override only fields the administrator changes,
-and take effect on subsequent requests. `lock: [sandbox]` or `lock: all` makes the page
+The deployment provides defaults. Saving web settings keeps only values that differ from
+those defaults; setting a field back to its deployment value restores its inheritance without
+resetting other fields. Changes take effect on subsequent requests. `lock: [sandbox]` or `lock: all` makes the page
 read-only and runtime uses deployment values exclusively, ignoring saved overrides and
 keys. An absent, locked section keeps sandboxes disabled. Unlocking restores saved overrides;
 **Reset to deployment configuration** removes them while preserving the revision fence.

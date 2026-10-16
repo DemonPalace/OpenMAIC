@@ -316,11 +316,35 @@ it('pins a web key to its account and endpoints across deployment changes', asyn
     connectionId: fields.connectionId,
   });
 });
-it('keeps an explicit disable override when the deployment later enables sandboxes', async () => {
+it('keeps a disable override that differs from the deployment default', async () => {
+  deploymentSettings();
   await saveSandboxSettings({ revision: 0, fields, apiKey: 'web-key' });
   await saveSandboxSettings({ revision: 1, fields: { ...fields, enabled: false } });
   deploymentSettings();
   expect(await sandboxWorkspaceEnabled()).toBe(false);
+});
+it('restores one field to deployment inheritance without clearing other overrides', async () => {
+  deploymentSettings();
+  await saveSandboxSettings({
+    revision: 0,
+    fields: { ...fields, lifetimeMs: 600000, template: 'web-template' },
+  });
+  await saveSandboxSettings({ revision: 1, fields: { ...fields, lifetimeMs: 600000 } });
+  expect(db.row?.config).toEqual({ lifetimeMs: 600000 });
+  deploymentSettings({ template: 'updated-deployment-template', lifetimeMs: 900000 });
+  expect(await resolvedSandboxConfig()).toMatchObject({
+    template: 'updated-deployment-template',
+    lifetimeMs: 600000,
+  });
+});
+it('restores enabled to deployment inheritance when saved at its default value', async () => {
+  deploymentSettings({ enabled: false });
+  await saveSandboxSettings({ revision: 0, fields });
+  await saveSandboxSettings({ revision: 1, fields: { ...fields, enabled: false } });
+  expect(db.row?.config).toEqual({});
+  expect(await sandboxWorkspaceEnabled()).toBe(false);
+  deploymentSettings();
+  expect(await sandboxWorkspaceEnabled()).toBe(true);
 });
 it('lock all with no sandbox section keeps the installation disabled', async () => {
   await saveSandboxSettings({ revision: 0, fields, apiKey: 'web-key' });

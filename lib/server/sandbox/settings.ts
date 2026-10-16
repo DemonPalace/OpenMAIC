@@ -227,14 +227,12 @@ export async function saveSandboxSettings(raw: unknown) {
     // Only an explicitly supplied key becomes a sealed web override. Otherwise
     // inherit deployment credentials so rotating them does not leave a stale copy.
     const secret = input.apiKey ? sealSecret(input.apiKey, CONTEXT) : (row?.secret ?? null);
-    const overrides = {
-      ...row?.config,
-      ...Object.fromEntries(
-        Object.entries(input.fields).filter(
-          ([key, value]) => value !== previous.fields[key as keyof SandboxSettingsFields],
-        ),
+    const defaults = deployment().fields;
+    const overrides: Partial<SandboxSettingsFields> = Object.fromEntries(
+      Object.entries(input.fields).filter(
+        ([key, value]) => value !== defaults[key as keyof SandboxSettingsFields],
       ),
-    };
+    );
     // A saved key must never follow a later deployment endpoint/account change.
     if (secret)
       for (const key of ['connectionId', 'apiUrl', 'domain'] as const)

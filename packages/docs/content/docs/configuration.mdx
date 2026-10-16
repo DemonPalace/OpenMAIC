@@ -241,7 +241,9 @@ and invalid values stop startup with their location (for example `sandbox.apiKey
 a YAML file, existing `OPENMAIC_SANDBOX_*` connection and limit variables provide the same
 shape; a YAML file does not fall back to these values when it omits `sandbox`.
 
-Web edits store only changed fields and explicitly entered keys. Keys use the existing
+Web edits store only values that differ from deployment defaults and explicitly entered keys.
+Saving a field at its deployment value restores inheritance for that field without resetting
+other overrides. Saved keys remain pinned to their account and endpoints. Keys use the existing
 instance-secret sealing; keep `OPENMAIC_SECRET_KEY` stable across replicas. Deployment
 keys remain inherited so rotating them does not leave an outdated copy in the database.
 `lock: [sandbox]` or `lock: all` makes the page read-only and excludes saved sandbox
