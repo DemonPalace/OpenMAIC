@@ -6,9 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-## [1.2.0] - 2026-10-15
+## [1.2.0] - 2026-10-16
 
-1.2.0 is the **server-first** release. Course generation, model configuration, courses and media, and identity move to the server, and the browser becomes a client. It needs PostgreSQL and a long-running Node.js server; serverless hosts, Vercel included, stay on 1.1.x. This section lists what changed since 1.2.0-rc.2. Coming from 1.1.x:
+1.2.0 is the **server-first** release. Course generation, model configuration, courses and media, and identity move to the server, and the browser becomes a client. It needs PostgreSQL and a long-running Node.js server; serverless hosts, Vercel included, stay on 1.1.x. This section collects what is new in 1.2.0 beyond the rc.1 and rc.2 sections below, including classroom export, which landed before rc.2 but was not recorded there. Coming from 1.1.x:
 
 - Read **Breaking Changes** and **Before you upgrade** under [1.2.0-rc.1](#120-rc1---2026-10-04): `DATABASE_URL` is required, `MODEL_ROUTES` without `openmaic.yml` stops the server at startup, the browser no longer sends provider settings, and `POST /api/generate-classroom` takes `{ requirement, materialIds? }`.
 - Back up the database, choose an identity mode before the first start, keep `data/`, and set `OPENMAIC_SECRET_KEY` when several instances share the database.
@@ -57,7 +57,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Packages
 
-- `@openmaic/renderer` 0.1.14, `@openmaic/editor` 0.0.11, `@openmaic/generation` 0.3.20, `@openmaic/dsl` 0.11.3, `@openmaic/importer` 0.3.1 and `@openmaic/storage` 0.37.3 (as in rc.2).
+- New since rc.2: `@openmaic/renderer` 0.1.14 (0.1.13, referenced by rc.2, was never published) and `@openmaic/generation` 0.3.20 (rc.2 had 0.3.18). `@openmaic/editor` 0.0.11 is the version rc.2 referenced, first published with this release. Unchanged from rc.2: `@openmaic/dsl` 0.11.3, `@openmaic/importer` 0.3.1 and `@openmaic/storage` 0.37.3.
 
 ### Known issues
 
