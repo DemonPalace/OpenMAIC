@@ -44,7 +44,7 @@
 
 ## 🗞️ 动态
 
-- **2026-10-15** — [v1.2.0](https://github.com/THU-MAIC/OpenMAIC/releases/tag/v1.2.0)：**服务端优先正式发布。** 生成在服务端运行，关页面、重启都不中断；模型在 `openmaic.yml` 里统一配置（默认值、锁定、可禁止用户自带密钥）；资料添加即解析；网页端和 API 共用同一条流水线。新增[课堂导出](packages/docs/content/docs/getting-started.zh-cn.mdx#导出课堂)：导出保留全部场景的 PPTX，或一个能离线播放整堂课的 HTML 文件。需要 PostgreSQL 和常驻的 Node 服务，Vercel 部署请继续使用 1.1.x。升级前请先阅读[从 1.1.x 升级](packages/docs/content/docs/deployment.zh-cn.mdx#从-11x-升级)。
+- **2026-10-16** — [v1.2.0](https://github.com/THU-MAIC/OpenMAIC/releases/tag/v1.2.0)：**服务端优先正式发布。** 生成在服务端运行，关页面、重启都不中断；模型在 `openmaic.yml` 里统一配置（默认值、锁定、可禁止用户自带密钥）；资料添加即解析；网页端和 API 共用同一条流水线。新增[课堂导出](packages/docs/content/docs/getting-started.zh-cn.mdx#导出课堂)：导出保留全部场景的 PPTX，或一个能离线播放整堂课的 HTML 文件。需要 PostgreSQL 和常驻的 Node 服务，Vercel 部署请继续使用 1.1.x。升级前请先阅读[从 1.1.x 升级](packages/docs/content/docs/deployment.zh-cn.mdx#从-11x-升级)。
 - **2026-09-28** — [v1.1.2](https://github.com/THU-MAIC/OpenMAIC/releases/tag/v1.1.2)：安全更新——provider 请求只连接已校验地址并拒绝重定向（[GHSA-g87c-cm4q-cw5x](https://github.com/THU-MAIC/OpenMAIC/security/advisories/GHSA-g87c-cm4q-cw5x)）。
 - **2026-09-27** — [v1.1.1](https://github.com/THU-MAIC/OpenMAIC/releases/tag/v1.1.1)：安全更新——加固 MinerU Cloud 文档解析（[GHSA-cpjc-vgjh-c5jp](https://github.com/THU-MAIC/OpenMAIC/security/advisories/GHSA-cpjc-vgjh-c5jp)）。
 - **2026-09-24** — [v1.1.0](https://github.com/THU-MAIC/OpenMAIC/releases/tag/v1.1.0)：课堂对话改为 Agent 循环（可针对幻灯片元素、交互组件、白板内容提问）；设置按课程流程重构；Token Plan 一键接入。
@@ -131,7 +131,7 @@ slots:
 | 槽位、预设、回退模型、`lock`、`allowUserKeys`、`OPENMAIC_SECRET_KEY` | [配置说明](packages/docs/content/docs/configuration.zh-cn.mdx) |
 | 所有服务商预设与模型 ID | [支持的模型](packages/docs/content/docs/supported-models.zh-cn.mdx) |
 | 升级：没有 `openmaic.yml` 时，服务商环境变量、`server-providers.yml`、`DEFAULT_MODEL` 和 `MODEL_FALLBACK` 仍然有效；`MODEL_ROUTES` 需改写为槽位 | [从旧配置迁移](packages/docs/content/docs/configuration.zh-cn.mdx#从旧配置迁移) |
-| 用户可选哪些模型：由服务端持有 key 的服务商只提供其 `models` 列表（`*_MODELS`）中的模型，以及槽位、默认和回退模型 | [模型授权](packages/docs/content/docs/configuration.zh-cn.mdx#服务端托管服务商的模型授权) |
+| 用户可选哪些模型：由服务端持有 key、并选择上游模型的服务商只提供其 `models` 列表（`*_MODELS`）中的模型，以及槽位、默认和回退模型 | [模型授权](packages/docs/content/docs/configuration.zh-cn.mdx#服务端托管服务商的模型授权) |
 
 **支持的服务商：** OpenAI、Azure OpenAI、Anthropic、Amazon Bedrock、Google Gemini、DeepSeek、通义千问 Qwen、Kimi、MiniMax、Grok (xAI)、OpenRouter、TokenDance、豆包、腾讯混元 / TokenHub、小米 MiMo、智谱 GLM、Ollama、[Lemonade](#lemonade-local-ai) 与 [FunASR](#funasr-local-asr)（本地），以及任何兼容 OpenAI API 的服务。
 
