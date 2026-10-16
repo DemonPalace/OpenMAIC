@@ -127,7 +127,7 @@ interface UseChatSessionsOptions {
   onLiveSpeech?: (text: string | null, agentId?: string | null) => void;
   onSpeechProgress?: (ratio: number | null) => void;
   onThinking?: (state: { stage: string; agentId?: string } | null) => void;
-  onCueUser?: (fromAgentId?: string, prompt?: string) => void;
+  onCueUser?: (fromAgentId?: string, prompt?: string, options?: string[]) => void;
   onActiveBubble?: (messageId: string | null) => void;
   onLiveSessionError?: () => void;
   /** Called immediately when the server semantically closes a QA/Discussion session. */
@@ -1056,7 +1056,7 @@ export function useChatSessions(options: UseChatSessionsOptions = {}) {
             onThinkingRef.current?.(data);
           },
 
-          onCueUser(fromAgentId?: string, prompt?: string) {
+          onCueUser(fromAgentId?: string, prompt?: string, options?: string[]) {
             // Track cue_user for agent loop
             if (loopDoneDataRef.current) {
               loopDoneDataRef.current.cueUserReceived = true;
@@ -1066,7 +1066,8 @@ export function useChatSessions(options: UseChatSessionsOptions = {}) {
                 cueUserReceived: true,
               };
             }
-            onCueUserRef.current?.(fromAgentId, prompt);
+            if (options) onCueUserRef.current?.(fromAgentId, prompt, options);
+            else onCueUserRef.current?.(fromAgentId, prompt);
           },
 
           onDone(data: {
