@@ -39,7 +39,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Security
 
 - Agent: user-authored skill content is enclosed in a closing marker derived from its content hash, so a skill body can no longer fake the end of its user-authored block or close the skill envelope early. [#1816](https://github.com/THU-MAIC/OpenMAIC/pull/1816)
-- Math: every KaTeX and Temml render path (slides, whiteboard, quizzes, editor, chat Markdown, PPTX export, importer, offline exports) disables formula-defined macros (`\def`, `\newcommand`, `\let`, …), forces `trust: false` and caps `maxExpand`, so a short formula cannot expand into an expensive render (`safeKatexOptions` in `@openmaic/dsl` 0.11.3). [#1827](https://github.com/THU-MAIC/OpenMAIC/pull/1827)
+- Math: the app's KaTeX and Temml render paths (slides, whiteboard, quizzes, editor, chat Markdown, PPTX export, importer, offline exports) disable formula-defined macros (`\def`, `\newcommand`, `\let`, …), force `trust: false` and cap `maxExpand`, so a short formula cannot expand into an expensive render (`safeKatexOptions` in `@openmaic/dsl` 0.11.3). Generated interactive pages keep their own KaTeX auto-render settings; that script runs inside the sandboxed interactive frame, not in the app. [#1827](https://github.com/THU-MAIC/OpenMAIC/pull/1827)
 - Sanitizer: inline style values containing a backslash are refused, so CSS escapes cannot get past the blocked-token check. Defence in depth: no URL-accepting property is currently allowed. [#1815](https://github.com/THU-MAIC/OpenMAIC/pull/1815)
 
 ### Bug Fixes
