@@ -23,6 +23,7 @@ import {
   resolvedSandboxConfig,
   sandboxSettingsView,
 } from '@/lib/server/sandbox/settings';
+import { setDeploymentConfigForTests } from '@/lib/server/model-config/runtime';
 import { SandboxStore } from '@/lib/server/sandbox/store';
 import { ensureOwnerMergeSchema } from '@/lib/persistence/owner-merges';
 const schema = 'sandbox_settings_' + randomUUID().replaceAll('-', '');
@@ -48,7 +49,7 @@ describe.skipIf(!process.env.PG_CONTRACT_URL)('sandbox settings PG transaction b
       options: `-c search_path=${schema}`,
     });
     vi.stubEnv('DATABASE_URL', 'fixture');
-    vi.stubEnv('OPENMAIC_SANDBOX_SETTINGS_UI', 'true');
+    setDeploymentConfigForTests({ layer: null, legacy: false, notices: [] });
     vi.stubEnv('OPENMAIC_SECRET_KEY', 'pg-test-secret-only');
     await ensureOwnerMergeSchema(pool);
   });
@@ -57,6 +58,7 @@ describe.skipIf(!process.env.PG_CONTRACT_URL)('sandbox settings PG transaction b
       await pool.query(`DROP SCHEMA ${schema} CASCADE`);
       await pool.end();
     }
+    setDeploymentConfigForTests();
     vi.unstubAllEnvs();
   });
   it('persists encrypted key, rejects stale creation, fences changes against outstanding reservations', async () => {

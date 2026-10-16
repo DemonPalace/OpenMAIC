@@ -51,7 +51,7 @@ export function SandboxSettings() {
       setBusy(false);
     }
   };
-  const save = async () => {
+  const save = async (reset = false) => {
     if (!view || !fields) return;
     setBusy(true);
     setError('');
@@ -60,8 +60,9 @@ export function SandboxSettings() {
       accept(
         await sandboxRequest<SandboxSettingsView>(URL, 'PUT', {
           revision: view.revision,
-          fields,
-          ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
+          ...(reset
+            ? { reset: true }
+            : { fields, ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}) }),
         }),
       );
       setSaved(true);
@@ -72,7 +73,7 @@ export function SandboxSettings() {
     }
   };
   const changed = !!view && (JSON.stringify(fields) !== JSON.stringify(view.fields) || !!apiKey);
-  const locked = busy || !!view?.activeEnvironments;
+  const locked = busy || !!view?.locked || !!view?.activeEnvironments;
   return (
     <div className="max-w-2xl space-y-5" data-testid="sandbox-settings">
       <p className="text-sm text-muted-foreground">{tr('description')}</p>
@@ -97,6 +98,11 @@ export function SandboxSettings() {
             </p>
             <p className="text-xs text-muted-foreground">{tr('dependencyHint')}</p>
           </div>
+          {view.locked && (
+            <p role="status" className="rounded border p-3 text-sm">
+              {tr('locked')}
+            </p>
+          )}
           {view.activeEnvironments > 0 && (
             <p role="alert" className="rounded border border-amber-400 p-3 text-sm">
               {tr('activeWarning')} ({view.activeEnvironments})
@@ -210,12 +216,14 @@ export function SandboxSettings() {
             </details>
           </fieldset>
           <div className="flex flex-wrap items-center gap-3">
-            <Button
-              onClick={() => void save()}
-              disabled={locked || (!changed && view.source === 'settings')}
-            >
+            <Button onClick={() => void save()} disabled={locked || !changed}>
               {tr(busy ? 'saving' : 'save')}
             </Button>
+            {view.hasOverrides && (
+              <Button variant="outline" onClick={() => void save(true)} disabled={locked}>
+                {tr('reset')}
+              </Button>
+            )}
             <Button variant="outline" onClick={() => void refresh()} disabled={busy}>
               {tr('refresh')}
             </Button>

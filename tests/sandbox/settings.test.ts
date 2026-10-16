@@ -42,6 +42,11 @@ import {
   sandboxWorkspaceEnabled,
   assertSandboxSettingsRevision,
 } from '@/lib/server/sandbox/settings';
+import { setDeploymentConfigForTests } from '@/lib/server/model-config/runtime';
+import {
+  sandboxConfigurationSchema,
+  legacySandboxConfiguration,
+} from '@/lib/sandbox/config-schema';
 import { getServerPersistenceProvider } from '@/lib/persistence/server-provider';
 import { resetOwnerAuthenticationForTests } from '@/lib/server/identity/registry';
 import type { OwnerPrincipal } from '@/lib/server/identity';
@@ -58,11 +63,11 @@ const fields = {
   maxActivePerOwner: 1,
 };
 beforeEach(() => {
+  setDeploymentConfigForTests({ layer: null, legacy: false, notices: [] });
   db.row = undefined;
   db.active = 0;
   db.queries = [];
   vi.stubEnv('DATABASE_URL', 'test');
-  vi.stubEnv('OPENMAIC_SANDBOX_SETTINGS_UI', 'true');
   vi.stubEnv('OWNER_SINGLE_USER_ID', undefined);
   vi.stubEnv('OPENMAIC_SECRET_KEY', 'test-instance-key-only');
   vi.stubEnv('OPENMAIC_SANDBOX_PROVIDER', '');
@@ -71,6 +76,7 @@ beforeEach(() => {
   resetOwnerAuthenticationForTests();
 });
 afterEach(() => {
+  setDeploymentConfigForTests();
   vi.unstubAllEnvs();
   resetOwnerAuthenticationForTests();
 });
@@ -98,11 +104,23 @@ describe('installation sandbox settings', () => {
     vi.stubEnv('OPENMAIC_SANDBOX_CONNECTION_ID', 'test');
     vi.stubEnv('OPENMAIC_SANDBOX_TEMPLATE', 'code');
     vi.stubEnv('OPENMAIC_SANDBOX_API_KEY', 'env-secret');
+    setDeploymentConfigForTests({
+      layer: {
+        source: 'deployment',
+        config: {
+          sandbox: sandboxConfigurationSchema.parse(legacySandboxConfiguration(process.env)),
+        },
+      },
+      legacy: true,
+      notices: [],
+    });
     const view = await sandboxSettingsView();
-    expect(view).toMatchObject({ source: 'environment', configured: true, keySet: true });
+    expect(view).toMatchObject({ source: 'deployment', configured: true, keySet: true });
     expect(JSON.stringify(view)).not.toContain('env-secret');
     await saveSandboxSettings({ revision: 0, fields: view.fields });
     expect((await resolvedSandboxConfig()).apiKey).toBe('env-secret');
+    expect(db.row?.secret).toBeNull();
+    expect(db.row?.config).toEqual({});
   });
   it('keeps saved configuration authoritative when env differs and fails closed when disabled', async () => {
     await saveSandboxSettings({ revision: 0, fields, apiKey: 'saved-key' });
@@ -205,38 +223,128 @@ describe('installation sandbox settings', () => {
   });
 });
 
-it.each([undefined, 'false', '1'])(
-  'ignores saved DB configuration unless explicitly opted in (%s)',
-  async (mode) => {
-    await saveSandboxSettings({ revision: 0, fields, apiKey: 'saved-secret' });
-    vi.stubEnv('OPENMAIC_SANDBOX_SETTINGS_UI', mode);
-    vi.stubEnv('OPENMAIC_SANDBOX_PROVIDER', 'e2b-compatible');
-    vi.stubEnv('OPENMAIC_SANDBOX_CONNECTION_ID', 'env-connection');
-    vi.stubEnv('OPENMAIC_SANDBOX_TEMPLATE', 'env-template');
-    vi.stubEnv('OPENMAIC_SANDBOX_API_KEY', 'env-secret');
-    vi.stubEnv('OPENMAIC_SANDBOX_WORKSPACE', 'true');
-    db.queries = [];
+function deploymentSettings(overrides = {}, lock?: 'all' | string[]) {
+  setDeploymentConfigForTests({
+    layer: {
+      source: 'deployment',
+      config: {
+        sandbox: sandboxConfigurationSchema.parse({
+          ...fields,
+          apiKey: 'deployment-key',
+          ...overrides,
+        }),
+        ...(lock ? { lock } : {}),
+      },
+    },
+    legacy: false,
+    notices: [],
+  });
+}
+it.each(['all', ['sandbox']] as const)(
+  'deployment lock %j ignores saved overrides and unreadable keys',
+  async (lock) => {
+    await saveSandboxSettings({ revision: 0, fields, apiKey: 'saved-key' });
+    vi.stubEnv('OPENMAIC_SECRET_KEY', 'changed-instance-key');
+    deploymentSettings(
+      { template: 'deployment-code' },
+      typeof lock === 'string' ? lock : [...lock],
+    );
+    expect(await sandboxSettingsView()).toMatchObject({
+      locked: true,
+      source: 'deployment',
+      keyUnreadable: false,
+      fields: { template: 'deployment-code' },
+    });
     expect(await resolvedSandboxConfig()).toMatchObject({
-      apiKey: 'env-secret',
-      template: 'env-template',
+      apiKey: 'deployment-key',
+      template: 'deployment-code',
       settingsRevision: 0,
     });
-    expect(await sandboxWorkspaceEnabled()).toBe(true);
-    await expect(
-      assertSandboxSettingsRevision((await getServerPersistenceProvider('test')).pool, 0),
-    ).resolves.toBeUndefined();
-    await expect(
-      assertSandboxSettingsRevision((await getServerPersistenceProvider('test')).pool, 1),
-    ).rejects.toThrow('mode changed');
-    await expect(sandboxSettingsView()).rejects.toMatchObject({
-      code: 'SANDBOX_SETTINGS_DISABLED',
+    await expect(saveSandboxSettings({ revision: 1, fields })).rejects.toMatchObject({
+      status: 403,
     });
-    await expect(saveSandboxSettings({})).rejects.toMatchObject({
-      code: 'SANDBOX_SETTINGS_DISABLED',
+    await expect(saveSandboxSettings({ revision: 1, reset: true })).rejects.toMatchObject({
+      status: 403,
     });
-    expect(db.queries).toEqual([]);
-    vi.stubEnv('OPENMAIC_SANDBOX_PROVIDER', '');
-    await expect(resolvedSandboxConfig()).rejects.toMatchObject({ code: 'SANDBOX_DISABLED' });
-    expect(await sandboxWorkspaceEnabled()).toBe(false);
+    const q = (await getServerPersistenceProvider('test')).pool;
+    await expect(assertSandboxSettingsRevision(q, 1)).rejects.toMatchObject({ status: 409 });
+    await expect(assertSandboxSettingsRevision(q, 0)).resolves.toBeUndefined();
+    deploymentSettings();
+    await expect(resolvedSandboxConfig()).rejects.toMatchObject({ code: 'SANDBOX_KEY_UNREADABLE' });
   },
 );
+it('inherits unchanged deployment fields and rotated keys; reset removes overrides with a new revision', async () => {
+  deploymentSettings();
+  await saveSandboxSettings({ revision: 0, fields: { ...fields, lifetimeMs: 600000 } });
+  expect(db.row?.config).toEqual({ lifetimeMs: 600000 });
+  expect(db.row?.secret).toBeNull();
+  deploymentSettings({ apiKey: 'rotated-deployment-key', template: 'new-template' });
+  expect(await resolvedSandboxConfig()).toMatchObject({
+    apiKey: 'rotated-deployment-key',
+    template: 'new-template',
+    lifetimeMs: 600000,
+  });
+  db.active = 1;
+  await expect(saveSandboxSettings({ revision: 1, reset: true })).rejects.toMatchObject({
+    status: 409,
+  });
+  db.active = 0;
+  await expect(saveSandboxSettings({ revision: 0, reset: true })).rejects.toMatchObject({
+    status: 409,
+  });
+  const reset = await saveSandboxSettings({ revision: 1, reset: true });
+  expect(reset).toMatchObject({
+    revision: 2,
+    source: 'deployment',
+    hasOverrides: false,
+    fields: { lifetimeMs: 300000 },
+  });
+  expect(db.row?.secret).toBeNull();
+});
+it('pins a web key to its account and endpoints across deployment changes', async () => {
+  deploymentSettings();
+  await saveSandboxSettings({ revision: 0, fields, apiKey: 'web-key' });
+  deploymentSettings({
+    apiUrl: 'https://new.example.org',
+    domain: 'new.example.org',
+    connectionId: 'new',
+  });
+  expect(await resolvedSandboxConfig()).toMatchObject({
+    apiKey: 'web-key',
+    apiUrl: fields.apiUrl,
+    domain: fields.domain,
+    connectionId: fields.connectionId,
+  });
+});
+it('keeps an explicit disable override when the deployment later enables sandboxes', async () => {
+  await saveSandboxSettings({ revision: 0, fields, apiKey: 'web-key' });
+  await saveSandboxSettings({ revision: 1, fields: { ...fields, enabled: false } });
+  deploymentSettings();
+  expect(await sandboxWorkspaceEnabled()).toBe(false);
+});
+it('lock all with no sandbox section keeps the installation disabled', async () => {
+  await saveSandboxSettings({ revision: 0, fields, apiKey: 'web-key' });
+  setDeploymentConfigForTests({
+    layer: { source: 'deployment', config: { lock: 'all' } },
+    legacy: false,
+    notices: [],
+  });
+  expect(await sandboxWorkspaceEnabled()).toBe(false);
+  expect(await sandboxSettingsView()).toMatchObject({
+    locked: true,
+    configured: false,
+    keySet: false,
+  });
+  await expect(resolvedSandboxConfig()).rejects.toMatchObject({ code: 'SANDBOX_DISABLED' });
+});
+
+it('never inherits a later deployment key into an earlier keyless endpoint override', async () => {
+  await saveSandboxSettings({
+    revision: 0,
+    fields: { ...fields, enabled: false, apiUrl: 'https://other.example.org' },
+  });
+  deploymentSettings();
+  const view = await sandboxSettingsView();
+  expect(view).toMatchObject({ keySet: false, configured: false });
+  await expect(resolvedSandboxConfig()).rejects.toMatchObject({ code: 'SANDBOX_CONFIG_INVALID' });
+});

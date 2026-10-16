@@ -3,7 +3,6 @@ import { initReactI18next } from 'react-i18next';
 import resourcesToBackend from 'i18next-resources-to-backend';
 import { supportedLocales } from './locales';
 import { defaultLocale } from './types';
-import { sandboxResourceFor } from './sandbox';
 import { workbenchResourceFor } from './workbench';
 
 type TranslationResource = Record<string, unknown>;
@@ -34,7 +33,6 @@ i18n
       const localeModule = await import(`./locales/${language}.json`);
       return deepMerge(localeModule.default, {
         workbench: workbenchResourceFor(language),
-        sandbox: sandboxResourceFor(language),
       });
     }),
   )

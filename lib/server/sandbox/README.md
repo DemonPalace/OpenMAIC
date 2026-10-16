@@ -36,43 +36,47 @@ Java/Maven projects, Python exercises and other course content remain consumers.
 
 ## Server configuration
 
-By default, only deployment environment configuration is used. The settings entry is
-hidden and its GET/PUT API is disabled, including for administrators. Existing PG settings
-and saved keys are ignored. This lets managed deployments keep their own configuration
-and secret authority without a database override.
+Configure the installation's `sandbox` section in `openmaic.yml` (see
+`openmaic.example.yml`). An absent section defaults to disabled. Set `enabled: true`,
+the connection/account ID, code template, and `apiKey: ${SANDBOX_API_KEY}`. The official
+cloud supplies the default API URL and runtime domain; compatible services must specify
+both. `desktopTemplate`, `lifetimeMs`, `maxActive` and `maxActivePerOwner` use the same
+names in YAML and web settings. Missing referenced variables, malformed values and invalid
+limits stop startup with the exact configuration location, without echoing secrets.
 
-Self-hosted installations can explicitly opt in with
-`OPENMAIC_SANDBOX_SETTINGS_UI=true`, then restart and open **Settings → Sandbox**.
-The switch itself cannot be changed in the browser. The page is available to
-the explicit personal-installation owner, or a host-verified user/service with the existing
-`admin` role. Ordinary learners cannot read or edit connection settings. The separate
-`sandbox:use` permission is still required to operate a sandbox.
+**Settings → Sandbox** is available only to the explicit personal-installation owner or
+a host-verified user/service with the existing `admin` role. Ordinary learners cannot
+read or edit it. The separate `sandbox:use` permission is required to operate a sandbox.
+No separate settings-UI opt-in is needed. These rules apply equally to a hosted installation
+and a local deployment; the page never changes a learner's personal model settings.
 
-The page saves one installation-wide connection in PostgreSQL. Its API key is encrypted
-with the existing instance secret (`OPENMAIC_SECRET_KEY` or the persisted generated key)
-and is never returned to the browser. Keep that key stable across restarts; replicas must
-share `OPENMAIC_SECRET_KEY`. Leaving the API key field empty preserves the
-saved key; changing the endpoint, domain or account identity requires entering a key again.
+The deployment provides defaults. Web edits override only fields the administrator changes,
+and take effect on subsequent requests. `lock: [sandbox]` or `lock: all` makes the page
+read-only and runtime uses deployment values exclusively, ignoring saved overrides and
+keys. An absent, locked section keeps sandboxes disabled. Unlocking restores saved overrides;
+**Reset to deployment configuration** removes them while preserving the revision fence.
 
-When this deployment opt-in is enabled, saved settings take precedence over the
-environment as a complete connection and apply
-to subsequent requests without restarting. Saving does not allocate a sandbox or prove
-connectivity; use **Open project workspace** for actual execution. Preview and checkpoint
-indicators only describe deployment configuration; those services still require deployment
-setup below. The page does not edit DNS, HTTPS, storage credentials or agent-runtime flags.
+Installation overrides use one PG row and revision-checked writes. Explicit web keys use
+the existing instance-secret sealing mechanism and are never returned to the browser.
+Keep `OPENMAIC_SECRET_KEY` stable across restarts and replicas. An empty key field preserves
+the current key; a deployment key is inherited, not copied into PG, so deployment key
+rotation still works. A web key stays pinned to its account and endpoint. Changing that
+connection requires a new key. An unreadable saved key never falls back to deployment secrets.
 
-Release/reconcile all outstanding environments before editing settings. Saving and allocation
-share the same PG capacity lock; stale forms and stale creation requests fail with 409.
-This also applies to expired-but-unreconciled and uncertain resources until their
-stored state is `destroyed`. Settings use schema migration 8. With a database configured,
-the existing checkpoint collector may initialize these tables even before sandbox enablement;
-it does not allocate cloud resources.
+Saving does not allocate a sandbox or prove connectivity. Preview and checkpoint indicators
+check configuration, not network health. DNS, HTTPS, storage credentials and agent-runtime
+flags remain deployment concerns. The acceptance workspace can verify execution.
 
-With the UI disabled (the default), or enabled but not yet saved, configuration comes from
-the environment. Closing the opt-in preserves the PG row but stops reading it; reopening it
-explicitly resumes that saved configuration. Release environments before switching modes
-or changing connection/storage configuration, and use the same mode on all replicas. Set in
-ignored `.env.local` or the deployment secret store, then restart the server:
+Release or reconcile **all** outstanding environments before saving or resetting settings,
+including expired-but-unreconciled and uncertain resources until their state is `destroyed`.
+Settings writes and allocation share the PG capacity lock; stale forms and stale creation
+requests fail with 409. Before changing YAML, locks or connection/storage environment values,
+drain resources and restart all replicas with the same deployment configuration. These
+file changes are not live web writes and cannot participate in the database guard.
+
+When no YAML file exists, the following legacy variables translate into the same deployment
+shape at startup. A YAML file is authoritative even when it omits `sandbox`. Settings use
+schema migration 8; no extra database migration is needed for this configuration layering.
 
 ```dotenv
 OPENMAIC_SANDBOX_PROVIDER=e2b-compatible
@@ -86,11 +90,10 @@ OPENMAIC_SANDBOX_LIFETIME_MS=300000
 OPENMAIC_SANDBOX_MAX_ACTIVE_PER_OWNER=1
 OPENMAIC_SANDBOX_MAX_ACTIVE=5
 OPENMAIC_SANDBOX_LAB=false
-OPENMAIC_SANDBOX_WORKSPACE=true
 ```
 
 The official cloud defaults to `https://api.e2b.dev` / `e2b.app`. A custom domain requires
-an explicit HTTPS `OPENMAIC_SANDBOX_API_URL`; it is not derived from the domain. Standalone SDK examples use
+an explicit HTTPS `sandbox.apiUrl` (legacy: `OPENMAIC_SANDBOX_API_URL`); it is not derived from the domain. Standalone SDK examples use
 `E2B_API_KEY`, `E2B_API_URL`, `E2B_DOMAIN`; those alone do not enable this host feature.
 The Team is selected by the key. There is no Team ID in the adapter's create calls.
 
@@ -487,3 +490,10 @@ The browser retains the creation request UUID through timeouts/unknown outcomes.
 An authoritative `SANDBOX_NOT_FOUND` response clears it so switching accounts in
 one browser cannot permanently reuse another owner's operation; the next open retries
 with a fresh UUID.
+
+## Integration-only acceptance surfaces
+
+`/sandbox-lab` and `/project-workspace/<id>` are developer acceptance surfaces, not
+end-user product features. Keep them on the integration branch for validation and remove
+the routes before the final integration-to-main PR. Reusable provider, API and UI components
+remain available for feature consumers. Pause/resume and desktop streaming remain deferred.

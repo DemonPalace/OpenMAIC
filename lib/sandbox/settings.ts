@@ -13,7 +13,9 @@ export interface SandboxSettingsFields {
 }
 export interface SandboxSettingsView {
   revision: number;
-  source: 'environment' | 'settings';
+  source: 'deployment' | 'settings';
+  locked: boolean;
+  hasOverrides: boolean;
   fields: SandboxSettingsFields;
   keySet: boolean;
   keyUnreadable: boolean;

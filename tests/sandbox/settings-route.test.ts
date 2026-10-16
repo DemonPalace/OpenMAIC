@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 vi.mock('server-only', () => ({}));
 const state = vi.hoisted(() => ({ admin: true, reads: vi.fn(), writes: vi.fn() }));
 vi.mock('@/lib/server/identity/with-owner', () => ({
@@ -30,7 +30,6 @@ function req(method = 'GET', headers: Record<string, string> = {}, body?: string
     body,
   });
 }
-beforeEach(() => vi.stubEnv('OPENMAIC_SANDBOX_SETTINGS_UI', 'true'));
 afterEach(() => {
   vi.unstubAllEnvs();
   state.admin = true;
@@ -67,10 +66,9 @@ describe('sandbox settings route', () => {
   });
 });
 
-it('refuses direct GET/PUT when deployment disables the UI, even for administrators', async () => {
-  vi.stubEnv('OPENMAIC_SANDBOX_SETTINGS_UI', undefined);
-  expect((await GET(req())).status).toBe(403);
-  expect((await PUT(req('PUT', {}, '{}'))).status).toBe(403);
-  expect(state.reads).not.toHaveBeenCalled();
-  expect(state.writes).not.toHaveBeenCalled();
+it('shows a read-only deployment view to admins without a separate UI opt-in', async () => {
+  state.reads.mockResolvedValue({ locked: true, source: 'deployment', keySet: true });
+  const res = await GET(req());
+  expect(res.status).toBe(200);
+  expect((await res.json()).data.locked).toBe(true);
 });

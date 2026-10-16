@@ -12,20 +12,28 @@ import {
 import { sealSecret, openSecret, type SealedSecret } from '@/lib/server/secret-box';
 import { SandboxError, sandboxConflict, sandboxInvalid } from '@/lib/sandbox/errors';
 import type { SandboxSettingsFields, SandboxSettingsView } from '@/lib/sandbox/settings';
-import { sandboxConfig } from './config';
+import { sandboxConfigFromConfiguration } from './config';
+import { sandboxDefaults, sandboxFieldsSchema } from '@/lib/sandbox/config-schema';
+import { deploymentConfig } from '@/lib/server/model-config/runtime';
 import { previewConfig } from './preview';
 import { CheckpointStorage } from './checkpoint-storage';
 
 const CONTEXT = 'sandbox-installation-key:v1';
-export function sandboxSettingsUiEnabled() {
-  return process.env.OPENMAIC_SANDBOX_SETTINGS_UI === 'true';
+function deployment() {
+  const config = deploymentConfig().layer?.config;
+  const { apiKey, ...fields } = { ...sandboxDefaults, apiKey: '', ...config?.sandbox };
+  return {
+    fields,
+    key: apiKey,
+    locked: config?.lock === 'all' || !!config?.lock?.includes('sandbox'),
+  };
 }
-export function assertSandboxSettingsUiEnabled() {
-  if (!sandboxSettingsUiEnabled())
+function assertWritable() {
+  if (deployment().locked)
     throw new SandboxError(
-      'SANDBOX_SETTINGS_DISABLED',
+      'SANDBOX_SETTINGS_LOCKED',
       403,
-      'Sandbox settings are managed by deployment configuration.',
+      'Sandbox configuration is locked by the deployment.',
     );
 }
 export function assertSandboxSettingsAdmin(principal: OwnerPrincipal) {
@@ -42,33 +50,18 @@ export function assertSandboxSettingsAdmin(principal: OwnerPrincipal) {
     'Only the installation administrator can configure sandboxes.',
   );
 }
-const fieldsSchema = z
-  .object({
-    enabled: z.boolean(),
-    provider: z.literal('e2b-compatible'),
-    connectionId: z
-      .string()
-      .trim()
-      .regex(/^[A-Za-z0-9._-]{1,128}$/),
-    apiUrl: z.string().trim().max(2048),
-    domain: z.string().trim().max(253),
-    template: z.string().trim().max(256),
-    desktopTemplate: z.string().trim().max(256),
-    lifetimeMs: z.number().int().min(60_000).max(3_600_000),
-    maxActive: z.number().int().min(1).max(100),
-    maxActivePerOwner: z.number().int().min(1).max(20),
-  })
-  .strict()
-  .refine((f) => f.maxActivePerOwner <= f.maxActive);
-export const sandboxSettingsInput = z
-  .object({
-    revision: z.number().int().nonnegative(),
-    fields: fieldsSchema,
-    apiKey: z.string().trim().min(1).max(4096).optional(),
-  })
-  .strict();
+export const sandboxSettingsInput = z.union([
+  z
+    .object({
+      revision: z.number().int().nonnegative(),
+      fields: sandboxFieldsSchema.refine((f) => f.maxActivePerOwner <= f.maxActive),
+      apiKey: z.string().trim().min(1).max(4096).optional(),
+    })
+    .strict(),
+  z.object({ revision: z.number().int().nonnegative(), reset: z.literal(true) }).strict(),
+]);
 interface Row {
-  config: SandboxSettingsFields;
+  config: Partial<SandboxSettingsFields>;
   secret: SealedSecret | null;
   revision: number;
 }
@@ -90,80 +83,54 @@ async function readRow(q: Queryable) {
     )
   ).rows[0];
 }
-function environmentFields(): SandboxSettingsFields {
-  const e = process.env;
-  return {
-    enabled: !!e.OPENMAIC_SANDBOX_PROVIDER,
-    provider: 'e2b-compatible',
-    connectionId: e.OPENMAIC_SANDBOX_CONNECTION_ID || 'my-installation',
-    apiUrl:
-      e.OPENMAIC_SANDBOX_API_URL ||
-      (e.OPENMAIC_SANDBOX_DOMAIN && e.OPENMAIC_SANDBOX_DOMAIN !== 'e2b.app'
-        ? ''
-        : 'https://api.e2b.dev'),
-    domain: e.OPENMAIC_SANDBOX_DOMAIN || 'e2b.app',
-    template: e.OPENMAIC_SANDBOX_TEMPLATE || '',
-    desktopTemplate: e.OPENMAIC_SANDBOX_DESKTOP_TEMPLATE || '',
-    lifetimeMs: Number(e.OPENMAIC_SANDBOX_LIFETIME_MS || 300000),
-    maxActive: Number(e.OPENMAIC_SANDBOX_MAX_ACTIVE || 5),
-    maxActivePerOwner: Number(e.OPENMAIC_SANDBOX_MAX_ACTIVE_PER_OWNER || 1),
-  };
-}
 function unpack(row?: Row) {
-  let key = '',
+  const base = deployment();
+  const override = base.locked ? undefined : row;
+  const fields = { ...base.fields, ...override?.config };
+  const sameConnection = (['connectionId', 'apiUrl', 'domain'] as const).every(
+    (key) => fields[key] === base.fields[key],
+  );
+  // Never inherit a deployment credential into a different saved endpoint/account.
+  let key = sameConnection ? base.key : '',
     unreadable = false;
-  if (!row) key = process.env.OPENMAIC_SANDBOX_API_KEY?.trim() || '';
-  else if (row.secret) {
+  if (override?.secret) {
     try {
-      key = openSecret(row.secret, CONTEXT);
+      key = openSecret(override.secret, CONTEXT);
     } catch {
+      key = '';
       unreadable = true;
     }
   }
   return {
-    fields: row?.config ?? environmentFields(),
+    fields,
     key,
     unreadable,
     revision: row?.revision ?? 0,
+    hasOverrides: !!override && (!!override.secret || Object.keys(override.config).length > 0),
+    locked: base.locked,
   };
 }
-function runtimeConfig(f: SandboxSettingsFields, key: string) {
-  return sandboxConfig({
-    OPENMAIC_SANDBOX_PROVIDER: f.enabled ? f.provider : '',
-    OPENMAIC_SANDBOX_CONNECTION_ID: f.connectionId,
-    OPENMAIC_SANDBOX_API_URL: f.apiUrl,
-    OPENMAIC_SANDBOX_DOMAIN: f.domain,
-    OPENMAIC_SANDBOX_TEMPLATE: f.template,
-    OPENMAIC_SANDBOX_DESKTOP_TEMPLATE: f.desktopTemplate,
-    OPENMAIC_SANDBOX_API_KEY: key,
-    OPENMAIC_SANDBOX_LIFETIME_MS: String(f.lifetimeMs),
-    OPENMAIC_SANDBOX_MAX_ACTIVE: String(f.maxActive),
-    OPENMAIC_SANDBOX_MAX_ACTIVE_PER_OWNER: String(f.maxActivePerOwner),
-    E2B_SANDBOX_URL: process.env.E2B_SANDBOX_URL,
-    E2B_ACCESS_TOKEN: process.env.E2B_ACCESS_TOKEN,
-  });
+function runtimeConfig(fields: SandboxSettingsFields, apiKey: string) {
+  // Block SDK globals even if sandboxes are enabled only through web settings.
+  if (process.env.E2B_SANDBOX_URL || process.env.E2B_ACCESS_TOKEN)
+    throw new SandboxError('SANDBOX_CONFIG_INVALID', 503, 'Unset SDK data-plane overrides.');
+  return sandboxConfigFromConfiguration({ ...fields, apiKey });
 }
-/** Only an explicit deployment opt-in lets saved settings replace environment configuration. */
+/** Deployment defaults, then installation overrides unless the deployment locks sandbox. */
 export async function resolvedSandboxConfig() {
-  if (!sandboxSettingsUiEnabled()) return { ...sandboxConfig(), settingsRevision: 0 };
-  const p = await persistence();
-  const row = await readRow(p.pool);
-  if (!row) return { ...sandboxConfig(), settingsRevision: 0 };
+  const row = deployment().locked ? undefined : await readRow((await persistence()).pool);
   const value = unpack(row);
   if (value.unreadable)
     throw new SandboxError('SANDBOX_KEY_UNREADABLE', 503, 'Re-enter the sandbox key in Settings.');
-  return { ...runtimeConfig(value.fields, value.key), settingsRevision: value.revision };
+  return {
+    ...runtimeConfig(value.fields, value.key),
+    settingsRevision: value.locked ? 0 : value.revision,
+  };
 }
 export async function sandboxWorkspaceEnabled() {
   if (!process.env.DATABASE_URL) return false;
-  if (!sandboxSettingsUiEnabled())
-    return (
-      process.env.OPENMAIC_SANDBOX_WORKSPACE === 'true' && !!process.env.OPENMAIC_SANDBOX_PROVIDER
-    );
-  const row = await readRow((await persistence()).pool);
-  return row
-    ? row.config.enabled
-    : process.env.OPENMAIC_SANDBOX_WORKSPACE === 'true' && !!process.env.OPENMAIC_SANDBOX_PROVIDER;
+  const row = deployment().locked ? undefined : await readRow((await persistence()).pool);
+  return unpack(row).fields.enabled;
 }
 async function activeCount(q: Queryable) {
   return Number(
@@ -175,15 +142,13 @@ async function activeCount(q: Queryable) {
   );
 }
 export async function sandboxSettingsView(): Promise<SandboxSettingsView> {
-  assertSandboxSettingsUiEnabled();
   const p = await persistence(),
     row = await readRow(p.pool),
     value = unpack(row);
   let configured = false,
     previewConfigured = false;
   try {
-    if (row) runtimeConfig(value.fields, value.key);
-    else sandboxConfig();
+    runtimeConfig(value.fields, value.key);
     configured = true;
   } catch {
     /* reported as not configured */
@@ -196,9 +161,11 @@ export async function sandboxSettingsView(): Promise<SandboxSettingsView> {
   }
   return {
     revision: value.revision,
-    source: row ? 'settings' : 'environment',
+    source: value.hasOverrides ? 'settings' : 'deployment',
+    locked: value.locked,
+    hasOverrides: value.hasOverrides,
     fields: value.fields,
-    keySet: !!value.key || !!row?.secret,
+    keySet: !!value.key || value.unreadable,
     keyUnreadable: value.unreadable,
     configured,
     activeEnvironments: await activeCount(p.pool),
@@ -210,16 +177,16 @@ export async function sandboxSettingsView(): Promise<SandboxSettingsView> {
 }
 /** Called under the SAME capacity lock as settings writes, before any paid create. */
 export async function assertSandboxSettingsRevision(q: Queryable, revision: number) {
-  if (!sandboxSettingsUiEnabled()) {
+  if (deployment().locked) {
     if (revision !== 0)
-      throw sandboxConflict('Sandbox configuration mode changed. Refresh and try again.');
+      throw sandboxConflict('Sandbox configuration is now locked. Refresh and try again.');
     return;
   }
   if (((await readRow(q))?.revision ?? 0) !== revision)
     throw sandboxConflict('Sandbox settings changed. Refresh and try again.');
 }
 export async function saveSandboxSettings(raw: unknown) {
-  assertSandboxSettingsUiEnabled();
+  assertWritable();
   const parsed = sandboxSettingsInput.safeParse(raw);
   if (!parsed.success) throw sandboxInvalid('Check the sandbox fields and limits.');
   const input = parsed.data,
@@ -236,6 +203,10 @@ export async function saveSandboxSettings(raw: unknown) {
       throw sandboxConflict(
         'Release or reconcile all environments before changing sandbox settings.',
       );
+    if ('reset' in input) {
+      await writeRow(tx, {}, null, previous.revision + 1);
+      return;
+    }
     const connectionChanged = ['apiUrl', 'domain', 'connectionId'].some(
       (k) =>
         input.fields[k as keyof SandboxSettingsFields] !==
@@ -253,12 +224,35 @@ export async function saveSandboxSettings(raw: unknown) {
         throw sandboxInvalid('A valid HTTPS API endpoint, domain, template and key are required.');
       }
     }
-    const secret = key ? sealSecret(key, CONTEXT) : (row?.secret ?? null);
-    await tx.query(
-      `INSERT INTO sandbox_settings(id,config,secret,revision) VALUES (1,$1::jsonb,$2::jsonb,$3)
-      ON CONFLICT(id) DO UPDATE SET config=EXCLUDED.config,secret=EXCLUDED.secret,revision=EXCLUDED.revision,updated_at=now()`,
-      [JSON.stringify(input.fields), JSON.stringify(secret), previous.revision + 1],
-    );
+    // Only an explicitly supplied key becomes a sealed web override. Otherwise
+    // inherit deployment credentials so rotating them does not leave a stale copy.
+    const secret = input.apiKey ? sealSecret(input.apiKey, CONTEXT) : (row?.secret ?? null);
+    const overrides = {
+      ...row?.config,
+      ...Object.fromEntries(
+        Object.entries(input.fields).filter(
+          ([key, value]) => value !== previous.fields[key as keyof SandboxSettingsFields],
+        ),
+      ),
+    };
+    // A saved key must never follow a later deployment endpoint/account change.
+    if (secret)
+      for (const key of ['connectionId', 'apiUrl', 'domain'] as const)
+        overrides[key] = input.fields[key];
+    await writeRow(tx, overrides, secret, previous.revision + 1);
   });
   return sandboxSettingsView();
+}
+
+async function writeRow(
+  q: Queryable,
+  config: Partial<SandboxSettingsFields>,
+  secret: SealedSecret | null,
+  revision: number,
+) {
+  await q.query(
+    `INSERT INTO sandbox_settings(id,config,secret,revision) VALUES (1,$1::jsonb,$2::jsonb,$3)
+    ON CONFLICT(id) DO UPDATE SET config=EXCLUDED.config,secret=EXCLUDED.secret,revision=EXCLUDED.revision,updated_at=now()`,
+    [JSON.stringify(config), JSON.stringify(secret), revision],
+  );
 }

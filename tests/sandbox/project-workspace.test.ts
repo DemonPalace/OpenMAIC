@@ -1,7 +1,8 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createInstance } from 'i18next';
 import { I18nextProvider } from 'react-i18next';
-import { sandboxResourceFor } from '@/lib/i18n/sandbox';
+import en from '@/lib/i18n/locales/en-US.json';
+import zh from '@/lib/i18n/locales/zh-CN.json';
 import { parseHTML } from 'linkedom';
 import { act, createElement } from 'react';
 import type { Root } from 'react-dom/client';
@@ -14,8 +15,8 @@ beforeAll(async () => {
   await i18n.init({
     lng: 'en-US',
     resources: {
-      'en-US': { translation: { sandbox: sandboxResourceFor('en-US') } },
-      'zh-CN': { translation: { sandbox: sandboxResourceFor('zh-CN') } },
+      'en-US': { translation: en },
+      'zh-CN': { translation: zh },
     },
     interpolation: { escapeValue: false },
   });
