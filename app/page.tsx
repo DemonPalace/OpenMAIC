@@ -101,14 +101,12 @@ import { useNearViewport } from '@/lib/hooks/use-near-viewport';
 import { SpeechButton } from '@/components/audio/speech-button';
 import { useImportClassroom } from '@/lib/import/use-import-classroom';
 import {
-  isProWorkbenchEnabled,
+  isWorkbenchEnabled,
   isPptxImportEnabled,
   shouldShowVocationalTestUi,
 } from '@/lib/config/feature-flags';
 import { useImportPptx } from '@/lib/import/use-import-pptx';
 import { InteractiveModeButton } from '@/components/generation/interactive-mode-button';
-import { ProBadge } from '@/components/workbench/ProBadge';
-import { arrivedByProSwap, startProSwap } from '@/lib/workbench/pro-swap';
 import {
   readLastWorkspaceSessionId,
   workspaceResumeHref,
@@ -143,17 +141,13 @@ function HomePage() {
   const { t } = useI18n();
   const { theme, setTheme } = useTheme();
   const router = useRouter();
-  // Do not replay the classic hero's entrance after the route handoff already
-  // carried the lockup and composer into place. The entrance is CSS, not a
-  // JS-driven animation, so the server-rendered hero is painted (and fades in)
-  // before the page's scripts have loaded instead of staying invisible.
-  const [swapped] = useState(arrivedByProSwap);
+  // The entrance is CSS, not a JS-driven animation, so the server-rendered
+  // hero is painted (and fades in) before the page's scripts have loaded
+  // instead of staying invisible.
   const heroEnter = (classes: string) =>
-    swapped
-      ? undefined
-      : `animate-in fill-mode-both ease-out motion-reduce:animate-none ${classes}`;
+    `animate-in fill-mode-both ease-out motion-reduce:animate-none ${classes}`;
   const showVocationalTestUi = shouldShowVocationalTestUi();
-  const workbenchBuildEnabled = isProWorkbenchEnabled();
+  const workbenchBuildEnabled = isWorkbenchEnabled();
   const [workbenchRuntimeEnabled, setWorkbenchRuntimeEnabled] = useState(
     workbenchRuntimeCache === true,
   );
@@ -180,7 +174,7 @@ function HomePage() {
   const workbenchEntryEnabled = workbenchBuildEnabled && workbenchRuntimeEnabled;
   const enterWorkbench = () => {
     const href = workspaceResumeHref(readLastWorkspaceSessionId());
-    startProSwap(href, (next) => router.push(next));
+    router.push(href);
   };
   useEffect(() => {
     if (workbenchEntryEnabled) router.prefetch('/workspace');
@@ -658,6 +652,22 @@ function HomePage() {
         ref={toolbarRef}
         className="fixed top-4 right-4 z-50 flex items-center gap-1 bg-white/60 dark:bg-gray-800/60 backdrop-blur-md px-2 py-1.5 rounded-full border border-gray-100/50 dark:border-gray-700/50 shadow-sm"
       >
+        {/* A plain way into the workspace, shown only where the deployment has one. */}
+        {workbenchEntryEnabled ? (
+          <>
+            <button
+              type="button"
+              data-testid="home-workspace-link"
+              onClick={enterWorkbench}
+              className="px-3 py-1.5 rounded-full text-xs font-medium text-gray-500 dark:text-gray-400 hover:bg-white dark:hover:bg-gray-700 hover:text-gray-800 dark:hover:text-gray-200 hover:shadow-sm transition-all"
+            >
+              {t('home.openWorkspace')}
+            </button>
+
+            <div className="w-[1px] h-4 bg-gray-200 dark:bg-gray-700" />
+          </>
+        ) : null}
+
         {/* Language Selector */}
         <LanguageSwitcher onOpen={() => setThemeOpen(false)} />
 
@@ -764,7 +774,7 @@ function HomePage() {
         )}
       >
         {/* ── Logo ── */}
-        <div className="relative" data-pro-morph="lockup">
+        <div className="relative">
           <img
             src="/logo-horizontal.png"
             alt="OpenMAIC"
@@ -773,14 +783,6 @@ function HomePage() {
               heroEnter('fade-in zoom-in-90 duration-500 delay-100'),
             )}
           />
-          {workbenchEntryEnabled ? (
-            <div
-              className="absolute left-full top-0 ml-1.5 mt-[10px] md:ml-2 md:mt-[14px]"
-              data-pro-morph="badge"
-            >
-              <ProBadge active={false} onToggle={enterWorkbench} />
-            </div>
-          ) : null}
         </div>
 
         {/* ── Slogan ── */}
@@ -795,10 +797,7 @@ function HomePage() {
 
         {/* ── Unified input area ── */}
         <div className={cn('w-full', heroEnter('fade-in zoom-in-97 duration-300 delay-350'))}>
-          <div
-            data-pro-morph="composer"
-            className="w-full rounded-2xl border border-border/60 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl shadow-xl shadow-black/[0.03] dark:shadow-black/20 transition-shadow focus-within:shadow-2xl focus-within:shadow-violet-500/[0.06]"
-          >
+          <div className="w-full rounded-2xl border border-border/60 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl shadow-xl shadow-black/[0.03] dark:shadow-black/20 transition-shadow focus-within:shadow-2xl focus-within:shadow-violet-500/[0.06]">
             {/* ── Greeting + Profile + Agents ── */}
             <div className="relative z-20 flex items-start justify-between">
               <GreetingBar />
