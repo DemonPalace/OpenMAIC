@@ -2517,5 +2517,38 @@
       "code": "代码",
       "desktop": "桌面"
     }
+  },
+  "pblV3": {
+    "title": "编程项目 · Preview",
+    "refresh": "刷新进度",
+    "cancel": "取消回答",
+    "retry": "重试原请求",
+    "loading": "正在加载学习进度…",
+    "environmentNotice": "为此项目准备独立执行环境。教学助手将能够读取和修改项目文件，此操作使用已配置的沙盒服务。",
+    "prepare": "准备项目环境",
+    "completed": "项目已完成，学习进度已保存。",
+    "learning": "学习对话",
+    "thinking": "教学助手正在处理…",
+    "message": "你的消息",
+    "send": "发送",
+    "submitQuiz": "提交答案",
+    "next": "继续",
+    "files": "项目文件",
+    "editor": "文件内容",
+    "reloadFile": "重新读取文件",
+    "saveFile": "保存文件",
+    "checkpoint": "保存检查点",
+    "runTests": "运行测试",
+    "collect": "收取测试结果",
+    "saveNotice": "编辑保存到当前执行环境。释放环境前请保存检查点，以便保留文件。",
+    "sampleNotice": "在课堂中打开预置的 Python 项目。此 Preview 使用已安装的项目，尚未开放项目生成功能。",
+    "openSample": "打开 Python 示例",
+    "checks": "检查",
+    "roles": {
+      "mentor": "导师",
+      "discussion": "讨论",
+      "planner": "规划",
+      "coder": "编码"
+    }
   }
 }

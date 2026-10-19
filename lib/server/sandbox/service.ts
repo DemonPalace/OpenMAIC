@@ -371,6 +371,17 @@ export class SandboxService {
     return this.store.exclusive(id, () => this.writeTextUnlocked(id, path, text));
   }
 
+  /** Optimistic file edits share the environment mutation lock with all host writers. */
+  async compareAndWriteText(id: string, path: string, text: string, expectedHash: string) {
+    await this.binding(id);
+    return this.store.exclusive(id, async () => {
+      const current = await this.readText(id, path);
+      if (createHash('sha256').update(current).digest('hex') !== expectedHash)
+        throw sandboxConflict('The file changed since it was read. Reload before saving.');
+      await this.writeTextUnlocked(id, path, text);
+    });
+  }
+
   private async writeTextUnlocked(id: string, path: unknown, text: unknown) {
     path = `${WORKSPACE_ROOT}/${workspacePath(path)}`;
     assertPath(path);

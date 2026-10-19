@@ -472,16 +472,7 @@ export class SandboxStore {
   ) {
     await this.persistence.withTransaction(async (tx) => {
       await fenceOwnerWrite(tx, row.owner_id);
-      await tx.query(
-        `INSERT INTO sandbox_session_grants
-        (session_id,owner_id,environment_id,grant_id,allow_writes,allow_commands,expires_at)
-        VALUES($1,$2,$3,$4,$5,$6,now()+interval '1 hour')
-        ON CONFLICT(session_id) DO UPDATE SET environment_id=EXCLUDED.environment_id,
-        grant_id=EXCLUDED.grant_id,allow_writes=EXCLUDED.allow_writes,
-        allow_commands=EXCLUDED.allow_commands,expires_at=EXCLUDED.expires_at
-        WHERE sandbox_session_grants.owner_id=EXCLUDED.owner_id`,
-        [sessionId, row.owner_id, row.id, grantId, writes, commands],
-      );
+      await writeSessionGrant(tx, row, sessionId, grantId, writes, commands);
     });
   }
 
@@ -494,4 +485,25 @@ export class SandboxStore {
       ]);
     });
   }
+}
+
+/** Internal grant writer for hosts that atomically create a real Agent session and its binding. */
+export async function writeSessionGrant(
+  tx: import('@openmaic/storage/document/pg').Queryable,
+  row: { owner_id: string; id: string },
+  sessionId: string,
+  grantId: string,
+  writes: boolean,
+  commands: boolean,
+) {
+  await tx.query(
+    `INSERT INTO sandbox_session_grants
+        (session_id,owner_id,environment_id,grant_id,allow_writes,allow_commands,expires_at)
+        VALUES($1,$2,$3,$4,$5,$6,now()+interval '1 hour')
+        ON CONFLICT(session_id) DO UPDATE SET environment_id=EXCLUDED.environment_id,
+        grant_id=EXCLUDED.grant_id,allow_writes=EXCLUDED.allow_writes,
+        allow_commands=EXCLUDED.allow_commands,expires_at=EXCLUDED.expires_at
+        WHERE sandbox_session_grants.owner_id=EXCLUDED.owner_id`,
+    [sessionId, row.owner_id, row.id, grantId, writes, commands],
+  );
 }
