@@ -14,6 +14,7 @@ const mocked = vi.hoisted(() => ({
   agents: undefined as unknown,
   root: '',
   responses: [] as Array<Array<Record<string, unknown>>>,
+  modelCalls: 0,
 }));
 vi.mock('@/lib/persistence/server-provider', () => ({
   getServerPersistenceProvider: async () => ({
@@ -127,6 +128,7 @@ vi.mock('@/lib/server/agent-runtime/event-notify-bus', () => ({
 vi.mock('@/lib/ai/llm', () => ({
   streamLLM: () => ({
     fullStream: (async function* () {
+      mocked.modelCalls += 1;
       for (const part of mocked.responses.shift() ?? []) yield part;
     })(),
     usage: new Promise(() => {}),
@@ -244,6 +246,25 @@ async function guided(role: 'teaching' | 'plan' | 'code') {
         await invoke(config, 'request_skill_review', {
           question: 'Explain and check the current part.',
         });
+        if (index === 0 && role === 'plan') {
+          const binding = (await store.roles(studyId)).find((b) => b.role === 'planner')!;
+          const meta = (await agents.getSession(binding.session_id))!;
+          const resumed = await teachingRunnerConfig({
+            sessionId: binding.session_id,
+            ownerId: principal.ownerId,
+            workerId: 'test-worker',
+            attempt: meta.attempt,
+            signal: new AbortController().signal,
+          });
+          expect(resumed.isTurnComplete()).toBe(true);
+          await expect(
+            invoke(resumed, 'write_file', {
+              path: 'PLAN.md',
+              text: 'Changed without a new reply',
+              expectedHash: digest('Use a formatted string to return the greeting.'),
+            }),
+          ).rejects.toThrow('必须结束本轮');
+        }
       },
     );
   await runTools('I checked the current part and confirm it.', async (config) => {
@@ -437,6 +458,15 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
     expect(tested.state.collected.greeting!.tests?.status).toBe('passed');
     expect(tested.state.collected.greeting!.tests?.publicFeedback).toContain('2 checks passed');
     await command('next');
+    await command('quiz', { answers: [1] });
+    const wrongQuiz = await learningView(principal, studyId);
+    expect(wrongQuiz.state.collected.greeting!.quiz).toMatchObject({
+      passed: false,
+      score: 0,
+      total: 1,
+    });
+    expect(wrongQuiz.actions).not.toContain('next');
+    await expect(command('next')).rejects.toThrow('not available');
     await command('quiz', { answers: [0] });
     await command('next');
     await runTools('Please reflect on my results.', async (config) => {
@@ -536,6 +566,7 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
     const view = await learningView(principal, study.id);
     expect(view.roleRun).toEqual({ status: 'failed', failure: 'authentication', canRetry: true });
     expect(JSON.stringify(view)).not.toContain('SECRET');
+    expect(view.messages.at(-1)?.text).toBe('Explain the return value.');
     const messages = await agents.listUserMessages(queued.sessionId);
     const binding = await store.binding(queued.sessionId);
     await study.send('retry');
@@ -553,6 +584,10 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
       attempt: retried!.attempt,
       signal: new AbortController().signal,
     });
+    expect(resumed.isTurnComplete()).toBe(true);
+    await expect(
+      invoke(resumed, 'request_skill_review', { question: 'Repeat question' }),
+    ).rejects.toThrow();
     await expect(
       invoke(resumed, 'read_next_skill', { studentFeedback: 'Please start.' }),
     ).rejects.toThrow();
@@ -565,68 +600,167 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
       canRetry: true,
     });
   });
-  it('executes teaching tools through the existing runner and Pi loop, then reconnects from durable history', async () => {
-    const original = studyId;
-    studyId = (
-      await store.create(
-        {
-          ownerId: principal.ownerId,
-          stageId: 'runner-classroom',
-          sceneId: 'runner-scene',
-          projectId: project.ref.id,
-          version: project.ref.version,
+  it.each(['mixed', 'invalid-tail', 'failed-review'] as const)(
+    'stops teaching at a saved review in a %s batch through the real Pi loop',
+    async (batch) => {
+      const original = studyId;
+      studyId = (
+        await store.create(
+          {
+            ownerId: principal.ownerId,
+            stageId: `runner-classroom-${batch}`,
+            sceneId: 'runner-scene',
+            projectId: project.ref.id,
+            version: project.ref.version,
+          },
+          startOrchestration(project.definition),
+        )
+      ).id;
+      await command('prepare');
+      const handle = startAgentRunner();
+      await handle.stop();
+      const queued = (await command('chat', { text: 'Please teach me about this project.' })) as {
+        sessionId: string;
+      };
+      const meta = await agents.claimNextSession(handle.workerId, process.pid, {
+        sessionId: queued.sessionId,
+        leaseTtlMs: 10000,
+        maxAttempts: 5,
+      });
+      const finish = {
+        type: 'finish',
+        finishReason: 'tool-calls',
+        totalUsage: {
+          inputTokens: 1,
+          outputTokens: 1,
+          inputTokenDetails: { cacheReadTokens: 0, cacheWriteTokens: 0 },
+          outputTokenDetails: { reasoningTokens: 0 },
+          totalTokens: 2,
         },
-        startOrchestration(project.definition),
-      )
-    ).id;
-    await command('prepare');
-    const handle = startAgentRunner();
-    await handle.stop();
-    const queued = (await command('chat', { text: 'Please teach me about this project.' })) as {
-      sessionId: string;
-    };
-    const meta = await agents.claimNextSession(handle.workerId, process.pid, {
-      sessionId: queued.sessionId,
-      leaseTtlMs: 10000,
-      maxAttempts: 5,
-    });
-    const finish = {
-      type: 'finish',
-      finishReason: 'tool-calls',
-      totalUsage: {
-        inputTokens: 1,
-        outputTokens: 1,
-        inputTokenDetails: { cacheReadTokens: 0, cacheWriteTokens: 0 },
-        outputTokenDetails: { reasoningTokens: 0 },
-        totalTokens: 2,
-      },
-    };
-    mocked.responses = [
-      [
-        { type: 'tool-call', toolCallId: 'read-section', toolName: 'read_next_skill', input: {} },
-        finish,
-      ],
-      [
-        {
+      };
+      mocked.responses = [
+        [
+          { type: 'tool-call', toolCallId: 'read-section', toolName: 'read_next_skill', input: {} },
+          {
+            type: 'tool-call',
+            toolCallId: 'ask-review',
+            toolName: 'request_skill_review',
+            input: { question: 'What should greet(name) return?' },
+          },
+          finish,
+        ],
+      ];
+      if (batch === 'invalid-tail')
+        mocked.responses[0]!.splice(-1, 0, {
           type: 'tool-call',
-          toolCallId: 'ask-review',
-          toolName: 'request_skill_review',
-          input: { question: 'What should greet(name) return?' },
-        },
-        finish,
-      ],
-    ];
-    await runSession({ running: new Map(), shuttingDown: false }, meta!);
-    const settled = await agents.getSession(queued.sessionId);
-    expect(settled?.status, settled?.error).toBe('succeeded');
-    const restored = await learningView(principal, studyId);
-    expect(restored.messages.some((m) => m.text === 'What should greet(name) return?')).toBe(true);
-    expect(restored.actions).not.toContain('next');
-    expect((await store.binding(queued.sessionId))?.guided?.pending?.question).toBe(
-      'What should greet(name) return?',
-    );
-    studyId = original;
-  }, 30000);
+          toolCallId: 'unknown',
+          toolName: 'unknown_tool',
+          input: {},
+        });
+      if (batch === 'failed-review') {
+        // A bad review request must remain recoverable, not silently terminate the role.
+        mocked.responses.unshift([
+          {
+            type: 'tool-call',
+            toolCallId: 'early-review',
+            toolName: 'request_skill_review',
+            input: { question: 'No section opened yet' },
+          },
+          finish,
+        ]);
+      }
+      const callsBefore = mocked.modelCalls;
+      await runSession({ running: new Map(), shuttingDown: false }, meta!);
+      expect(mocked.modelCalls - callsBefore).toBe(batch === 'failed-review' ? 2 : 1);
+      const settled = await agents.getSession(queued.sessionId);
+      expect(settled?.status, settled?.error).toBe('succeeded');
+      const restored = await learningView(principal, studyId);
+      expect(restored.messages.some((m) => m.text === 'What should greet(name) return?')).toBe(
+        true,
+      );
+      expect(restored.actions).not.toContain('next');
+      expect((await store.binding(queued.sessionId))?.guided?.pending?.question).toBe(
+        'What should greet(name) return?',
+      );
+      studyId = original;
+    },
+    30000,
+  );
+  it.each(['cancelled', 'takeover'] as const)(
+    'keeps a committed review waiting after %s before the display receipt, then accepts a real reply',
+    async (interruption) => {
+      const study = await freshStudy();
+      const queued = (await study.send('chat')) as { sessionId: string };
+      const handle = startAgentRunner();
+      await handle.stop();
+      const meta = await agents.claimNextSession(handle.workerId, process.pid, {
+        sessionId: queued.sessionId,
+        leaseTtlMs: 10000,
+        maxAttempts: 5,
+      });
+      const messages = await agents.listUserMessages(queued.sessionId);
+      await agents.markUserMessageDelivered(
+        queued.sessionId,
+        handle.workerId,
+        meta!.attempt,
+        messages.at(-1)!.seq,
+      );
+      const config = await teachingRunnerConfig({
+        sessionId: queued.sessionId,
+        ownerId: principal.ownerId,
+        workerId: handle.workerId,
+        attempt: meta!.attempt,
+        signal: new AbortController().signal,
+      });
+      await invoke(config, 'read_next_skill');
+      await invoke(config, 'request_skill_review', { question: 'Explain the saved review.' });
+      // No tool event or transcript receipt has been written: the binding is the durable fact.
+      if (interruption === 'cancelled') {
+        await agents.finishSession(queued.sessionId, handle.workerId, {
+          status: 'cancelled',
+          expectedAttempt: meta!.attempt,
+        });
+        await study.send('retry');
+      } else {
+        await agents.releaseLease(queued.sessionId, handle.workerId);
+      }
+      const claimed = await agents.claimNextSession(handle.workerId, process.pid, {
+        sessionId: queued.sessionId,
+        leaseTtlMs: 10000,
+        maxAttempts: 5,
+      });
+      expect(claimed).toBeTruthy();
+      const before = mocked.modelCalls;
+      await runSession({ running: new Map(), shuttingDown: false }, claimed!);
+      expect(mocked.modelCalls).toBe(before);
+      expect((await agents.getSession(queued.sessionId))?.status).toBe('succeeded');
+      expect(await agents.listUserMessages(queued.sessionId)).toEqual(messages);
+      expect((await learningView(principal, study.id)).messages.at(-1)?.text).toBe(
+        'Explain the saved review.',
+      );
+      expect((await learningView(principal, study.id)).actions).not.toContain('next');
+      await study.send('chat');
+      const next = await agents.claimNextSession(handle.workerId, process.pid, {
+        sessionId: queued.sessionId,
+        leaseTtlMs: 10000,
+        maxAttempts: 5,
+      });
+      const resumed = await teachingRunnerConfig({
+        sessionId: queued.sessionId,
+        ownerId: principal.ownerId,
+        workerId: handle.workerId,
+        attempt: next!.attempt,
+        signal: new AbortController().signal,
+      });
+      expect(resumed.isTurnComplete()).toBe(false);
+      await invoke(resumed, 'read_next_skill', { studentFeedback: 'Please start.' });
+      expect((await store.binding(queued.sessionId))?.guided?.activeFile).toBe('B-dialogue.md');
+      await agents.finishSession(queued.sessionId, handle.workerId, {
+        status: 'succeeded',
+        expectedAttempt: next!.attempt,
+      });
+    },
+  );
   it('rejects stale file writes without overwriting the new content', async () => {
     const row = await store.get(studyId, principal.ownerId),
       service = await SandboxService.forOwner(principal);

@@ -488,6 +488,7 @@ export async function learningView(principal: OwnerPrincipal, id: string): Promi
   const messages: LearningView['messages'] = [];
   let roleRun: LearningView['roleRun'] = null;
   let latestUserSeq: number | undefined;
+  let currentQuestionShown = false;
   if (binding) {
     const agents = await getAgentSessionStore();
     const meta = await agents.getSession(binding.session_id);
@@ -504,6 +505,7 @@ export async function learningView(principal: OwnerPrincipal, id: string): Promi
               : 'unavailable'
           : null,
     };
+    latestUserSeq = (await listAgentUserMessages(agents, binding.session_id)).at(-1)?.seq;
     // Bounded transcript projection; durable role history remains in the runner's entry tree.
     const last = await agents.lastEventSeq(binding.session_id);
     const events = await agents.readEventsAfter(binding.session_id, Math.max(0, last - 1000), 1000);
@@ -524,8 +526,14 @@ export async function learningView(principal: OwnerPrincipal, id: string): Promi
           if (block.type === 'text' && block.text) {
             try {
               const task = JSON.parse(block.text);
-              if (typeof task.question === 'string')
+              if (typeof task.question === 'string') {
                 messages.push({ role: 'assistant', text: task.question });
+                if (
+                  event.id > (latestUserSeq ?? 0) &&
+                  task.question === binding.guided?.pending?.question
+                )
+                  currentQuestionShown = true;
+              }
             } catch {
               /* Only the structured review receipt is a student-facing question. */
             }
@@ -533,7 +541,6 @@ export async function learningView(principal: OwnerPrincipal, id: string): Promi
         }
       }
       if (event.type === 'user_message' && typeof data.text === 'string') {
-        latestUserSeq = event.id;
         messages.push({ role: 'user', text: data.text });
       }
       if (
@@ -552,6 +559,10 @@ export async function learningView(principal: OwnerPrincipal, id: string): Promi
       }
     }
   }
+  // The review transaction can commit before the runner persists its display event.
+  const pendingReview = binding?.guided?.pending;
+  if (pendingReview?.runId === `${stageKey(row)}:${latestUserSeq ?? 0}` && !currentQuestionShown)
+    messages.push({ role: 'assistant', text: pendingReview.question });
   let evaluation: LearningView['evaluation'] = null;
   if (row.evaluation && row.environment_id) {
     const observed = await (

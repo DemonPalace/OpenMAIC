@@ -1298,7 +1298,7 @@ export async function runSession(ctx: RunContext, meta: ClaimedAgentSession): Pr
     );
     const idleAttach = meta.existingCourse;
 
-    if (plan.kind === 'already-complete' && pending.length === 0) {
+    if ((plan.kind === 'already-complete' || teaching?.isTurnComplete()) && pending.length === 0) {
       emit(LIFECYCLE.sessionEnd, {
         status: 'succeeded',
         note: 'entry history already terminal',
@@ -1614,7 +1614,12 @@ export async function runSession(ctx: RunContext, meta: ClaimedAgentSession): Pr
     const askUserLatch = createAskUserTerminateLatch();
     let toolCalls = 0;
     const agent = buildAgent({
-      streamFn,
+      streamFn: teaching
+        ? (await import('@/lib/server/pbl-v3/runner-tools')).withTeachingTurnBoundary(
+            streamFn,
+            teaching.isTurnComplete,
+          )
+        : streamFn,
       systemPrompt: execution.systemPrompt,
       model: driver.piModel,
       tools: execution.tools,
@@ -1625,7 +1630,7 @@ export async function runSession(ctx: RunContext, meta: ClaimedAgentSession): Pr
         if (
           teaching &&
           !toolContext.isError &&
-          toolContext.toolCall.name === 'request_skill_review'
+          ['request_skill_review', 'complete_stage'].includes(toolContext.toolCall.name)
         ) {
           questionEmitted = true;
           return { terminate: true };

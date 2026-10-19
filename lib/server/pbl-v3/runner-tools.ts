@@ -1,6 +1,7 @@
 import 'server-only';
 import { randomUUID } from 'node:crypto';
-import type { AgentTool } from '@earendil-works/pi-agent-core';
+import { createAssistantMessageEventStream } from '@earendil-works/pi-ai';
+import type { AgentTool, StreamFn } from '@earendil-works/pi-agent-core';
 import { Type, type Static, type TSchema } from 'typebox';
 import { getAgentSessionStore } from '@/lib/server/agent-runtime/store';
 import { listAgentUserMessages } from '@/lib/server/agent-runtime/user-messages';
@@ -63,12 +64,15 @@ export async function teachingRunnerConfig(input: {
     digest: digest(JSON.stringify([project.ref, bound.stage_key, progression])),
   };
   const review = new GuidedSkillReview(protocol, bound.guided ?? undefined);
-  review.beginRun(
-    `${bound.stage_key}:${latest?.seq ?? 0}`,
-    latest?.text ?? '',
-    bound.feedback_seq > 1,
-  );
+  const runId = `${bound.stage_key}:${latest?.seq ?? 0}`;
+  review.beginRun(runId, latest?.text ?? '', bound.feedback_seq > 1);
   const guided = stage.kind === 'produce' || stage.kind === 'mentor_say';
+  let turnComplete =
+    guided &&
+    (review.state.pending?.runId === runId ||
+      (bound.completion?.stageKey === bound.stage_key &&
+        bound.completion.feedbackSeq === bound.feedback_seq &&
+        bound.completion.userMessageSeq === latest?.seq));
   const service = async () => {
     const grant = await (await SandboxStore.open()).sessionGrant(input.sessionId, input.ownerId);
     if (!grant || grant.environment_id !== row.environment_id)
@@ -125,6 +129,7 @@ export async function teachingRunnerConfig(input: {
                 }),
               ]);
           });
+          if (name === 'request_skill_review' || name === 'complete_stage') turnComplete = true;
           return {
             content: [{ type: 'text' as const, text: JSON.stringify(result.value) }],
             details: {},
@@ -351,5 +356,44 @@ export async function teachingRunnerConfig(input: {
       : repairing
         ? '\nHelp the learner diagnose the observed test failure. Read the current code before making a focused repair. Explain the change and ask the learner to run tests again using the project controls. Never claim the repair passed without a new test result.'
         : '\nDiscuss only the current decisions. The learner records choices using the project controls.');
-  return { tools, systemPrompt, allowedToolNames: new Set(tools.map((t) => t.name)) };
+  return {
+    tools,
+    systemPrompt,
+    allowedToolNames: new Set(tools.map((t) => t.name)),
+    isTurnComplete: () => turnComplete,
+  };
+}
+
+/** Pi 0.80's Agent wrapper does not expose the loop's shouldStopAfterTurn hook.
+ * Its per-tool terminate flag requires ALL results in a batch to terminate.
+ * Settle locally at the model-call boundary after a committed teaching receipt,
+ * even for mixed/invalid tool batches. No model call or student message is added.
+ */
+export function withTeachingTurnBoundary(streamFn: StreamFn, isComplete: () => boolean): StreamFn {
+  return (model, context, options) => {
+    if (!isComplete()) return streamFn(model, context, options);
+    const stream = createAssistantMessageEventStream();
+    stream.push({
+      type: 'done',
+      reason: 'stop',
+      message: {
+        role: 'assistant',
+        content: [],
+        stopReason: 'stop',
+        api: model.api,
+        provider: model.provider,
+        model: model.id,
+        timestamp: Date.now(),
+        usage: {
+          input: 0,
+          output: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 0,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+      },
+    });
+    return stream;
+  };
 }

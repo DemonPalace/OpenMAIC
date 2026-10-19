@@ -20,7 +20,7 @@ test('installed sample opens in the normal classroom and preserves progress afte
         plan: null,
         code: null,
         tests: null,
-        quiz: null,
+        quiz: null as LearningView['state']['collected'][string]['quiz'],
         remediation: null,
       },
     },
@@ -47,11 +47,11 @@ test('installed sample opens in the normal classroom and preserves progress afte
     messages: [] as { role: string; text: string }[],
     roleRun: null as LearningView['roleRun'],
     decisions: [],
-    questions: [],
+    questions: [] as LearningView['questions'],
     evaluation: null,
   };
   let file = 'Write your plan here.';
-  const calls: { type: string }[] = [];
+  const calls: { type: string; path?: string; text?: string; expectedHash?: string }[] = [];
   await page.route('**/api/pbl/v3**', async (route) => {
     const req = route.request(),
       url = new URL(req.url());
@@ -71,6 +71,18 @@ test('installed sample opens in the normal classroom and preserves progress afte
         );
       }
       if (command.type === 'save') file = command.text;
+      if (command.type === 'quiz') {
+        const passed = command.answers[0] === 0;
+        view.state.collected.greeting.quiz = {
+          id: command.id,
+          attempt: (view.state.collected.greeting.quiz?.attempt ?? 0) + 1,
+          passed,
+          score: passed ? 1 : 0,
+          total: 1,
+          wrong: passed ? [] : [0],
+        };
+        view.actions = passed ? ['quiz', 'next'] : ['quiz'];
+      }
       if (command.type === 'retry')
         view.roleRun = { status: 'succeeded', failure: null, canRetry: false };
       return route.fulfill({ json: { result: { accepted: true }, view } });
@@ -102,4 +114,66 @@ test('installed sample opens in the normal classroom and preserves progress afte
   await expect(learningAlert).toHaveCount(0);
   expect(calls.filter((c) => c.type === 'retry')).toHaveLength(1);
   expect(calls.filter((c) => c.type === 'chat')).toHaveLength(1);
+  // A late read from PLAN.md must not populate or become savable as greeting.py.
+  view.actions = ['chat', 'edit'];
+  await page.getByRole('button', { name: 'Refresh progress' }).click();
+  let releasePlan!: () => void, planStarted!: () => void;
+  const planGate = new Promise<void>((resolve) => {
+    releasePlan = resolve;
+  });
+  const planSeen = new Promise<void>((resolve) => {
+    planStarted = resolve;
+  });
+  await page.route('**/api/pbl/v3?**', async (route) => {
+    const path = new URL(route.request().url()).searchParams.get('file');
+    if (!path) return route.fallback();
+    if (path === 'PLAN.md') {
+      planStarted();
+      await planGate;
+    }
+    await route.fulfill({
+      json: {
+        text: path === 'PLAN.md' ? 'Late plan response' : 'print("Current code")',
+        hash: (path === 'PLAN.md' ? 'b' : 'c').repeat(64),
+      },
+    });
+  });
+  await page.getByRole('button', { name: 'Reload file' }).click();
+  await planSeen;
+  await page.getByRole('combobox', { name: 'Project files' }).selectOption('greeting.py');
+  const editor = page.getByRole('textbox', { name: 'File contents' });
+  await expect(editor).toHaveValue('print("Current code")');
+  const lateResponse = page.waitForResponse(
+    (response) => new URL(response.url()).searchParams.get('file') === 'PLAN.md',
+  );
+  releasePlan();
+  await lateResponse;
+  await expect(editor).toHaveValue('print("Current code")');
+  await editor.fill('print("Saved code")');
+  await page.getByRole('button', { name: 'Save file', exact: true }).click();
+  expect(calls.at(-1)).toMatchObject({
+    type: 'save',
+    path: 'greeting.py',
+    text: 'print("Saved code")',
+    expectedHash: 'c'.repeat(64),
+  });
+  view.questions = [{ q: 'What does return do?', options: ['Returns a value', 'Prints a value'] }];
+  view.actions = ['quiz'];
+  await page.getByRole('button', { name: 'Refresh progress' }).click();
+  await page.getByRole('radio', { name: 'Prints a value' }).check();
+  await page.getByRole('button', { name: 'Submit answers' }).click();
+  await expect(
+    page.getByText('0/1 correct. Review your answers and try again.', { exact: true }),
+  ).toBeVisible();
+  await page.reload();
+  await expect(
+    page.getByText('0/1 correct. Review your answers and try again.', { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Continue', exact: true })).toHaveCount(0);
+  await page.getByRole('radio', { name: 'Returns a value' }).check();
+  await page.getByRole('button', { name: 'Submit answers' }).click();
+  await expect(
+    page.getByText('Quiz passed: 1/1 correct. You can continue.', { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Continue', exact: true })).toBeEnabled();
 });

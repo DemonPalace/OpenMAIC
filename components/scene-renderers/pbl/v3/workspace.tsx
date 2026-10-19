@@ -26,6 +26,7 @@ export function PBLV3Workspace({ sceneId }: { sceneId: string }) {
     [editor, setEditor] = useState(''),
     [fileHash, setFileHash] = useState('');
   const [answers, setAnswers] = useState<number[]>([]);
+  const fileRequest = useRef(0);
   const retry = useRef<{
     type: string;
     payload: Record<string, unknown>;
@@ -88,16 +89,23 @@ export function PBLV3Workspace({ sceneId }: { sceneId: string }) {
   };
   const loadFile = async () => {
     if (!view) return;
+    const request = ++fileRequest.current;
+    setFileHash('');
     const data = await pblRequest<{ text: string; hash: string }>(
       `/api/pbl/v3?id=${encodeURIComponent(view.id)}&file=${encodeURIComponent(file)}`,
     );
+    if (request !== fileRequest.current) return;
     setEditor(data.text);
     setFileHash(data.hash);
   };
   useEffect(() => {
     setFileHash('');
     if (view?.environmentId) void loadFile().catch((e) => setError(e.message));
+    return () => {
+      fileRequest.current += 1;
+    };
   }, [file, view?.environmentId]); // eslint-disable-line react-hooks/exhaustive-deps
+  const quiz = view?.state.collected[view.state.position.milestoneId ?? '']?.quiz;
   const disabled = pending || view?.busy;
   const button = 'rounded-md border px-3 py-2 text-sm disabled:opacity-40 hover:bg-muted';
   return (
@@ -256,6 +264,14 @@ export function PBLV3Workspace({ sceneId }: { sceneId: string }) {
                     ))}
                   </fieldset>
                 ))}
+                {view.questions.length > 0 && quiz && (
+                  <p role="status">
+                    {t(quiz.passed ? 'pblV3.quizPassed' : 'pblV3.quizRetry', {
+                      score: quiz.score,
+                      total: quiz.total,
+                    })}
+                  </p>
+                )}
                 {view.actions.includes('quiz') && (
                   <button
                     className={button}
@@ -282,7 +298,13 @@ export function PBLV3Workspace({ sceneId }: { sceneId: string }) {
                     aria-label={t('pblV3.files')}
                     className="rounded border p-2"
                     value={file}
-                    onChange={(e) => setFile(e.target.value)}
+                    disabled={pending}
+                    onChange={(e) => {
+                      fileRequest.current += 1;
+                      setFileHash('');
+                      setEditor('');
+                      setFile(e.target.value);
+                    }}
                   >
                     {view.files.map((path) => (
                       <option key={path}>{path}</option>
@@ -301,7 +323,7 @@ export function PBLV3Workspace({ sceneId }: { sceneId: string }) {
                   spellCheck={false}
                   className="min-h-64 w-full rounded border bg-muted/30 p-3 font-mono text-sm"
                   value={editor}
-                  readOnly={!view.actions.includes('edit') || disabled}
+                  readOnly={!fileHash || !view.actions.includes('edit') || disabled}
                   onChange={(e) => setEditor(e.target.value)}
                 />
                 <div className="flex flex-wrap gap-2">

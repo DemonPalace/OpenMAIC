@@ -2532,6 +2532,8 @@
     "message": "Your message",
     "send": "Send",
     "submitQuiz": "Submit answers",
+    "quizPassed": "クイズ合格：{{total}} 問中 {{score}} 問正解。次へ進めます。",
+    "quizRetry": "{{total}} 問中 {{score}} 問正解。回答を見直して再送信してください。",
     "next": "Continue",
     "files": "Project files",
     "editor": "File contents",

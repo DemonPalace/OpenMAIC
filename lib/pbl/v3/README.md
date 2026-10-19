@@ -58,7 +58,10 @@ scenes keep their existing renderer.
   before crossing the network.
 - Guided review receipts require a later real student message and the same artifact
   digest. Completion signals cannot advance the stage. The server validates
-  artifacts/tests, and the learner separately confirms progression.
+  artifacts/tests, and the learner separately confirms progression. A committed
+  review or completion receipt ends model execution even in a mixed tool batch.
+  Retry/takeover preserves the wait and file-write restriction until a new student
+  reply; a saved question remains visible even if its runner display event was lost.
 - Tests run as sandbox background commands, with stable IDs and explicit result
   collection. Changed input invalidates the result; unknown execution is not a
   failed student test. Learning progress survives page refresh independently of
@@ -66,6 +69,8 @@ scenes keep their existing renderer.
 - Reflection receives the saved test status/feedback and tested workspace revision,
   plus the learner's quiz score and attempt summary. Internal diagnostics and
   answer keys are excluded from this evidence projection.
+- The workspace rejects stale file-load responses after file selection changes.
+  Quiz scores and retry guidance remain visible after refresh.
 
 ## Validation and remaining scope
 

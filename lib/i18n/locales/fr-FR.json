@@ -2532,6 +2532,8 @@
     "message": "Your message",
     "send": "Send",
     "submitQuiz": "Submit answers",
+    "quizPassed": "Quiz réussi : {{score}}/{{total}} bonnes réponses. Vous pouvez continuer.",
+    "quizRetry": "{{score}}/{{total}} bonnes réponses. Vérifiez vos réponses et réessayez.",
     "next": "Continue",
     "files": "Project files",
     "editor": "File contents",

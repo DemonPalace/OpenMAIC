@@ -2532,6 +2532,8 @@
     "message": "Your message",
     "send": "Send",
     "submitQuiz": "Submit answers",
+    "quizPassed": "Тест пройден: {{score}} из {{total}} ответов верны. Можно продолжить.",
+    "quizRetry": "Верных ответов: {{score}} из {{total}}. Проверьте ответы и попробуйте снова.",
     "next": "Continue",
     "files": "Project files",
     "editor": "File contents",

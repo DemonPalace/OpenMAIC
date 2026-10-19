@@ -17,8 +17,11 @@ describe('guided review boundaries', () => {
     const receipt = review.checkpoint('Explain the return value.', artifact);
     const restored = new GuidedSkillReview(protocol, receipt);
     restored.beginRun('turn-1', 'Start', true);
+    expect(() => restored.assertWritable()).toThrow();
+    expect(() => restored.checkpoint('Ask again', artifact)).toThrow();
     expect(() => restored.advance('B-review.md', 'Start', artifact)).toThrow();
     restored.beginRun('turn-2', 'It returns the greeting.', true);
+    expect(() => restored.assertWritable()).not.toThrow();
     expect(() => restored.advance('B-review.md', 'I approve', artifact)).toThrow();
     expect(() => restored.advance('B-review.md', 'returns the greeting', 'b'.repeat(64))).toThrow();
     restored.advance('B-review.md', 'returns the greeting', artifact);

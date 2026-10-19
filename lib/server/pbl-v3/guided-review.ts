@@ -52,7 +52,8 @@ export class GuidedSkillReview {
     this.studentText = studentText;
     this.eligible = eligible;
     this.advanced = false;
-    this.ended = false;
+    // A retry is still the same student turn, not permission to revise their review.
+    this.ended = this.state.pending?.runId === runId;
   }
 
   assertWritable(): void {
