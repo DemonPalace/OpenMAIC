@@ -371,7 +371,20 @@ export async function teachingRunnerConfig(input: {
  */
 export function withTeachingTurnBoundary(streamFn: StreamFn, isComplete: () => boolean): StreamFn {
   return (model, context, options) => {
-    if (!isComplete()) return streamFn(model, context, options);
+    if (!isComplete()) {
+      // Empty stop frames are local control receipts, not model conversation.
+      // Keep them in durable history for recovery; omit only this shape from
+      // the request view so the next student turn is valid for strict providers.
+      const messages = context.messages.filter(
+        (message) =>
+          !(
+            message.role === 'assistant' &&
+            message.stopReason === 'stop' &&
+            message.content.length === 0
+          ),
+      );
+      return streamFn(model, { ...context, messages }, options);
+    }
     const stream = createAssistantMessageEventStream();
     stream.push({
       type: 'done',

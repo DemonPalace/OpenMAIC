@@ -7,6 +7,7 @@ import { join, basename } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { Pool } from 'pg';
+import type { ModelMessage } from 'ai';
 import { PgAgentSessionStore, ensureAgentSessionSchema } from '@openmaic/storage/agent-session/pg';
 vi.mock('server-only', () => ({}));
 const mocked = vi.hoisted(() => ({
@@ -15,6 +16,7 @@ const mocked = vi.hoisted(() => ({
   root: '',
   responses: [] as Array<Array<Record<string, unknown>>>,
   modelCalls: 0,
+  modelRequests: [] as ModelMessage[][],
 }));
 vi.mock('@/lib/persistence/server-provider', () => ({
   getServerPersistenceProvider: async () => ({
@@ -126,13 +128,16 @@ vi.mock('@/lib/server/agent-runtime/event-notify-bus', () => ({
   subscribeAgentEventWakeup: () => () => {},
 }));
 vi.mock('@/lib/ai/llm', () => ({
-  streamLLM: () => ({
-    fullStream: (async function* () {
-      mocked.modelCalls += 1;
-      for (const part of mocked.responses.shift() ?? []) yield part;
-    })(),
-    usage: new Promise(() => {}),
-  }),
+  streamLLM: (options: { messages: ModelMessage[] }) => {
+    mocked.modelRequests.push(structuredClone(options.messages));
+    return {
+      fullStream: (async function* () {
+        mocked.modelCalls += 1;
+        for (const part of mocked.responses.shift() ?? []) yield part;
+      })(),
+      usage: new Promise(() => {}),
+    };
+  },
 }));
 import { runSession, startAgentRunner } from '@/lib/server/agent-runtime/runner';
 import { ensureOwnerMergeSchema } from '@/lib/persistence/owner-merges';
@@ -640,6 +645,7 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
       };
       mocked.responses = [
         [
+          { type: 'text-delta', text: 'Let us inspect the greeting.' },
           { type: 'tool-call', toolCallId: 'read-section', toolName: 'read_next_skill', input: {} },
           {
             type: 'tool-call',
@@ -681,6 +687,76 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
       expect(restored.actions).not.toContain('next');
       expect((await store.binding(queued.sessionId))?.guided?.pending?.question).toBe(
         'What should greet(name) return?',
+      );
+      const events = await agents.readEventsAfter(queued.sessionId, 0, 1000);
+      const isEmptyStop = (event: (typeof events)[number]) => {
+        const message = (
+          event.data as { message?: { role?: string; content?: unknown[]; stopReason?: string } }
+        ).message;
+        return (
+          event.type === 'message_end' &&
+          message?.role === 'assistant' &&
+          message.stopReason === 'stop' &&
+          message.content?.length === 0
+        );
+      };
+      expect(events.some(isEmptyStop)).toBe(true); // Durable control receipt is retained.
+      const reply = 'It returns a greeting to the caller.';
+      await command('chat', { text: reply });
+      const next = await agents.claimNextSession(handle.workerId, process.pid, {
+        sessionId: queued.sessionId,
+        leaseTtlMs: 10000,
+        maxAttempts: 5,
+      });
+      mocked.responses = [
+        [
+          {
+            type: 'tool-call',
+            toolCallId: 'next-section',
+            toolName: 'read_next_skill',
+            input: { studentFeedback: reply },
+          },
+          {
+            type: 'tool-call',
+            toolCallId: 'next-review',
+            toolName: 'request_skill_review',
+            input: { question: 'How does the caller use that value?' },
+          },
+          finish,
+        ],
+      ];
+      const nextCalls = mocked.modelCalls;
+      await runSession({ running: new Map(), shuttingDown: false }, next!);
+      expect(mocked.modelCalls - nextCalls).toBe(1);
+      expect((await agents.getSession(queued.sessionId))?.status).toBe('succeeded');
+      expect((await store.binding(queued.sessionId))?.guided?.activeFile).toBe('B-dialogue.md');
+      // Inspect the actual connector input AFTER Pi's conversion and toModelMessages.
+      const request = mocked.modelRequests.at(-1)!;
+      expect(
+        request.filter(
+          (m) => m.role === 'assistant' && Array.isArray(m.content) && m.content.length === 0,
+        ),
+      ).toEqual([]);
+      expect(request.at(-1)).toMatchObject({ role: 'user', content: reply });
+      const assistantParts = request.flatMap((m) =>
+        m.role === 'assistant' && Array.isArray(m.content) ? m.content : [],
+      );
+      expect(assistantParts).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ type: 'text', text: 'Let us inspect the greeting.' }),
+          expect.objectContaining({ type: 'tool-call', toolCallId: 'read-section' }),
+          expect.objectContaining({ type: 'tool-call', toolCallId: 'ask-review' }),
+        ]),
+      );
+      const toolParts = request.flatMap((m) => (m.role === 'tool' ? m.content : []));
+      expect(toolParts).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ type: 'tool-result', toolCallId: 'read-section' }),
+          expect.objectContaining({ type: 'tool-result', toolCallId: 'ask-review' }),
+        ]),
+      );
+      expect((await agents.readEventsAfter(queued.sessionId, 0, 1000)).some(isEmptyStop)).toBe(
+        true,
       );
       studyId = original;
     },
