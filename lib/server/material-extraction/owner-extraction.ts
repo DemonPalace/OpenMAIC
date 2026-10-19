@@ -64,6 +64,10 @@ import { getMinerUBackend } from '@/lib/pdf/pdf-providers';
 import { DocumentImageParseError } from './document-image-parser';
 import { agentRuntimeConfig } from '@/lib/server/agent-runtime/config';
 import {
+  ExtractionResultTooLargeError,
+  maxExtractionResultBytes,
+} from '@/lib/server/materials/extraction';
+import {
   OwnerMaterialBytesUnavailableError,
   readOwnerMaterialBytes,
 } from '@/lib/server/materials/owner-material-bytes';
@@ -339,17 +343,23 @@ export async function runClaimedOwnerExtraction(
 
   if (state.lost) return 'not-authorized';
   const options = resultOptions(outcome.extractor.id);
+  const textBytes = Buffer.from(outcome.text, 'utf8');
+  const imagesBytes = outcome.images.map((image) => decodeMediaAssetData(image.data));
+  // The cap the classic path puts on its stored result, over the text and
+  // images this run would store; checked before any of them is allocated.
+  const maxBytes = maxExtractionResultBytes();
+  const resultBytes = imagesBytes.reduce((sum, bytes) => sum + bytes.byteLength, textBytes.length);
+  if (resultBytes > maxBytes) throw new ExtractionResultTooLargeError(resultBytes, maxBytes);
   // Every entry this run allocates, so a run that is refused for certain can
   // remove what nothing will ever name.
   const allocated: string[] = [];
   const derivatives: OwnerExtractionDerivative[] = [];
   let textAssetId: string;
   try {
-    const textBytes = Buffer.from(outcome.text, 'utf8');
     textAssetId = await allocate(persistence, claim, state, textBytes, 'text/markdown');
     allocated.push(textAssetId);
     for (const [index, image] of outcome.images.entries()) {
-      const imageBytes = decodeMediaAssetData(image.data);
+      const imageBytes = imagesBytes[index]!;
       const assetId = await allocate(persistence, claim, state, imageBytes, image.mimeType);
       allocated.push(assetId);
       derivatives.push({

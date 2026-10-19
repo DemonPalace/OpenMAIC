@@ -28,6 +28,7 @@ import {
   ownerClaimMidRunScenario,
   publishRollbackScenario,
   quotaFailureScenario,
+  resultLimitScenario,
   sameBytesOtherMimeScenario,
   schemaCompatibilityScenario,
   supersededClaimScenario,
@@ -128,6 +129,10 @@ describe('owner-level material extraction (PGlite)', () => {
 
   it('fails a source whose outputs do not fit the asset quota, publishing nothing', async () => {
     await quotaFailureScenario(await boot({ ASSET_QUOTA_BYTES: '1000' }));
+  });
+
+  it('fails a result over the configured size cap and publishes one that fits', async () => {
+    await resultLimitScenario(await boot({ OPENMAIC_MATERIAL_EXTRACTION_MAX_RESULT_MB: '1' }));
   });
 
   it('keeps the bootstrap rerunnable and the public view unchanged', async () => {

@@ -979,6 +979,51 @@ export async function quotaFailureScenario(h: ExtractionHarness): Promise<void> 
   expect(await ensure(h, 'vid-big')).toEqual({ status: 'pending', queued: true });
 }
 
+/**
+ * The result cap (`OPENMAIC_MATERIAL_EXTRACTION_MAX_RESULT_MB`, 1 MB in this
+ * scenario) covers the text and every image: a result one byte over fails for
+ * good before anything is allocated, and one that exactly fits is published.
+ */
+export async function resultLimitScenario(h: ExtractionHarness): Promise<void> {
+  const cap = 1024 * 1024;
+  const text = '[00:00:00.000 - 00:00:04.000] Hello class';
+  const withKeyframe = (bytes: number) =>
+    h.mediaExtract.mockImplementationOnce(async () => ({
+      metadata: { durationMs: 4_000 },
+      transcript: [{ id: 's1', startMs: 0, endMs: 4_000, text: 'Hello class' }],
+      assets: [
+        {
+          id: 'keyframe-001',
+          type: 'image',
+          mimeType: 'image/png',
+          data: `data:image/png;base64,${Buffer.alloc(bytes, 7).toString('base64')}`,
+          metadata: { timeMs: 1_500 },
+        },
+      ],
+    }));
+
+  await seedSource(h, 'vid-over', { mime: 'video/mp4', bytes: Buffer.from('mp4-over') });
+  await ensure(h, 'vid-over');
+  const entries = await entryCount(h);
+  withKeyframe(cap - Buffer.byteLength(text) + 1);
+  await drain(h);
+  const over = await stateOf(h, 'vid-over');
+  expect(over).toMatchObject({ status: 'failed', extraction_result: null, reason_code: null });
+  expect(over.extraction_error).toMatch(/more than the 1 MB a material may keep/);
+  expect(await entryCount(h)).toBe(entries);
+  expect(await rootCount(h)).toBe(0);
+
+  await seedSource(h, 'vid-fit', { mime: 'video/mp4', bytes: Buffer.from('mp4-fit') });
+  await ensure(h, 'vid-fit');
+  withKeyframe(cap - Buffer.byteLength(text));
+  await drain(h);
+  const fit = await stateOf(h, 'vid-fit');
+  expect(fit.status).toBe('done');
+  expect(fit.extraction_result!.derivatives).toEqual([
+    expect.objectContaining({ kind: 'image', bytes: cap - Buffer.byteLength(text) }),
+  ]);
+}
+
 /** Bootstrap reruns; the upload's insert and the public view keep their shape. */
 export async function schemaCompatibilityScenario(h: ExtractionHarness): Promise<void> {
   await ensureOwnerMaterialSchema(h.pool as never);
