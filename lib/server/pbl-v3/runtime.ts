@@ -115,13 +115,19 @@ export async function queueRole(store: LearningStore, db: PoolClient, row: Study
   const role = roleFor(row);
   if (!role) throw sandboxConflict('This stage does not accept a teaching message.');
   const context = role === 'mentor' ? 'project' : row.state.position.milestoneId!;
-  let binding = (
+  let binding: RoleBinding | undefined = (
     await db.query<RoleBinding>(
       'SELECT * FROM pbl_v3_roles WHERE study_id=$1 AND role=$2 AND context_key=$3',
       [row.id, role, context],
     )
   ).rows[0];
   const agents = store.agentStore(db);
+  if (binding && !(await agents.getSession(binding.session_id))) {
+    // Repair old/deleted bindings without resetting learning progress or resurrecting a deleted chat.
+    await db.query('DELETE FROM sandbox_session_grants WHERE session_id=$1', [binding.session_id]);
+    await db.query('DELETE FROM pbl_v3_roles WHERE session_id=$1', [binding.session_id]);
+    binding = undefined;
+  }
   if (!binding) {
     const id = `pbl-role-${randomUUID()}`;
     await agents.createSession({
@@ -191,6 +197,12 @@ export async function commandStudy(
   const store = await LearningStore.open();
   // Check ownership before admitting a lock, including read/retry paths.
   await store.get(id, principal.ownerId);
+  if (command.type === 'cancel') {
+    // Control traffic must not wait behind the remote tool it is trying to stop.
+    const agents = await getAgentSessionStore();
+    for (const role of await store.roles(id)) await agents.requestCancel(role.session_id);
+    return { cancelRequested: true };
+  }
   return store.exclusive(id, async () => {
     let row = await store.get(id, principal.ownerId);
     const project = projectFor(row),
@@ -214,10 +226,6 @@ export async function commandStudy(
         throw sandboxConflict('Progress changed. Refresh before submitting.');
     }
     const agents = await getAgentSessionStore();
-    if (command.type === 'cancel') {
-      for (const role of await store.roles(id)) await agents.requestCancel(role.session_id);
-      return { cancelRequested: true };
-    }
     if (await busy(store, row))
       throw sandboxConflict('Wait for the teaching response, or cancel it first.');
     const service = await SandboxService.forOwner(principal);
@@ -237,7 +245,7 @@ export async function commandStudy(
         JSON.stringify(result),
       ]);
     };
-    if (command.type === 'chat') {
+    if (command.type === 'chat' || command.type === 'retry') {
       if (!isAgentRuntimeConfigured())
         throw new SandboxError(
           'PBL_RUNNER_DISABLED',
@@ -246,15 +254,39 @@ export async function commandStudy(
         );
       check('chat');
       requireEnvironment(row);
-      if (!command.text?.trim()) throw sandboxInvalid('A learning message is required.');
+      if (command.type === 'chat' && !command.text?.trim())
+        throw sandboxInvalid('A learning message is required.');
       await assertWorkspaceModelsAuthorized(principal.ownerId, ['agent']);
       if (row.state.status === 'completed') throw sandboxConflict('This project is completed.');
       return store.transaction(async (db) => {
+        await fenceOwnerWrite(db, row.owner_id);
         await db.query(
           'INSERT INTO pbl_v3_commands(study_id,id,hash,result,stage_key) VALUES($1,$2,$3,NULL,$4) ON CONFLICT DO NOTHING',
           [id, command.id, hash, stageKey(row)],
         );
-        result = { sessionId: await queueRole(store, db, row, command.text!) };
+        if (command.type === 'retry') {
+          const binding = (await store.roles(id, db)).find(
+            (binding) => binding.role === roleFor(row) && binding.stage_key === stageKey(row),
+          );
+          const sessionStore = store.agentStore(db);
+          const meta = binding ? await sessionStore.getSession(binding.session_id) : null;
+          if (!binding || !meta || !['failed', 'cancelled'].includes(meta.status))
+            throw sandboxConflict('Only a failed or cancelled teaching turn can be retried.');
+          await writeSessionGrant(
+            db,
+            { owner_id: row.owner_id, id: requireEnvironment(row) },
+            binding.session_id,
+            randomUUID(),
+            binding.role === 'planner' || binding.role === 'coder',
+            false,
+          );
+          if (!(await sessionStore.requeueSession(binding.session_id)))
+            throw sandboxConflict('The teaching turn changed. Refresh before retrying.');
+          // Reuse the actual student turn: retrying is not new feedback or approval.
+          result = { sessionId: binding.session_id };
+        } else {
+          result = { sessionId: await queueRole(store, db, row, command.text!) };
+        }
         await persist(db);
         return result;
       });
@@ -454,9 +486,24 @@ export async function learningView(principal: OwnerPrincipal, id: string): Promi
     (b) => b.role === role && b.stage_key === stageKey(row),
   );
   const messages: LearningView['messages'] = [];
+  let roleRun: LearningView['roleRun'] = null;
   let latestUserSeq: number | undefined;
   if (binding) {
     const agents = await getAgentSessionStore();
+    const meta = await agents.getSession(binding.session_id);
+    roleRun = {
+      status: meta?.status ?? 'missing',
+      canRetry: !!meta && ['failed', 'cancelled'].includes(meta.status),
+      // Never expose raw provider errors, URLs, or credentials to the browser.
+      failure:
+        meta?.status === 'failed'
+          ? /\b(401|403)\b|unauthori[sz]ed|authentication|api.?key/i.test(meta.error ?? '')
+            ? 'authentication'
+            : /timed?\s*out|timeout|deadline/i.test(meta.error ?? '')
+              ? 'timeout'
+              : 'unavailable'
+          : null,
+    };
     // Bounded transcript projection; durable role history remains in the runner's entry tree.
     const last = await agents.lastEventSeq(binding.session_id);
     const events = await agents.readEventsAfter(binding.session_id, Math.max(0, last - 1000), 1000);
@@ -523,6 +570,7 @@ export async function learningView(principal: OwnerPrincipal, id: string): Promi
       : [...transitions.allowedStudentActions(project.definition, row.state)];
   const guided = stage.kind === 'mentor_say' || stage.kind === 'produce';
   const approvalCurrent =
+    roleRun?.status === 'succeeded' &&
     binding?.completion?.stageKey === stageKey(row) &&
     binding.completion.feedbackSeq === binding.feedback_seq &&
     binding.completion.userMessageSeq === latestUserSeq;
@@ -538,6 +586,7 @@ export async function learningView(principal: OwnerPrincipal, id: string): Promi
     files: Object.keys(project.files),
     busy: await busy(store, row),
     messages: messages.slice(-60),
+    roleRun,
     evaluation,
     decisions:
       stage.kind === 'dialogue'

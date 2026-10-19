@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import type { LearningView } from '@/lib/pbl/v3/types';
 
 /** Browser interaction contract; backend/runner/Python execution is covered by runtime.pg.test.ts. */
 test.setTimeout(120000);
@@ -44,6 +45,7 @@ test('installed sample opens in the normal classroom and preserves progress afte
     files: ['PLAN.md', 'greeting.py'],
     busy: false,
     messages: [] as { role: string; text: string }[],
+    roleRun: null as LearningView['roleRun'],
     decisions: [],
     questions: [],
     evaluation: null,
@@ -69,6 +71,8 @@ test('installed sample opens in the normal classroom and preserves progress afte
         );
       }
       if (command.type === 'save') file = command.text;
+      if (command.type === 'retry')
+        view.roleRun = { status: 'succeeded', failure: null, canRetry: false };
       return route.fulfill({ json: { result: { accepted: true }, view } });
     }
     return route.fulfill({ json: view });
@@ -87,4 +91,15 @@ test('installed sample opens in the normal classroom and preserves progress afte
   expect(calls.filter((c) => c.type === 'chat')).toHaveLength(1);
   await expect(page.getByRole('button', { name: 'Continue', exact: true })).toHaveCount(0);
   await page.screenshot({ path: 'test-results/pbl-v3-workspace.png', fullPage: true });
+  view.roleRun = { status: 'failed', failure: 'authentication', canRetry: true };
+  const learningAlert = page.getByTestId('pbl-v3-workspace').getByRole('alert');
+  await page.getByRole('button', { name: 'Refresh progress' }).click();
+  await expect(learningAlert).toContainText('could not authenticate');
+  await page.reload();
+  await expect(learningAlert).toContainText('could not authenticate');
+  await page.screenshot({ path: 'test-results/pbl-v3-failure.png', fullPage: true });
+  await page.getByRole('button', { name: 'Retry response' }).click();
+  await expect(learningAlert).toHaveCount(0);
+  expect(calls.filter((c) => c.type === 'retry')).toHaveLength(1);
+  expect(calls.filter((c) => c.type === 'chat')).toHaveLength(1);
 });

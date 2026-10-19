@@ -165,6 +165,21 @@ export function PBLV3Workspace({ sceneId }: { sceneId: string }) {
             <div className="grid gap-4 lg:grid-cols-2">
               <div className="space-y-3 rounded-lg border p-4">
                 <h3 className="font-semibold">{t('pblV3.learning')}</h3>
+                {view.roleRun &&
+                  ['failed', 'cancelled', 'missing'].includes(view.roleRun.status) && (
+                    <div role="alert" className="rounded border p-3">
+                      <p>{t(`pblV3.run.${view.roleRun.failure ?? view.roleRun.status}`)}</p>
+                      {view.roleRun.canRetry && (
+                        <button
+                          className={button}
+                          disabled={disabled}
+                          onClick={() => void command('retry')}
+                        >
+                          {t('pblV3.retryResponse')}
+                        </button>
+                      )}
+                    </div>
+                  )}
                 <div className="max-h-96 space-y-3 overflow-auto" aria-live="polite">
                   {view.messages.map((message, index) => (
                     <article

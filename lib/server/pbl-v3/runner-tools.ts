@@ -294,6 +294,8 @@ export async function teachingRunnerConfig(input: {
     planText = await (await service()).readText(row.environment_id, 'PLAN.md');
   const collected = row.state.collected[milestone.id]!;
   const repairing = stage.kind === 'check' && stage.checker === 'tests' && !!collected.remediation;
+  const recapping =
+    stage.kind === 'mentor_say' && stage.agent === 'mentor' && stage.skill === 'recap';
   const seed = projectArtifacts({
     reads: repairing
       ? ['contract', 'decisions.chosen', 'code']
@@ -310,6 +312,29 @@ export async function teachingRunnerConfig(input: {
       seed: {
         ...seed,
         goal: milestone.goal ?? milestone.title,
+        ...(recapping
+          ? {
+              recordedEvidence: {
+                tests: collected.tests
+                  ? {
+                      status: collected.tests.status,
+                      feedback: collected.tests.publicFeedback?.slice(0, 8000),
+                      workspaceRevision: collected.tests.revision,
+                      codeArtifactId: collected.tests.codeArtifactId,
+                    }
+                  : null,
+                quiz: collected.quiz
+                  ? {
+                      passed: collected.quiz.passed,
+                      score: collected.quiz.score,
+                      total: collected.quiz.total,
+                      attempt: collected.quiz.attempt,
+                      wrongQuestionIndexes: collected.quiz.wrong,
+                    }
+                  : null,
+              },
+            }
+          : {}),
         ...(repairing
           ? { testFeedback: collected.tests?.publicFeedback, remediation: collected.remediation }
           : {}),

@@ -163,6 +163,27 @@ async function command(type: string, payload: Record<string, unknown> = {}) {
     ...payload,
   });
 }
+async function freshStudy() {
+  const row = await store.create(
+    {
+      ownerId: principal.ownerId,
+      stageId: randomUUID(),
+      sceneId: 'scene',
+      projectId: project.ref.id,
+      version: project.ref.version,
+    },
+    startOrchestration(project.definition),
+  );
+  const send = async (type: string) =>
+    commandStudy(principal, row.id, {
+      id: randomUUID(),
+      revision: (await store.get(row.id, principal.ownerId)).revision,
+      type,
+      ...(type === 'chat' ? { text: 'Please start.' } : {}),
+    });
+  await send('prepare');
+  return { id: row.id, send };
+}
 async function runTools(
   instruction: string,
   steps: (config: Awaited<ReturnType<typeof teachingRunnerConfig>>) => Promise<void>,
@@ -418,6 +439,15 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
     await command('next');
     await command('quiz', { answers: [0] });
     await command('next');
+    await runTools('Please reflect on my results.', async (config) => {
+      const tested = (await store.get(studyId, principal.ownerId)).state.collected.greeting!;
+      expect(config.systemPrompt).toContain('"recordedEvidence"');
+      expect(config.systemPrompt).toContain('2 checks passed');
+      expect(config.systemPrompt).toContain(tested.tests!.revision.id);
+      expect(config.systemPrompt).toContain('"score":1,"total":1');
+      expect(config.systemPrompt).not.toContain('correctAnswer');
+      expect(config.systemPrompt).not.toContain('internalDiagnostics');
+    });
     await guided('teaching');
     const restored = await new LearningStore(pool).get(studyId, principal.ownerId);
     expect(restored.state.status).toBe('completed');
@@ -427,6 +457,114 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
         .count,
     ).toBe(String(restored.state.lastSequence));
   }, 60000);
+  it('replaces a deleted role without resetting progress or reusing its review receipts', async () => {
+    const study = await freshStudy();
+    const first = (await study.send('chat')) as { sessionId: string };
+    const before = await store.get(study.id, principal.ownerId);
+    await agents.softDeleteSession(first.sessionId, principal.ownerId);
+    expect((await learningView(principal, study.id)).roleRun?.status).toBe('missing');
+    const replacement = (await study.send('chat')) as { sessionId: string };
+    expect(replacement.sessionId).not.toBe(first.sessionId);
+    expect((await agents.getSession(replacement.sessionId))?.status).toBe('queued');
+    expect(await agents.getSession(first.sessionId)).toBeNull();
+    expect((await store.get(study.id, principal.ownerId)).state).toEqual(before.state);
+    expect(await store.binding(replacement.sessionId)).toMatchObject({
+      guided: null,
+      completion: null,
+    });
+    expect(
+      (
+        await pool.query('SELECT session_id FROM sandbox_session_grants WHERE session_id=$1', [
+          first.sessionId,
+        ])
+      ).rows,
+    ).toEqual([]);
+    await agents.softDeleteSession(replacement.sessionId, principal.ownerId);
+  });
+  it('cancels despite a held learning lock and stale progress, while enforcing ownership', async () => {
+    const study = await freshStudy();
+    const queued = (await study.send('chat')) as { sessionId: string };
+    let release!: () => void, entered!: () => void;
+    const inside = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const blocked = store.exclusive(
+      study.id,
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+          entered();
+        }),
+    );
+    await inside;
+    const cancel = { id: randomUUID(), revision: 0, type: 'cancel' };
+    try {
+      await expect(
+        commandStudy({ ...principal, ownerId: 'another-owner' }, study.id, cancel),
+      ).rejects.toMatchObject({ status: 404 });
+      expect(await agents.getCancelRequestedAt(queued.sessionId)).toBeNull();
+      expect(await commandStudy(principal, study.id, cancel)).toEqual({ cancelRequested: true });
+      expect(await agents.getCancelRequestedAt(queued.sessionId)).toBeTruthy();
+    } finally {
+      release();
+      await blocked;
+      await agents.softDeleteSession(queued.sessionId, principal.ownerId);
+    }
+  });
+  it('projects safe failure status and retries the same turn without inventing student feedback', async () => {
+    const study = await freshStudy();
+    const queued = (await study.send('chat')) as { sessionId: string };
+    const meta = await agents.claimNextSession('failure-worker', process.pid, {
+      sessionId: queued.sessionId,
+      leaseTtlMs: 10000,
+      maxAttempts: 5,
+    });
+    const config = await teachingRunnerConfig({
+      sessionId: queued.sessionId,
+      ownerId: principal.ownerId,
+      workerId: 'failure-worker',
+      attempt: meta!.attempt,
+      signal: new AbortController().signal,
+    });
+    await invoke(config, 'read_next_skill');
+    await invoke(config, 'request_skill_review', { question: 'Explain the return value.' });
+    await agents.finishSession(queued.sessionId, 'failure-worker', {
+      status: 'failed',
+      expectedAttempt: meta!.attempt,
+      error: '401 unauthorized https://provider.invalid/?key=SECRET',
+    });
+    const view = await learningView(principal, study.id);
+    expect(view.roleRun).toEqual({ status: 'failed', failure: 'authentication', canRetry: true });
+    expect(JSON.stringify(view)).not.toContain('SECRET');
+    const messages = await agents.listUserMessages(queued.sessionId);
+    const binding = await store.binding(queued.sessionId);
+    await study.send('retry');
+    expect(await agents.listUserMessages(queued.sessionId)).toEqual(messages);
+    expect((await store.binding(queued.sessionId))?.feedback_seq).toBe(binding?.feedback_seq);
+    const retried = await agents.claimNextSession('failure-worker', process.pid, {
+      sessionId: queued.sessionId,
+      leaseTtlMs: 10000,
+      maxAttempts: 5,
+    });
+    const resumed = await teachingRunnerConfig({
+      sessionId: queued.sessionId,
+      ownerId: principal.ownerId,
+      workerId: 'failure-worker',
+      attempt: retried!.attempt,
+      signal: new AbortController().signal,
+    });
+    await expect(
+      invoke(resumed, 'read_next_skill', { studentFeedback: 'Please start.' }),
+    ).rejects.toThrow();
+    await agents.finishSession(queued.sessionId, 'failure-worker', {
+      status: 'cancelled',
+      expectedAttempt: retried!.attempt,
+    });
+    expect((await learningView(principal, study.id)).roleRun).toMatchObject({
+      status: 'cancelled',
+      canRetry: true,
+    });
+  });
   it('executes teaching tools through the existing runner and Pi loop, then reconnects from durable history', async () => {
     const original = studyId;
     studyId = (

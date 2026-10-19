@@ -2549,6 +2549,14 @@
       "discussion": "Discussion",
       "planner": "Planner",
       "coder": "Coder"
+    },
+    "retryResponse": "Retry response",
+    "run": {
+      "authentication": "The teaching model could not authenticate. Check the model configuration before retrying.",
+      "timeout": "The teaching response timed out. You can retry this turn.",
+      "unavailable": "The teaching response could not finish. Please retry shortly.",
+      "cancelled": "This teaching turn was cancelled. Retry it or send a new message.",
+      "missing": "The teaching session is unavailable. Send a message to restart this review step; your learning progress is preserved."
     }
   }
 }

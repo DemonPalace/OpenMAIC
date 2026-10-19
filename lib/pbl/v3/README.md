@@ -40,9 +40,18 @@ scenes keep their existing renderer.
   other roles are scoped to a milestone. A server-side binding selects the teaching
   prompt and tools in the existing runner. Teaching sessions do not receive course
   editing, browsing, media generation, or general shell tools.
+- Role session IDs are reserved for the learning runtime. The ordinary chat list,
+  status projection and event stream omit them, and the chat deletion server action
+  refuses them. A previously deleted role is recreated on the next learning message;
+  progress and files remain, while that role's review receipts restart.
 - The runner owns leases, attempt fences, background execution, cancellation,
   durable messages and reconnection. There is no additional process or worker pool.
   Its existing concurrency limit applies; teaching runs are bounded to two minutes.
+- Cancellation uses an owner-checked control path outside the learning lock and
+  accepts stale progress revisions. Failed/cancelled turns have a visible status
+  and an explicit retry through the existing runner. Retry reuses the original
+  student message, so it cannot count as new feedback. Raw provider errors are
+  replaced with fixed public failure categories.
 - Role tools recheck binding, stage, owner, lease and expiring sandbox delegation.
   PLAN writes are restricted to planning. File writes compare an observed hash
   under the sandbox mutation lock. A pending write invalidates affected approvals
@@ -54,6 +63,9 @@ scenes keep their existing renderer.
   collection. Changed input invalidates the result; unknown execution is not a
   failed student test. Learning progress survives page refresh independently of
   the execution environment. File durability requires a successful checkpoint.
+- Reflection receives the saved test status/feedback and tested workspace revision,
+  plus the learner's quiz score and attempt summary. Internal diagnostics and
+  answer keys are excluded from this evidence projection.
 
 ## Validation and remaining scope
 
@@ -74,6 +86,10 @@ The browser fixture after refreshing the normal classroom (model/cloud responses
 are mocked in this UI test):
 
 ![Installed Python project in the classroom](screenshots/classroom.png)
+
+The same fixture with a failed teaching turn, restored after refresh:
+
+![Safe teaching failure and retry control](screenshots/failure.png)
 
 The next slice completes the richer workspace (terminal and application preview),
 cross-milestone sample acceptance, reports/exploration, and comprehensive recovery
