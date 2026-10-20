@@ -62,6 +62,7 @@ import { cn } from '@/lib/utils/cn';
 import { COURSE_MENTION_LIMIT, type CourseMentionCandidate } from '@/lib/workbench/course-mention';
 import {
   MATERIAL_MENTION_LIMIT,
+  materialAttachable,
   type MaterialMentionCandidate,
 } from '@/lib/workbench/material-mention';
 
@@ -149,7 +150,7 @@ export function CourseMentionMenu({
   // row read the same clamped index rather than resetting state mid-typing —
   // the skill menu resolves its own highlight the same way.
   const available = (row: MenuRow) =>
-    row.kind === 'course' || row.candidate.extractionStatus !== 'failed';
+    row.kind === 'course' || materialAttachable(row.candidate.extractionStatus);
   const enabledIndices = rows.flatMap((row, index) => (available(row) ? [index] : []));
   const activeIndex = enabledIndices.includes(highlightedIndex)
     ? highlightedIndex
@@ -378,7 +379,7 @@ export function CourseMentionMenu({
                 const index = candidates.length + materialIndex;
                 // Every state is named, so a material not yet extracted and one
                 // ready to read look different (RFC #1716 §4).
-                const unavailable = candidate.extractionStatus === 'failed';
+                const unavailable = !materialAttachable(candidate.extractionStatus);
                 const status = t(
                   extractionLabelKey(candidate.extractionStatus, candidate.reasonCode),
                 );

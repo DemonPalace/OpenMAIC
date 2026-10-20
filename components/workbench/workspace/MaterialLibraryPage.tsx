@@ -79,6 +79,7 @@ import {
 } from './MaterialLibraryDialogs';
 import { useTreeDrag } from './use-tree-drag';
 import { WORKBENCH_MATERIAL_ACCEPT } from '@/lib/workbench/material-upload-policy';
+import { materialAttachable } from '@/lib/workbench/material-mention';
 import {
   createMaterialUploadIdentityGate,
   retryMaterialUpload,
@@ -1097,6 +1098,9 @@ export function MaterialLibraryPage({
         id: 'chat',
         label: t('workspace.knowledgeBase.actions.chat'),
         icon: menuIcons.chat,
+        // The `@` menus' rule: a failed source is not attached. Its row
+        // already names the failure, and this menu offers to parse it again.
+        disabled: !materialAttachable(material.extraction.status),
         onSelect: () => onChatWithMaterial(stagedMaterialOfView(material)),
       },
       {

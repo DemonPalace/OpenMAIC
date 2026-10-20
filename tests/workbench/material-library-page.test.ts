@@ -1821,6 +1821,32 @@ describe('organizing from the page', () => {
     expect(uploadCalls).toEqual([]);
     await page.dispose();
   });
+
+  it('does not hand a failed source to a conversation, leaving its failure and reparse in reach', async () => {
+    const onChat = vi.fn();
+    library = (params) =>
+      json({
+        materials: [
+          source('bad', { extraction: { status: 'failed', reasonCode: 'service_unavailable' } }),
+        ],
+        ...(params.get('limits') === '0' ? {} : { limits: LIMITS }),
+      });
+    const page = await openPage({ onChatWithMaterial: onChat });
+    // The row names the failure, with its details one click away.
+    const status = page.query('kb-status-bad')!;
+    expect(status.dataset.status).toBe('failed');
+    expect(status.querySelector('button[aria-label]')).not.toBeNull();
+    await openMenu('kb-material-menu-bad');
+    const chat = inDocument('kb-material-menu-bad-chat')!;
+    expect(chat.hasAttribute('data-disabled')).toBe(true);
+    expect(chat.getAttribute('aria-disabled')).toBe('true');
+    expect(inDocument('kb-material-menu-bad-parse')!.textContent).toContain(
+      'workspace.knowledgeBase.actions.reparse',
+    );
+    await choose('kb-material-menu-bad-chat');
+    expect(onChat).not.toHaveBeenCalled();
+    await page.dispose();
+  });
 });
 
 // ── Deleting ───────────────────────────────────────────────────────────────

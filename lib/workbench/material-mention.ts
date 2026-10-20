@@ -28,6 +28,15 @@ export const MATERIAL_MENTION_LIMIT = 20;
 
 type ExtractionStatus = NonNullable<WorkbenchMaterial['extractionStatus']>;
 
+/**
+ * Whether a material can be attached to a message: not when its extraction
+ * failed, which the knowledge base page explains and parses again (#1880).
+ * Every way of attaching one from the library follows this.
+ */
+export function materialAttachable(status: ExtractionStatus): boolean {
+  return status !== 'failed';
+}
+
 export interface MaterialMentionCandidate {
   readonly materialId: string;
   readonly name: string;
