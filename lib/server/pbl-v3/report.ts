@@ -5,6 +5,7 @@ import type { LearningReport } from '@/lib/pbl/v3/report';
 import { getAgentSessionStore } from '@/lib/server/agent-runtime/store';
 import { LearningStore } from './store';
 import { projectFor } from './runtime';
+import { reviewQuestion } from './review-question';
 
 /** Facts come from durable events. This read does not require an execution environment or change progress. */
 export async function learningReport(
@@ -84,6 +85,9 @@ export async function learningReport(
         text?: string;
         message?: { role?: string; content?: { type: string; text?: string }[] };
       };
+      const question = reviewQuestion(entry);
+      if (question !== null)
+        messages.push({ sequence: entry.id, role: 'assistant', text: question });
       if (entry.type === 'user_message' && typeof data.text === 'string')
         messages.push({ sequence: entry.id, role: 'user', text: data.text.slice(0, 8000) });
       if (
@@ -99,6 +103,17 @@ export async function learningReport(
           messages.push({ sequence: entry.id, role: 'assistant', text: text.slice(0, 8000) });
       }
     }
+    const latestUser = messages.findLast((m) => m.role === 'user');
+    const pending = binding.guided?.pending;
+    if (
+      latestUser &&
+      pending?.runId === `${binding.stage_key}:${latestUser.sequence}` &&
+      !messages.some(
+        (m) =>
+          m.sequence > latestUser.sequence && m.role === 'assistant' && m.text === pending.question,
+      )
+    )
+      messages.push({ sequence: last + 1, role: 'assistant', text: pending.question });
     conversations.push({
       role: binding.role,
       milestone: binding.context_key,

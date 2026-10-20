@@ -1,4 +1,5 @@
 import 'server-only';
+import { reviewQuestion } from './review-question';
 import { createHash, randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
 import type { OwnerPrincipal } from '@/lib/server/identity/types';
@@ -667,28 +668,11 @@ export async function learningView(principal: OwnerPrincipal, id: string): Promi
         result?: { content?: { type: string; text?: string }[] };
         message?: { role?: string; content?: unknown };
       };
-      if (
-        event.type === 'tool_execution_end' &&
-        data.toolName === 'request_skill_review' &&
-        !data.isError
-      ) {
-        for (const block of data.result?.content ?? []) {
-          if (block.type === 'text' && block.text) {
-            try {
-              const task = JSON.parse(block.text);
-              if (typeof task.question === 'string') {
-                messages.push({ role: 'assistant', text: task.question });
-                if (
-                  event.id > (latestUserSeq ?? 0) &&
-                  task.question === binding.guided?.pending?.question
-                )
-                  currentQuestionShown = true;
-              }
-            } catch {
-              /* Only the structured review receipt is a student-facing question. */
-            }
-          }
-        }
+      const question = reviewQuestion(event);
+      if (question !== null) {
+        messages.push({ role: 'assistant', text: question });
+        if (event.id > (latestUserSeq ?? 0) && question === binding.guided?.pending?.question)
+          currentQuestionShown = true;
       }
       if (event.type === 'user_message' && typeof data.text === 'string') {
         messages.push({ role: 'user', text: data.text });

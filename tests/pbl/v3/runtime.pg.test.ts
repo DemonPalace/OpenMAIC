@@ -1071,6 +1071,16 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
       expect((await agents.readEventsAfter(queued.sessionId, 0, 1000)).some(isEmptyStop)).toBe(
         true,
       );
+      const transcript = (await learningReport(principal, studyId)).conversations.flatMap(
+        (c) => c.messages,
+      );
+      expect(transcript.filter((m) => m.text === 'What should greet(name) return?')).toHaveLength(
+        1,
+      );
+      expect(
+        transcript.filter((m) => m.text === 'How does the caller use that value?'),
+      ).toHaveLength(1);
+      expect(transcript.some((m) => m.role === 'user' && m.text === reply)).toBe(true);
       studyId = original;
     },
     30000,
@@ -1128,6 +1138,11 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
         'Explain the saved review.',
       );
       expect((await learningView(principal, study.id)).actions).not.toContain('next');
+      expect(
+        (await learningReport(principal, study.id)).conversations
+          .flatMap((c) => c.messages)
+          .filter((m) => m.text === 'Explain the saved review.'),
+      ).toHaveLength(1);
       await study.send('chat');
       const next = await agents.claimNextSession(handle.workerId, process.pid, {
         sessionId: queued.sessionId,
