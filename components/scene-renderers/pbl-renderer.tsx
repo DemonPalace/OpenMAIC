@@ -15,6 +15,7 @@ import { PBLV2Hero } from './pbl/v2/hero';
 import { PBLV2Workspace } from './pbl/v2/workspace';
 import { PBLV2Completion } from './pbl/v2/completion';
 import { rectsEqual, type LayoutRect } from './pbl/v2/host-rect';
+import { PBLV3Workspace } from './pbl/v3/workspace';
 import { useI18n } from '@/lib/hooks/use-i18n';
 
 const IMMERSIVE_LAUNCH_DURATION_SECONDS = 0.45;
@@ -48,6 +49,8 @@ export function PBLRenderer({ content, mode: _mode, sceneId }: PBLRendererProps)
     }
     return null;
   }, [content]);
+
+  if (content.projectV3) return <PBLV3Workspace key={sceneId} sceneId={sceneId} />;
 
   if (resolvedProjectV2) {
     return (

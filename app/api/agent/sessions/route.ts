@@ -13,6 +13,7 @@ import { apiError } from '@/lib/server/api-response';
 import { MAX_SESSION_TEXT_LENGTH } from '@/lib/server/agent-runtime/limits';
 import { findSkill, inferSkillIdFromPrompt, listSkills } from '@/lib/server/agent-runtime/skills';
 import { getAgentSessionStore } from '@/lib/server/agent-runtime/store';
+import { isPBLRoleSession } from '@/lib/pbl/v3/session-kind';
 import { scheduleConversationTitle } from '@/lib/server/agent-runtime/conversation-title-task';
 import {
   bindOwnerMaterialsToSession,
@@ -222,6 +223,9 @@ export async function GET(req: NextRequest) {
   return withRequestOwner(req, async ({ ownerId }, responseHeaders) => {
     const store = await getAgentSessionStore();
     const sessions = await store.listSessionsByOwner(ownerId);
-    return NextResponse.json(sessions, { headers: responseHeaders });
+    return NextResponse.json(
+      sessions.filter((session) => !isPBLRoleSession(session.id)),
+      { headers: responseHeaders },
+    );
   });
 }

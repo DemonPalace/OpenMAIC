@@ -2517,5 +2517,52 @@
       "code": "Code",
       "desktop": "Desktop"
     }
+  },
+  "pblV3": {
+    "title": "Programming projects · Preview",
+    "refresh": "Refresh progress",
+    "cancel": "Cancel response",
+    "retry": "Retry the same request",
+    "loading": "Loading learning progress…",
+    "environmentUnavailable": "Môi trường chưa sẵn sàng. Hãy chuẩn bị lại để kiểm tra trạng thái và khôi phục điểm lưu gần nhất nếu đã hết hạn. Không thể khôi phục thay đổi chưa lưu.",
+    "restoredCheckpoint": "Đã khôi phục từ điểm lưu gần nhất, không gồm các thay đổi sau đó.",
+    "restartedWorkspace": "Không có điểm lưu. Đã tạo lại không gian làm việc với các tệp ban đầu.",
+    "restoredProgress": "Tiến độ đã quay về bước đầu tiên bị ảnh hưởng. Hãy xem xét và kiểm thử lại các tệp đã khôi phục.",
+    "environmentNotice": "Prepare a private execution environment for this project. Your teaching assistants will be able to read and edit project files. This uses the configured sandbox service.",
+    "prepare": "Prepare project environment",
+    "completed": "Project completed. Your learning progress is saved.",
+    "learning": "Learning conversation",
+    "thinking": "The teaching assistant is working…",
+    "message": "Your message",
+    "send": "Send",
+    "submitQuiz": "Submit answers",
+    "quizPassed": "Đã vượt qua bài kiểm tra: đúng {{score}}/{{total}} câu. Bạn có thể tiếp tục.",
+    "quizRetry": "Đúng {{score}}/{{total}} câu. Hãy xem lại câu trả lời và thử lại.",
+    "next": "Continue",
+    "files": "Project files",
+    "editor": "File contents",
+    "reloadFile": "Reload file",
+    "saveFile": "Save file",
+    "checkpoint": "Save checkpoint",
+    "runTests": "Run tests",
+    "collect": "Collect test result",
+    "saveNotice": "File edits update the running environment. Save a checkpoint to retain files after the environment is released.",
+    "sampleNotice": "Open a prepared Python project in the classroom. This Preview uses installed projects; project generation is not enabled.",
+    "openSample": "Open Python sample",
+    "checks": "Checks",
+    "roles": {
+      "mentor": "Mentor",
+      "discussion": "Discussion",
+      "planner": "Planner",
+      "coder": "Coder"
+    },
+    "retryResponse": "Retry response",
+    "run": {
+      "authentication": "The teaching model could not authenticate. Check the model configuration before retrying.",
+      "timeout": "The teaching response timed out. You can retry this turn.",
+      "unavailable": "The teaching response could not finish. Please retry shortly.",
+      "cancelled": "This teaching turn was cancelled. Retry it or send a new message.",
+      "missing": "The teaching session is unavailable. Send a message to restart this review step; your learning progress is preserved."
+    }
   }
 }

@@ -2517,5 +2517,52 @@
       "code": "代码",
       "desktop": "桌面"
     }
+  },
+  "pblV3": {
+    "title": "编程项目 · Preview",
+    "refresh": "刷新进度",
+    "cancel": "取消回答",
+    "retry": "重试原请求",
+    "loading": "正在加载学习进度…",
+    "environmentUnavailable": "环境暂不可用。请重新准备以检查状态；若已到期，将恢复最近的检查点。未保存的修改无法恢复。",
+    "restoredCheckpoint": "已从最近的检查点恢复工作区，不包含该检查点之后的修改。",
+    "restartedWorkspace": "没有可用的检查点，已用项目初始文件重新准备工作区。",
+    "restoredProgress": "学习进度已退回首个受影响的步骤，请重新审阅和测试恢复后的文件。",
+    "environmentNotice": "为此项目准备独立执行环境。教学助手将能够读取和修改项目文件，此操作使用已配置的沙盒服务。",
+    "prepare": "准备项目环境",
+    "completed": "项目已完成，学习进度已保存。",
+    "learning": "学习对话",
+    "thinking": "教学助手正在处理…",
+    "message": "你的消息",
+    "send": "发送",
+    "submitQuiz": "提交答案",
+    "quizPassed": "测验通过：答对 {{score}}/{{total}} 题，可以继续。",
+    "quizRetry": "答对 {{score}}/{{total}} 题，请检查答案后重新提交。",
+    "next": "继续",
+    "files": "项目文件",
+    "editor": "文件内容",
+    "reloadFile": "重新读取文件",
+    "saveFile": "保存文件",
+    "checkpoint": "保存检查点",
+    "runTests": "运行测试",
+    "collect": "收取测试结果",
+    "saveNotice": "编辑保存到当前执行环境。释放环境前请保存检查点，以便保留文件。",
+    "sampleNotice": "在课堂中打开预置的 Python 项目。此 Preview 使用已安装的项目，尚未开放项目生成功能。",
+    "openSample": "打开 Python 示例",
+    "checks": "检查",
+    "roles": {
+      "mentor": "导师",
+      "discussion": "讨论",
+      "planner": "规划",
+      "coder": "编码"
+    },
+    "retryResponse": "重试本轮回复",
+    "run": {
+      "authentication": "教学模型认证失败，请检查模型配置后重试。",
+      "timeout": "教学回复超时，可以重试本轮回复。",
+      "unavailable": "教学回复未能完成，请稍后重试。",
+      "cancelled": "本轮教学回复已取消。可以重试或发送新的消息。",
+      "missing": "教学会话已失效。发送消息可恢复当前环节，学习进度会保留，当前环节需重新审阅。"
+    }
   }
 }
