@@ -137,6 +137,9 @@ test('installed sample opens in the normal classroom and preserves progress afte
   );
   await page.getByRole('region', { name: 'Learning report' }).locator('summary').click();
   await expect(page.getByText('Saved plan evidence')).toBeVisible();
+  await page
+    .getByRole('region', { name: 'Learning report' })
+    .screenshot({ path: 'test-results/pbl-v3-report.png' });
   expect(calls.length).toBe(beforeReport);
   await page.getByRole('button', { name: 'Return to learning' }).click();
   await page.getByRole('button', { name: 'Prepare project environment' }).click();

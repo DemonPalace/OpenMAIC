@@ -58,3 +58,11 @@ export function evaluationPassed(spec: ProjectEvaluation, id: string, output: st
     return false;
   }
 }
+
+/** Keep machine receipts and parent-runner diagnostics out of student-facing feedback. */
+export function evaluationFeedback(stdout: string, stderr = '') {
+  const lines = stdout.split('\n').filter((line) => !line.startsWith('PBL_RESULT:'));
+  if (stderr.trim())
+    lines.push('The evaluation runner reported an error. Check the project environment and rerun.');
+  return lines.join('\n').trim().slice(0, 8000);
+}

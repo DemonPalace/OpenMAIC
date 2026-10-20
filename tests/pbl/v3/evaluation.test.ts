@@ -6,7 +6,11 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 vi.mock('server-only', () => ({}));
 import { installedProject } from '@/lib/server/pbl-v3/catalog';
-import { evaluationCommand, evaluationPassed } from '@/lib/server/pbl-v3/evaluation';
+import {
+  evaluationCommand,
+  evaluationPassed,
+  evaluationFeedback,
+} from '@/lib/server/pbl-v3/evaluation';
 const spec = installedProject({ id: 'greeting-python', version: '1.0.0' }).evaluations.greeting!;
 describe('trusted evaluation driver', () => {
   it.each([
@@ -38,4 +42,15 @@ describe('trusted evaluation driver', () => {
     expect(evaluationPassed(spec, 'id', line)).toBe(true);
     expect(evaluationPassed(spec, 'id', line + '\n' + line)).toBe(false);
   });
+});
+
+it('shows learning feedback without exposing the machine receipt or runner diagnostics', () => {
+  const feedback = evaluationFeedback(
+    '0 / 2 checks passed\nPBL_RESULT:id:{"checks":[]}\n',
+    'private parent command',
+  );
+  expect(feedback).toContain('0 / 2 checks passed');
+  expect(feedback).toContain('reported an error');
+  expect(feedback).not.toContain('PBL_RESULT');
+  expect(feedback).not.toContain('private parent command');
 });

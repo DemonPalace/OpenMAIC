@@ -198,6 +198,10 @@ historical report entries should retain their original versions. Read the report
 while the sandbox is unavailable and return to optional exploration without making
 it mandatory.
 
+The report below is from the local classroom browser fixture, with saved evidence supplied by the test API.
+
+![Learning report in the classroom](screenshots/report.png)
+
 ### Remaining delivery boundary
 
 Live-provider/model acceptance, the private full Java curriculum and its operational

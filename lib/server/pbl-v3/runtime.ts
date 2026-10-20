@@ -25,7 +25,12 @@ import type { EngineTransition } from '@/lib/pbl/v3/domain/orchestration/events'
 import { assertProjectSource, projectFiles } from './workspace-files';
 import { assertIncrementalPlan } from './plan';
 import { startBuild, collectBuild } from './compilation';
-import { evaluationCommand, evaluationFor, evaluationPassed } from './evaluation';
+import {
+  evaluationCommand,
+  evaluationFor,
+  evaluationPassed,
+  evaluationFeedback,
+} from './evaluation';
 import { installedProject } from './catalog';
 import { LearningStore, type Study, type RoleBinding } from './store';
 import {
@@ -550,7 +555,7 @@ export async function commandStudy(
             codeArtifactId: collected.code?.id,
             startedAt: evaluation.startedAt,
             completedAt: new Date().toISOString(),
-            publicFeedback: (observed.stdout + '\n' + observed.stderr).slice(0, 8000),
+            publicFeedback: evaluationFeedback(observed.stdout, observed.stderr),
             failureKind: observed.state === 'exited' ? 'assertion' : 'infrastructure',
           },
           { remediationId: randomUUID() },
@@ -738,8 +743,11 @@ export async function learningView(principal: OwnerPrincipal, id: string): Promi
         evaluation = {
           id: observed.id,
           state: observed.state,
-          stdout: observed.stdout.slice(0, 8000),
-          stderr: observed.stderr.slice(0, 8000),
+          stdout:
+            row.evaluation.purpose === 'compile'
+              ? observed.stdout.slice(0, 8000)
+              : evaluationFeedback(observed.stdout, observed.stderr),
+          stderr: row.evaluation.purpose === 'compile' ? observed.stderr.slice(0, 8000) : '',
         };
     } catch {
       evaluation = { id: row.evaluation.id, state: 'unavailable', stdout: '', stderr: '' };
