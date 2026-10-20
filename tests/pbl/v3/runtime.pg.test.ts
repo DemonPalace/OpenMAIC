@@ -17,6 +17,7 @@ const mocked = vi.hoisted(() => ({
   missing: new Set<string>(),
   failInspect: false,
   failImport: false,
+  loseWriteAck: false,
   loseCreateAck: false,
   hideDiscovery: false,
   creates: [] as string[],
@@ -117,6 +118,7 @@ vi.mock('@/lib/server/sandbox/providers/e2b-compatible', () => ({
     }
     async writeText(id: string, _operation: string, path: string, text: string) {
       await writeFile(join(mocked.root, id, basename(path)), text);
+      if (mocked.loseWriteAck) throw new Error('Write acknowledgement lost');
     }
     async listWorkspace(id: string) {
       return (await readdir(join(mocked.root, id)))
@@ -188,6 +190,8 @@ import { runSession, startAgentRunner } from '@/lib/server/agent-runtime/runner'
 import { ensureOwnerMergeSchema } from '@/lib/persistence/owner-merges';
 import { ensureSandboxEnvironmentSchema } from '@/lib/persistence/sandbox-environments';
 import { installedProject } from '@/lib/server/pbl-v3/catalog';
+import * as catalog from '@/lib/server/pbl-v3/catalog';
+import { SandboxError } from '@/lib/sandbox/errors';
 import { LearningStore } from '@/lib/server/pbl-v3/store';
 import { commandStudy, learningView, digest } from '@/lib/server/pbl-v3/runtime';
 import { teachingRunnerConfig } from '@/lib/server/pbl-v3/runner-tools';
@@ -293,6 +297,15 @@ async function guided(role: 'teaching' | 'plan' | 'code') {
             expectedHash: digest(text),
           });
         }
+        if (index === 0 && role !== 'teaching') {
+          const before = await store.get(studyId, principal.ownerId);
+          const path = role === 'plan' ? 'PLAN.md' : 'greeting.py';
+          const text = await (
+            await SandboxService.forOwner(principal)
+          ).readText(before.environment_id!, path);
+          await invoke(config, 'write_file', { path, text, expectedHash: digest(text) });
+          expect((await store.get(studyId, principal.ownerId)).revision).toBe(before.revision);
+        }
         await invoke(config, 'request_skill_review', {
           question: 'Explain and check the current part.',
         });
@@ -320,6 +333,22 @@ async function guided(role: 'teaching' | 'plan' | 'code') {
   await runTools('I checked the current part and confirm it.', async (config) => {
     await invoke(config, 'complete_stage', { studentFeedback: 'I checked the current part' });
   });
+  if (role !== 'teaching') {
+    const row = await store.get(studyId, principal.ownerId);
+    const path = role === 'plan' ? 'PLAN.md' : 'greeting.py';
+    const service = await SandboxService.forOwner(principal);
+    const text = await service.readText(row.environment_id!, path);
+    await command('save', { path, text, expectedHash: digest(text) });
+    const saved = await store.get(studyId, principal.ownerId);
+    expect(saved.state.collected).toEqual(row.state.collected);
+    expect((await learningView(principal, studyId)).actions).toContain('next');
+    await expect(command('save', { path, text, expectedHash: digest('outdated') })).rejects.toThrow(
+      'changed',
+    );
+    expect((await store.get(studyId, principal.ownerId)).state.collected).toEqual(
+      row.state.collected,
+    );
+  }
   if (!(await store.get(studyId, principal.ownerId)).state.introCompleted) {
     // Generic Agent APIs must not make an old completion valid for a new student message.
     const binding = (await store.roles(studyId)).find((binding) => binding.role === 'mentor')!;
@@ -476,11 +505,10 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
     const service = await SandboxService.forOwner(principal);
     const environmentId = (await store.get(studyId, principal.ownerId)).environment_id!;
     const code = await service.readText(environmentId, 'greeting.py');
-    await service.compareAndWriteText(
-      environmentId,
-      'greeting.py',
+    // Simulate code changed by an external process, not an authorized generic file API.
+    await writeFile(
+      join(mocked.root, environmentId, 'greeting.py'),
       'def greet(name):\n    return "wrong"\n',
-      digest(code),
     );
     await command('evaluate');
     await command('collect');
@@ -909,25 +937,76 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
       });
     },
   );
-  it('rejects stale file writes without overwriting the new content', async () => {
+  it('protects real PG learning bindings from generic mutations and retains ordinary workspace editing', async () => {
     const row = await store.get(studyId, principal.ownerId),
       service = await SandboxService.forOwner(principal);
-    const first = await service.readText(row.environment_id!, 'greeting.py');
-    await service.compareAndWriteText(
-      row.environment_id!,
-      'greeting.py',
-      'new content',
-      digest(first),
-    );
     await expect(
-      service.compareAndWriteText(
-        row.environment_id!,
-        'greeting.py',
-        'stale overwrite',
-        digest(first),
-      ),
+      service.writeText(row.environment_id!, 'greeting.py', 'bypass'),
+    ).rejects.toMatchObject({ code: 'PBL_WORKSPACE_MANAGED' });
+    await expect(
+      service.startCommand(row.environment_id!, {
+        requestId: randomUUID(),
+        command: 'echo bypass',
+      }),
+    ).rejects.toMatchObject({ code: 'PBL_WORKSPACE_MANAGED' });
+    await expect(
+      service.grantSession(row.environment_id!, 'ordinary-agent', true, true),
+    ).rejects.toMatchObject({ code: 'PBL_WORKSPACE_MANAGED' });
+    await expect(service.create(randomUUID(), `pbl-${row.id}`)).rejects.toMatchObject({
+      code: 'PBL_WORKSPACE_MANAGED',
+    });
+    const ordinary = await service.create(randomUUID(), 'ordinary-project');
+    await service.writeText(ordinary.id, 'main.py', 'first');
+    await service.compareAndWriteText(ordinary.id, 'main.py', 'new content', digest('first'));
+    await expect(
+      service.compareAndWriteText(ordinary.id, 'main.py', 'stale overwrite', digest('first')),
     ).rejects.toThrow('changed');
-    expect(await service.readText(row.environment_id!, 'greeting.py')).toBe('new content');
+    expect(await service.readText(ordinary.id, 'main.py')).toBe('new content');
+  });
+  it('invalidates stored evidence before an ambiguous learner edit without losing the written content', async () => {
+    const study = await freshStudy();
+    const completed = await store.get(studyId, principal.ownerId);
+    const state = structuredClone(completed.state);
+    state.status = 'waiting_for_student';
+    state.position.stageIndex = 3; // code production, with previously reviewed evidence
+    state.milestones[0].status = 'active';
+    state.milestones[0].stageIndex = 3;
+    await pool.query('UPDATE pbl_v3_studies SET state=$2 WHERE id=$1', [
+      study.id,
+      JSON.stringify(state),
+    ]);
+    const row = await store.get(study.id, principal.ownerId);
+    const service = await SandboxService.forOwner(principal);
+    const original = await service.readText(row.environment_id!, 'greeting.py');
+    const edit = (path: string, text: string, expectedHash: string) =>
+      commandStudy(principal, study.id, {
+        id: randomUUID(),
+        revision: row.revision,
+        type: 'save',
+        path,
+        text,
+        expectedHash,
+      });
+    await expect(edit('PLAN.md', 'bypass', digest(''))).rejects.toThrow('read-only');
+    await expect(edit('greeting.py', 'new', digest('stale'))).rejects.toThrow('changed');
+    expect((await store.get(study.id, principal.ownerId)).state.collected).toEqual(state.collected);
+    mocked.loseWriteAck = true;
+    try {
+      await expect(edit('greeting.py', 'new source', digest(original))).rejects.toThrow(
+        'Write acknowledgement lost',
+      );
+    } finally {
+      mocked.loseWriteAck = false;
+    }
+    const after = await store.get(study.id, principal.ownerId);
+    expect(after.state.collected.greeting).toMatchObject({
+      codeReviewCompleted: false,
+      tests: null,
+      quiz: null,
+      recapCompleted: false,
+    });
+    expect(await service.readText(row.environment_id!, 'greeting.py')).toBe('new source');
+    expect((await learningView(principal, study.id)).actions).not.toContain('next');
   });
   it('fences a stale role after progression', async () => {
     const roles = await store.roles(studyId),
@@ -956,9 +1035,9 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
     const original = await store.get(study.id, principal.ownerId);
     const env = original.environment_id!;
     const service = await SandboxService.forOwner(principal);
-    await service.writeText(env, 'PLAN.md', 'Saved plan');
+    await writeFile(join(mocked.root, env, 'PLAN.md'), 'Saved plan');
     await study.send('checkpoint');
-    await service.writeText(env, 'PLAN.md', 'Unsaved changes');
+    await writeFile(join(mocked.root, env, 'PLAN.md'), 'Unsaved changes');
     const queued = (await study.send('chat')) as { sessionId: string };
     const claimed = await agents.claimNextSession('recovery-worker', process.pid, {
       sessionId: queued.sessionId,
@@ -1014,6 +1093,52 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
     ).toBe(0);
     await study.send('prepare');
     expect(mocked.creates.slice(creates)).toEqual([allocated]);
+  });
+  it('surfaces source-policy errors while keeping provider listing failures recoverable', async () => {
+    const study = await freshStudy();
+    const before = await store.get(study.id, principal.ownerId);
+    const creates = mocked.creates.length;
+    const selectedProject = vi.spyOn(catalog, 'installedProject').mockReturnValue({
+      ...project,
+      sourceRoots: ['src'],
+    });
+    const listing = vi
+      .spyOn(SandboxService.prototype, 'listFiles')
+      .mockResolvedValue(
+        Array.from({ length: 257 }, (_, i) => ({ path: `src/${i}.py`, bytes: 0 })),
+      );
+    try {
+      await expect(learningView(principal, study.id)).rejects.toMatchObject({
+        code: 'SANDBOX_INVALID_REQUEST',
+        status: 400,
+        reason: 'PBL_SOURCE_COUNT',
+      });
+      selectedProject.mockReturnValue({ ...project, files: { '../outside.py': '' } });
+      await expect(learningView(principal, study.id)).rejects.toMatchObject({
+        code: 'SANDBOX_INVALID_REQUEST',
+        reason: 'PBL_SOURCE_PATH',
+      });
+      selectedProject.mockReturnValue({ ...project, sourceRoots: ['src'] });
+      // Structured provider failures still preserve progress instead of escaping the view.
+      listing.mockRejectedValueOnce(new SandboxError('SANDBOX_UNAVAILABLE', 503, 'Unavailable'));
+      const unavailable = await learningView(principal, study.id);
+      expect(unavailable.environment).toEqual({ state: 'unknown', ready: false });
+      expect(unavailable.id).toBe(study.id);
+      expect(unavailable.state).toEqual(before.state);
+
+      listing.mockResolvedValue([{ path: 'src/main.py', bytes: 0 }]);
+      const ready = await learningView(principal, study.id);
+      expect(ready.environment).toEqual({ state: 'running', ready: true });
+      expect(ready.files).toEqual(['src/main.py']);
+      expect(mocked.creates.length).toBe(creates);
+      const after = await store.get(study.id, principal.ownerId);
+      expect(after.environment_id).toBe(before.environment_id);
+      expect(after.revision).toBe(before.revision);
+      expect(after.state).toEqual(before.state);
+    } finally {
+      selectedProject.mockRestore();
+      listing.mockRestore();
+    }
   });
   it('keeps uncertain environments readable and never replaces them on a provider error', async () => {
     const study = await freshStudy();

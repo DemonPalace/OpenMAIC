@@ -4,6 +4,8 @@ import { useI18n } from '@/lib/hooks/use-i18n';
 import { useStageStore } from '@/lib/store/stage';
 import type { LearningView } from '@/lib/pbl/v3/types';
 import { MarkdownText } from '../v2/markdown-text';
+import { sandboxErrorMessage } from '@/lib/sandbox/error-message';
+import { SandboxRequestError } from '@/components/sandbox/client';
 
 const headers = { 'content-type': 'application/json', 'x-openmaic-sandbox': '1' };
 export async function pblRequest<T>(url: string, body?: unknown): Promise<T> {
@@ -12,7 +14,12 @@ export async function pblRequest<T>(url: string, body?: unknown): Promise<T> {
     ...(body === undefined ? {} : { method: 'POST', body: JSON.stringify(body) }),
   });
   const data = await response.json();
-  if (!response.ok) throw new Error(data.error?.message ?? 'PBL request failed');
+  if (!response.ok)
+    throw new SandboxRequestError(
+      sandboxErrorMessage(data.error),
+      response.status,
+      data.error?.code,
+    );
   return data as T;
 }
 export function PBLV3Workspace({ sceneId }: { sceneId: string }) {

@@ -2359,6 +2359,14 @@
     }
   },
   "sandbox": {
+    "errors": {
+      "learningManaged": "Cet espace de travail appartient à un projet pédagogique. Utilisez les commandes de cet espace pédagogique.",
+      "sourcePath": "Ce fichier ne fait pas partie des fichiers sources du projet.",
+      "sourceCount": "Les projets pédagogiques acceptent au maximum 256 fichiers sources.",
+      "sourceSize": "Le contenu source du projet ne doit pas dépasser 1 MiB au total.",
+      "commandActive": "Arrêtez les commandes en cours et récupérez leurs résultats avant de lire ou d’enregistrer un instantané de l’espace de travail.",
+      "terminalActive": "Fermez les terminaux avant de lire ou d’enregistrer un instantané de l’espace de travail."
+    },
     "settings": {
       "title": "Sandbox",
       "advanced": "Advanced: connection, desktop and limits",

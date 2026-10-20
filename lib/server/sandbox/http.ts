@@ -75,7 +75,14 @@ export function sandboxPrincipalResponse(
       if (ownerResponse) return ownerResponse;
       if (error instanceof SandboxError) {
         return Response.json(
-          { success: false, error: { code: error.code, message: error.message } },
+          {
+            success: false,
+            error: {
+              code: error.code,
+              message: error.message,
+              ...(error.reason ? { reason: error.reason } : {}),
+            },
+          },
           { status: error.status, headers },
         );
       }

@@ -2359,6 +2359,14 @@
     }
   },
   "sandbox": {
+    "errors": {
+      "learningManaged": "此工作區屬於學習專案，請使用學習工作區內的操作入口。",
+      "sourcePath": "此檔案不在專案原始碼範圍內。",
+      "sourceCount": "學習專案最多支援 256 個原始碼檔案。",
+      "sourceSize": "專案原始碼內容總量不能超過 1 MiB。",
+      "commandActive": "請先停止執行中的命令並取得結果，再讀取或儲存工作區快照。",
+      "terminalActive": "請先關閉終端機，再讀取或儲存工作區快照。"
+    },
     "settings": {
       "title": "沙盒",
       "advanced": "高级设置：连接标识、桌面与运行限制",

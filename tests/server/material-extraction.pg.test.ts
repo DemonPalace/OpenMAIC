@@ -517,16 +517,23 @@ describe.skipIf(!contractUrl)('material extraction at upload on PostgreSQL', () 
   it('times out an extraction at its budget, even when the extractor ignores the signal', async () => {
     const material = await upload('hang.pdf');
     const release = gate();
+    let extractionSignal: AbortSignal | undefined;
     const job = runNextOwnerMaterialExtraction('worker-a', {
-      ...deps(async () => {
+      ...deps(async (_fileName, signal) => {
+        extractionSignal = signal;
         await release.promise;
         return parsed('finished anyway');
       }),
       deadlineMs: 50,
     });
-    await new Promise((resolve) => setTimeout(resolve, 120));
-    release.release();
-    await job;
+    try {
+      // Claiming the job and resolving services happen before its budget starts.
+      // Let the real deadline fire before an uncooperative extractor returns.
+      await expect.poll(() => extractionSignal?.aborted, UNTIL).toBe(true);
+    } finally {
+      release.release();
+      await job;
+    }
     expect((await read(material.id)).extraction).toMatchObject({
       status: 'failed',
       errorCode: 'EXTRACTION_TIMEOUT',

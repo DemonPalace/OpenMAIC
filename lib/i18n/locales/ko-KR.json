@@ -2359,6 +2359,14 @@
     }
   },
   "sandbox": {
+    "errors": {
+      "learningManaged": "이 작업 공간은 학습 프로젝트에 속합니다. 학습 작업 공간의 조작 기능을 사용하세요.",
+      "sourcePath": "이 파일은 프로젝트 소스 파일 범위 밖에 있습니다.",
+      "sourceCount": "학습 프로젝트는 최대 256개의 소스 파일을 지원합니다.",
+      "sourceSize": "프로젝트 소스 내용의 총크기는 1 MiB를 초과할 수 없습니다.",
+      "commandActive": "작업 공간 스냅샷을 읽거나 저장하기 전에 실행 중인 명령을 중지하고 결과를 가져오세요.",
+      "terminalActive": "작업 공간 스냅샷을 읽거나 저장하기 전에 터미널을 닫으세요."
+    },
     "settings": {
       "title": "Sandbox",
       "advanced": "Advanced: connection, desktop and limits",

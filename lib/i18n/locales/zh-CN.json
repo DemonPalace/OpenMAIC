@@ -2359,6 +2359,14 @@
     }
   },
   "sandbox": {
+    "errors": {
+      "learningManaged": "此工作区属于学习项目，请使用学习工作区内的操作入口。",
+      "sourcePath": "此文件不在项目源码范围内。",
+      "sourceCount": "学习项目最多支持 256 个源文件。",
+      "sourceSize": "项目源码内容总量不能超过 1 MiB。",
+      "commandActive": "请先停止运行中的命令并获取结果，再读取或保存工作区快照。",
+      "terminalActive": "请先关闭终端，再读取或保存工作区快照。"
+    },
     "settings": {
       "title": "沙盒",
       "advanced": "高级设置：连接标识、桌面与运行限制",

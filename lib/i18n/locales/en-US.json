@@ -2359,6 +2359,14 @@
     }
   },
   "sandbox": {
+    "errors": {
+      "learningManaged": "This workspace belongs to a learning project. Use the learning workspace controls.",
+      "sourcePath": "This file is outside the project source files.",
+      "sourceCount": "Learning projects support at most 256 source files.",
+      "sourceSize": "Project source content must not exceed 1 MiB.",
+      "commandActive": "Stop running commands and collect their results before reading or saving a workspace snapshot.",
+      "terminalActive": "Close terminals before reading or saving a workspace snapshot."
+    },
     "settings": {
       "title": "Sandbox",
       "advanced": "Advanced: connection, desktop and limits",

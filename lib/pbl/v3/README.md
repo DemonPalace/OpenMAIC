@@ -89,14 +89,97 @@ scenes keep their existing renderer.
 - The workspace rejects stale file-load responses after file selection changes.
   Quiz scores and retry guidance remain visible after refresh.
 
+## Learning workspace contract
+
+The installed classroom sample and teaching role tools use this contract. It adds
+no tables, workers, provider, or configuration switches.
+
+- **One server-side mutation boundary.** `pbl-<study UUID>` is reserved for learning
+  workspaces. Generic sandbox file writes, commands, terminal input/creation,
+  desktop input, delegation, checkpoint mutation, restore, deletion and preview
+  access are rejected with `PBL_WORKSPACE_MANAGED`. Checks use the environment's
+  stored owner/workspace binding. Creation also checks the reserved namespace,
+  preventing allocation before the learning runtime establishes its request ID.
+  Existing preview tickets are checked on use. Ordinary workspace IDs are unchanged.
+- **Narrow internal access.** Only the owner-checked learning command or leased role
+  tool enters a server-only workspace scope, while holding the existing study lock.
+  Scope matches owner, workspace, current/recovery environment IDs and specific
+  operations; it expires when the awaited action ends. Stage, role, feedback and
+  optimistic revision checks still run before mutation. No HTTP parameter creates
+  this scope. Lock order remains study then sandbox; the sandbox layer never takes
+  a study lock. Observations, renewal, command cancellation and terminal closure
+  remain available for diagnosis/cleanup.
+- **Content versions, not save clicks.** Editor saves and role writes validate the
+  observed hash under the same environment lock. Identical text is a no-op for
+  evidence and provider writes. A stale hash is rejected even when the submitted
+  text happens to equal the current file. A real change commits dependent evidence
+  invalidation before provider I/O, so a lost write acknowledgement cannot preserve
+  a stale pass. Learner command receipts may still increment the progress revision;
+  this does not change the content fingerprint. Reload the file after an ambiguous
+  write before submitting another edit.
+- **One source set.** File reads, learner/role edits, review/test fingerprints and
+  recovery use the installed project's source policy. Existing packages keep their
+  closed starter-file set. Optional trusted `sourceRoots` name relative directories
+  without trailing slashes; supported text source files below them participate in
+  evidence, including additions/deletions. Traversal, dependency/build directories,
+  more than 256 files and snapshots above 1 MiB are rejected/excluded as appropriate.
+  This is evidence scope, not a filesystem sandbox or a new file-management UI.
+- **No evidence from a moving workspace.** Before a source snapshot or checkpoint,
+  observe managed commands and terminals. Running/unknown commands and nonclosed
+  terminals block it until explicitly stopped and reconciled. This covers sessions
+  created before these restrictions. It does not detect unmanaged child processes
+  or replace OS isolation. PBL terminal/preview support stays unavailable through
+  generic controls until the dedicated teaching-aware workbench is implemented.
+- **Recovery handoff stays small.** Keep the existing durable allocation ID,
+  checkpoint revision and `progressReset` result. Recovery compares the same source
+  fingerprints and clears stale active-milestone evidence. Cross-milestone recovery
+  and workspace stop/save/restart UI remain follow-up work.
+
+### Development sequence and follow-up PRs
+
+This shared workspace contract is delivered first because both the teaching experience and the workbench need the same permission, source-version and recovery rules. Merging it first gives the two feature PRs a stable shared baseline and avoids duplicating those rules or making one large feature PR depend on the other.
+
+1. Review and merge this PR into `integration/shared-sandbox`.
+2. Branch the two follow-up PRs from the updated integration branch. Both target `integration/shared-sandbox` and can be developed in parallel; neither needs to wait for the other feature PR to finish.
+
+| Follow-up PR | Delivery scope |
+| --- | --- |
+| **Complete learning experience** | Teaching materials/Skills, cross-milestone progression, teaching panels, reports/exploration, and Java/non-Java sample journeys. Includes the #1951 follow-ups for evaluator false passes and artifact validation before ending a review. |
+| **Complete workspace and recovery** | File management, terminal/preview controls, controlled execution, checkpoint/recovery UX, deployment guidance, and multi-learner lock-admission validation. Integrates those controls with the shared teaching and file-version rules. |
+
+3. Combine the branches early and jointly validate edit → run → stop → save → review → test → next milestone → restore. Check the interfaces together as they become usable, rather than leaving integration until both PRs are complete.
+4. If no new dependency is introduced, either follow-up can merge first after review. Update the other to the latest integration branch and rerun the affected checks; final combined acceptance is still required. Any new shared-interface dependency must be made explicit.
+
+The workbench must provide a dedicated teaching-aware shell/preview path and settle existing processes before evidence boundaries. Enabling generic sandbox controls would reopen the bypass. This PR independently validates the existing classroom sample; complete-course and live-provider acceptance remain part of the follow-up delivery.
+
 ## Validation and remaining scope
+
+Automated checks cover generic mutation rejection and ordinary sandbox
+regressions, same-content saves after actual plan/code review, stale hashes,
+ambiguous-write invalidation, role no-op writes, source discovery/limits and
+existing allocation/checkpoint recovery. To inspect it manually on an already
+configured test installation:
+
+1. Open `/pbl-v3` and follow the sample through plan/code review. Save unchanged
+   content before Continue: the approval remains. Edit the content: review is
+   required again. Re-submit a stale observed file hash: expect 409, with no write.
+2. Use the same study environment in the integration sandbox lab. Its generic
+   file save, shell, terminal, delegation and checkpoint mutation must return
+   `PBL_WORKSPACE_MANAGED`; ordinary workspaces still work normally.
+3. Continue through tests, quiz and reflection; refresh and reopen the classroom.
+   Use learning controls for checkpoint save and environment recovery. The latest
+   saved files and the matching teaching evidence must remain consistent.
+
+These manual steps use real configured services and are distinct from the local
+automated tests below; running local tests does not establish live-cloud acceptance.
+
 
 `tests/pbl/v3/runtime.pg.test.ts` uses an isolated PostgreSQL schema, the real
 runner/Pi loop, and real local Python execution through a test provider. It mocks
 model transport and cloud provisioning; it is not live-cloud acceptance.
 
 ```sh
-PG_CONTRACT_URL=postgres://... pnpm exec vitest run tests/pbl/v3/runtime.pg.test.ts
+PG_CONTRACT_URL=postgres://... pnpm exec vitest run tests/pbl/v3 tests/sandbox
 pnpm exec playwright test e2e/tests/pbl-v3-workspace.spec.ts
 ```
 
@@ -121,11 +204,8 @@ deployment, SSH adapter and project generation are not delivered by this slice.
 
 ### Explicit follow-ups for the next slice
 
-- Skip workspace invalidation on identical-content saves.
 - Exercise multi-learner concurrency before wider trials; the current learning
   lock admission is per process and derives its cap from the PG pool size.
-- Decide and enforce how generic sandbox APIs may modify a PBL workspace. They
-  currently enforce owner isolation, not all teaching-stage editing rules.
 - Harden evaluator trust: this sample's learner-owned Python module can exit with
   code 0 during import. Its result is learning feedback, not an integrity-protected
   assessment.

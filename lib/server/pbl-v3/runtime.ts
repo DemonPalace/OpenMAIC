@@ -21,8 +21,14 @@ import {
 import * as transitions from '@/lib/pbl/v3/domain/orchestration/transition';
 import { judgeQuiz } from '@/lib/pbl/v3/domain/orchestration/quiz';
 import type { EngineTransition } from '@/lib/pbl/v3/domain/orchestration/events';
+import { assertProjectSource, projectFiles } from './workspace-files';
 import { installedProject } from './catalog';
 import { LearningStore, type Study, type RoleBinding } from './store';
+import {
+  learningWorkspaceId,
+  withLearningWorkspaceAccess,
+  type WorkspaceMutation,
+} from '@/lib/server/sandbox/managed-workspace';
 import { touchEnvironment, assertEnvironmentReady, recoveredProgress } from './environment';
 
 export function digest(value: string): string {
@@ -65,8 +71,17 @@ export function requireEnvironment(row: Study): string {
 }
 export async function readFiles(service: SandboxService, row: Study, project = projectFor(row)) {
   const result: Record<string, string> = {};
-  for (const path of Object.keys(project.files))
-    result[path] = await service.readText(requireEnvironment(row), path);
+  const environmentId = requireEnvironment(row);
+  // A process can modify files without using our file API. Refuse evidence until managed writers stop.
+  await service.assertWorkspaceIdle(environmentId);
+  let bytes = 0;
+  for (const path of await projectFiles(service, environmentId, project)) {
+    const text = await service.readText(environmentId, path);
+    bytes += Buffer.byteLength(text);
+    if (bytes > 1_048_576)
+      throw sandboxInvalid('Project source snapshots are limited to 1 MiB.', 'PBL_SOURCE_SIZE');
+    result[path] = text;
+  }
   return result;
 }
 export function filesFingerprint(files: Record<string, string>) {
@@ -83,6 +98,7 @@ export function invalidateWorkspace(row: Study, changedPath?: string): EngineTra
     if (!changedPath || changedPath === 'PLAN.md') collected.planReviewCompleted = false;
     collected.codeReviewCompleted = false;
     collected.tests = null;
+    collected.quiz = null;
     collected.recapCompleted = false;
   }
   return { state, events: [] };
@@ -197,15 +213,25 @@ export async function commandStudy(
   validateCommand(command);
   const store = await LearningStore.open();
   // Check ownership before admitting a lock, including read/retry paths.
-  await store.get(id, principal.ownerId);
+  let row = await store.get(id, principal.ownerId);
   if (command.type === 'cancel') {
     // Control traffic must not wait behind the remote tool it is trying to stop.
     const agents = await getAgentSessionStore();
     for (const role of await store.roles(id)) await agents.requestCancel(role.session_id);
     return { cancelRequested: true };
   }
-  return store.exclusive(id, async () => {
-    let row = await store.get(id, principal.ownerId);
+  const operations: WorkspaceMutation[] =
+    command.type === 'prepare'
+      ? ['create', 'restore', 'write']
+      : command.type === 'save'
+        ? ['write']
+        : command.type === 'evaluate'
+          ? ['command']
+          : command.type === 'checkpoint' || command.type === 'next'
+            ? ['checkpoint']
+            : [];
+  const execute = async () => {
+    row = await store.get(id, principal.ownerId);
     const project = projectFor(row),
       definition = project.definition;
     const hash = digest(JSON.stringify(command));
@@ -317,7 +343,10 @@ export async function commandStudy(
             store.commit(db, row, { state: row.state, events: [] }),
           );
         }
-        let env = await service.create(row.environment_recovery!.requestId, `pbl-${row.id}`);
+        let env = await service.create(
+          row.environment_recovery!.requestId,
+          learningWorkspaceId(row.id),
+        );
         env = await service.reconcile(env.id);
         if (env.state === 'destroyed') {
           row.environment_recovery = { requestId: randomUUID() };
@@ -360,29 +389,24 @@ export async function commandStudy(
       }
     } else if (command.type === 'save') {
       check('edit');
-      if (
-        !command.path ||
-        !Object.hasOwn(project.files, command.path) ||
-        command.text === undefined ||
-        typeof command.expectedHash !== 'string'
-      )
+      if (!command.path || command.text === undefined || typeof command.expectedHash !== 'string')
         throw sandboxInvalid('A project file, text and observed file hash are required.');
+      assertProjectSource(project, command.path);
       if (stage.kind === 'produce' && stage.writes === 'plan' && command.path !== 'PLAN.md')
         throw sandboxConflict('Only PLAN.md can be edited during planning.');
       if (command.path === 'PLAN.md' && !(stage.kind === 'produce' && stage.writes === 'plan'))
         throw sandboxConflict('The approved plan is read-only during coding.');
-      // Invalidate first: a dropped write acknowledgement cannot leave a stale passing result.
-      row = await store.transaction((db) =>
-        store.commit(db, row, invalidateWorkspace(row, command.path)),
+      await service.compareAndWriteText(
+        requireEnvironment(row),
+        command.path,
+        command.text,
+        command.expectedHash,
+        async () => {
+          row = await store.transaction((db) =>
+            store.commit(db, row, invalidateWorkspace(row, command.path)),
+          );
+        },
       );
-      const current = await service.readText(requireEnvironment(row), command.path);
-      if (current !== command.text)
-        await service.compareAndWriteText(
-          requireEnvironment(row),
-          command.path,
-          command.text,
-          command.expectedHash,
-        );
       transition = { state: row.state, events: [] };
     } else if (command.type === 'checkpoint') {
       const checkpoint = await service.checkpoint(requireEnvironment(row));
@@ -529,7 +553,18 @@ export async function commandStudy(
       await persist(db);
       return result;
     });
-  });
+  };
+  return store.exclusive(id, () =>
+    withLearningWorkspaceAccess(
+      {
+        ownerId: principal.ownerId,
+        workspaceId: learningWorkspaceId(id),
+        environmentIds: () => [row.environment_id, row.environment_recovery?.requestId],
+        operations,
+      },
+      execute,
+    ),
+  );
 }
 
 export async function learningView(principal: OwnerPrincipal, id: string): Promise<LearningView> {
@@ -622,6 +657,7 @@ export async function learningView(principal: OwnerPrincipal, id: string): Promi
     messages.push({ role: 'assistant', text: pendingReview.question });
   let environment: LearningView['environment'] = null;
   let environmentService: SandboxService | undefined;
+  let files = Object.keys(project.files);
   if (row.environment_id) {
     try {
       environmentService = await SandboxService.forOwner(principal);
@@ -629,7 +665,14 @@ export async function learningView(principal: OwnerPrincipal, id: string): Promi
       environment = observed
         ? { state: observed.state, ready: observed.state === 'running' && observed.workspaceReady }
         : null;
-    } catch {
+      if (environment?.ready)
+        files = await projectFiles(environmentService, row.environment_id, project);
+    } catch (error) {
+      if (
+        error instanceof SandboxError &&
+        (error.reason === 'PBL_SOURCE_COUNT' || error.reason === 'PBL_SOURCE_PATH')
+      )
+        throw error;
       // Provider uncertainty must not hide durable teaching progress or cause another allocation.
       environment = { state: 'unknown', ready: false };
     }
@@ -681,7 +724,7 @@ export async function learningView(principal: OwnerPrincipal, id: string): Promi
       row.evaluation || (guided && !approvalCurrent)
         ? actions.filter((action) => action !== 'next')
         : actions,
-    files: Object.keys(project.files),
+    files,
     busy: await busy(store, row),
     messages: messages.slice(-60),
     roleRun,

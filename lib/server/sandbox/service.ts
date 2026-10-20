@@ -12,6 +12,7 @@ import {
   type DesktopAction,
 } from '@/lib/sandbox/types';
 
+import { assertWorkspaceMutation, type WorkspaceMutation } from './managed-workspace';
 import { issuePreviewGrant, previewConfig, verifyPreviewGrant } from './preview';
 import { WORKSPACE_ROOT, workspacePath } from './workspace-archive';
 import { checkpointPolicy } from './checkpoint-policy';
@@ -83,6 +84,7 @@ export class SandboxService {
       typeof commands !== 'boolean'
     )
       throw sandboxInvalid('Expected a session ID and explicit write/command grants.');
+    await this.mutation(id, 'delegate');
     const { getAgentSessionStore } = await import('@/lib/server/agent-runtime/store');
     const session = await (await getAgentSessionStore()).getSession(sessionId);
     if (!session || session.ownerId !== this.ownerId)
@@ -132,6 +134,12 @@ export class SandboxService {
     return row;
   }
 
+  private async mutation(id: string, operation: WorkspaceMutation) {
+    const row = await this.binding(id);
+    assertWorkspaceMutation(this.ownerId, row.workspace_id, row.id, operation);
+    return row;
+  }
+
   async list() {
     return (await this.store.list(this.ownerId)).map(publicEnvironment);
   }
@@ -148,6 +156,7 @@ export class SandboxService {
       (revision as number) < 1
     )
       throw sandboxInvalid('A workspace and checkpoint revision are required.');
+    assertWorkspaceMutation(this.ownerId, workspaceId, null, 'checkpoint');
     await this.store.deleteCheckpoint(this.ownerId, workspaceId, revision as number);
     return { deleted: true };
   }
@@ -209,6 +218,7 @@ export class SandboxService {
         'workspaceId must be 1-128 letters, numbers, dots, colons, underscores or dashes.',
       );
     }
+    assertWorkspaceMutation(this.ownerId, workspaceId, requestId, 'create');
     const checkpoint = await this.store.checkpoint(this.ownerId, workspaceId);
     if (checkpoint) await this.store.assertCheckpointReadable(this.ownerId, checkpoint);
     const reservation = {
@@ -326,7 +336,7 @@ export class SandboxService {
   }
 
   async destroy(id: string) {
-    await this.binding(id);
+    await this.mutation(id, 'destroy');
     return this.store.exclusive(id, () => this.destroyUnlocked(id));
   }
 
@@ -367,18 +377,28 @@ export class SandboxService {
   }
 
   async writeText(id: string, path: unknown, text: unknown) {
-    await this.binding(id);
+    await this.mutation(id, 'write');
     return this.store.exclusive(id, () => this.writeTextUnlocked(id, path, text));
   }
 
   /** Optimistic file edits share the environment mutation lock with all host writers. */
-  async compareAndWriteText(id: string, path: string, text: string, expectedHash: string) {
-    await this.binding(id);
+  async compareAndWriteText(
+    id: string,
+    path: string,
+    text: string,
+    expectedHash: string,
+    beforeWrite?: () => Promise<void>,
+  ) {
+    await this.mutation(id, 'write');
     return this.store.exclusive(id, async () => {
       const current = await this.readText(id, path);
       if (createHash('sha256').update(current).digest('hex') !== expectedHash)
         throw sandboxConflict('The file changed since it was read. Reload before saving.');
+      if (current === text) return false;
+      // Durable evidence is invalidated under the same lock, before a possibly ambiguous write.
+      await beforeWrite?.();
       await this.writeTextUnlocked(id, path, text);
+      return true;
     });
   }
 
@@ -394,7 +414,7 @@ export class SandboxService {
   }
 
   async startCommand(id: string, body: Record<string, unknown>) {
-    await this.binding(id);
+    await this.mutation(id, 'command');
     return this.store.exclusive(id, () => this.startCommandUnlocked(id, body));
   }
 
@@ -481,6 +501,7 @@ export class SandboxService {
   }
 
   async desktopAction(id: string, body: Record<string, unknown>) {
+    await this.mutation(id, 'desktop');
     let action: DesktopAction;
     if (body.type === 'move' || body.type === 'click') {
       if (
@@ -534,7 +555,7 @@ export class SandboxService {
   }
 
   async createTerminal(id: string, body: Record<string, unknown>) {
-    await this.binding(id);
+    await this.mutation(id, 'terminal');
     return this.store.exclusive(id, () => this.createTerminalUnlocked(id, body));
   }
 
@@ -583,7 +604,7 @@ export class SandboxService {
   }
 
   async updateTerminal(id: string, terminalId: string, body: Record<string, unknown>) {
-    await this.binding(id);
+    await this.mutation(id, 'terminal');
     return this.store.exclusive(id, () => this.updateTerminalUnlocked(id, terminalId, body));
   }
 
@@ -654,23 +675,41 @@ export class SandboxService {
       : null;
   }
 
+  /** Reads/evidence must not race background commands or a terminal started before teaching took ownership. */
+  async assertWorkspaceIdle(id: string) {
+    await this.binding(id);
+    return this.store.exclusive(id, async () =>
+      this.assertWorkspaceIdleUnlocked(await this.running(id)),
+    );
+  }
+
+  private async assertWorkspaceIdleUnlocked(row: SandboxRow) {
+    // A file checkpoint is not a process or database snapshot. Quiesce managed writers first.
+    for (const cmd of await this.store.listCommands(row)) {
+      const result = await this.command(row.id, cmd.id);
+      if (['starting', 'running', 'unknown'].includes(result.state))
+        throw sandboxConflict(
+          'Stop and collect running commands before saving the workspace.',
+          'WORKSPACE_COMMAND_ACTIVE',
+        );
+    }
+    for (const t of await this.store.listTerminals(row)) {
+      const observed = await this.terminal(row.id, t.id);
+      if (observed.state !== 'closed')
+        throw sandboxConflict(
+          'Close terminals before saving the workspace.',
+          'WORKSPACE_TERMINAL_ACTIVE',
+        );
+    }
+  }
+
   async saveWorkspace(id: string, expectedRevision: unknown, release = false) {
     if (!Number.isSafeInteger(expectedRevision) || (expectedRevision as number) < 0)
       throw sandboxInvalid('An expected checkpoint revision is required (0 for the first save).');
-    await this.binding(id);
+    await this.mutation(id, 'checkpoint');
     return this.store.exclusive(id, async () => {
       const row = await this.running(id);
-      // A file checkpoint is not a process or database snapshot. Quiesce managed writers first.
-      for (const cmd of await this.store.listCommands(row)) {
-        const result = await this.command(id, cmd.id);
-        if (['starting', 'running', 'unknown'].includes(result.state))
-          throw sandboxConflict('Stop and collect running commands before saving the workspace.');
-      }
-      for (const t of await this.store.listTerminals(row)) {
-        const observed = await this.terminal(id, t.id);
-        if (observed.state !== 'closed')
-          throw sandboxConflict('Close terminals before saving the workspace.');
-      }
+      await this.assertWorkspaceIdleUnlocked(row);
       const checkpoint = await this.store.saveCheckpoint(
         row,
         expectedRevision as number,
@@ -683,7 +722,7 @@ export class SandboxService {
   }
 
   async restoreWorkspace(id: string) {
-    await this.binding(id);
+    await this.mutation(id, 'restore');
     return this.store.exclusive(id, async () => {
       const row = await this.binding(id);
       if (row.state !== 'running' || !row.resource_id)
@@ -715,6 +754,7 @@ export class SandboxService {
   }
 
   async preview(id: string, port: unknown) {
+    await this.mutation(id, 'preview');
     if (
       !Number.isInteger(port) ||
       (port as number) < 1024 ||
@@ -744,6 +784,7 @@ export class SandboxService {
     const config = await resolvedSandboxConfig();
     const store = await SandboxStore.open();
     const row = await store.get(grant.ownerId, grant.environmentId);
+    assertWorkspaceMutation(grant.ownerId, row.workspace_id, row.id, 'preview');
     if (
       row.state !== 'running' ||
       !row.workspace_ready ||

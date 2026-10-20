@@ -1,4 +1,4 @@
-import { getClientTranslation } from '@/lib/i18n';
+import { sandboxErrorMessage } from '@/lib/sandbox/error-message';
 export class SandboxRequestError extends Error {
   constructor(
     message: string,
@@ -22,7 +22,7 @@ export async function sandboxRequest<T>(url: string, method = 'GET', body?: unkn
   const json = await response.json();
   if (!response.ok || !json.success)
     throw new SandboxRequestError(
-      json.error?.message ?? getClientTranslation('sandbox.requestFailed'),
+      sandboxErrorMessage(json.error),
       response.status,
       json.error?.code,
     );
