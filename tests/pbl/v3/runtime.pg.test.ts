@@ -507,6 +507,13 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
     const tested = await store.get(studyId, principal.ownerId);
     expect(tested.state.collected.greeting!.tests?.status).toBe('passed');
     expect(tested.state.collected.greeting!.tests?.publicFeedback).toContain('2 checks passed');
+    // A previous pass must not authorize progression while a newer run awaits collection.
+    await command('evaluate');
+    expect((await learningView(principal, studyId)).actions).not.toContain('next');
+    await expect(command('next')).rejects.toThrow('pending test result');
+    expect((await store.get(studyId, principal.ownerId)).state.position.stageIndex).toBe(4);
+    await command('collect');
+    expect((await learningView(principal, studyId)).actions).toContain('next');
     await command('next');
     await command('quiz', { answers: [1] });
     const wrongQuiz = await learningView(principal, studyId);

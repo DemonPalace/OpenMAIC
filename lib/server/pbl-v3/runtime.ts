@@ -484,6 +484,8 @@ export async function commandStudy(
         row.evaluation = null;
       }
     } else if (command.type === 'next') {
+      if (row.evaluation)
+        throw sandboxConflict('Collect the pending test result before continuing.');
       check('next');
       const role = roleFor(row);
       if (role && stage.kind !== 'dialogue') {
@@ -675,7 +677,10 @@ export async function learningView(principal: OwnerPrincipal, id: string): Promi
     state: row.state,
     stage,
     role,
-    actions: guided && !approvalCurrent ? actions.filter((action) => action !== 'next') : actions,
+    actions:
+      row.evaluation || (guided && !approvalCurrent)
+        ? actions.filter((action) => action !== 'next')
+        : actions,
     files: Object.keys(project.files),
     busy: await busy(store, row),
     messages: messages.slice(-60),
