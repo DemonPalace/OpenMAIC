@@ -11,13 +11,17 @@
  *   and settles normally (the session does NOT die);
  * - a cancel request that lands while a tool is hung settles the session as
  *   `cancelled` promptly — without waiting for the tool to finish — and the
- *   abort signal is delivered to the tool's in-flight work.
+ *   abort signal is delivered to the tool's in-flight work;
+ * - the teaching turn deadline persists a timeout even when Pi exits without
+ *   an error, while cancellation, shutdown, and lease-loss retain their meaning.
  */
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { InMemorySessionRepo, Session } from '@earendil-works/pi-agent-core';
 import type { ClaimedAgentSession } from '@openmaic/storage';
 import { Type } from 'typebox';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('server-only', () => ({}));
 
 const mocks = vi.hoisted(() => ({
   randomUUID: vi.fn(() => 'runner-test-uuid'),
@@ -27,6 +31,7 @@ const mocks = vi.hoisted(() => ({
   resolveAgentDriverModel: vi.fn(),
   streamLLM: vi.fn(),
   assembleRunnerTools: vi.fn(),
+  teachingRunnerConfig: vi.fn(),
   buildRunnerCoursePrompt: vi.fn(() => 'system prompt'),
   getOwnerScopedDocumentStore: vi.fn(async () => ({})),
 }));
@@ -76,6 +81,11 @@ vi.mock('@/lib/server/agent-runtime/runner-contract', () => ({
   assembleRunnerTools: mocks.assembleRunnerTools,
   buildRunnerCoursePrompt: mocks.buildRunnerCoursePrompt,
 }));
+
+vi.mock('@/lib/server/pbl-v3/runner-tools', async (importActual) => {
+  const actual = await importActual<typeof import('@/lib/server/pbl-v3/runner-tools')>();
+  return { ...actual, teachingRunnerConfig: mocks.teachingRunnerConfig };
+});
 
 vi.mock('@/lib/server/agent-runtime/owner-scoped-documents', () => ({
   getBackgroundDocumentStore: mocks.getOwnerScopedDocumentStore,
@@ -171,6 +181,7 @@ function makeStore(meta: ClaimedAgentSession, options: { cancelRequested?: () =>
       },
     ),
     clearCancel: vi.fn(async () => undefined),
+    pruneMessageUpdates: vi.fn(async () => 0),
     finishSession: vi.fn(
       async (_id: string, _workerId: string, _patch: { status: string }) => true,
     ),
@@ -185,8 +196,6 @@ function makeStore(meta: ClaimedAgentSession, options: { cancelRequested?: () =>
     requeueSession: vi.fn(async () => false),
   };
 }
-
-type FakeStore = ReturnType<typeof makeStore>;
 
 async function makeEntryTree(): Promise<Session> {
   const repo = new InMemorySessionRepo();
@@ -341,4 +350,133 @@ describe('runner: cancel of a hung tool', () => {
     // not on the tool.
     expect(store.finishSession.mock.calls[0]?.[2]).toMatchObject({ status: 'cancelled' });
   });
+});
+
+describe('runner: teaching turn deadline', () => {
+  it.each(['timeout', 'timeout-at-review', 'cancel', 'shutdown', 'lease-loss'] as const)(
+    'settles a gracefully aborted teaching tool with the correct %s outcome',
+    async (outcome) => {
+      vi.useFakeTimers();
+      setToolTimeout('300000');
+      const meta = makeMeta({ id: 'pbl-role-timeout' });
+      const session = await makeEntryTree();
+      let cancelRequested = false;
+      const store = makeStore(meta, { cancelRequested: () => cancelRequested });
+      const captured: AbortSignal[] = [];
+      let started!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      mocks.openEntryStorage.mockResolvedValue(session.getStorage());
+      mocks.getAgentSessionStore.mockResolvedValue(store);
+      mocks.teachingRunnerConfig.mockResolvedValue({
+        tools: [makeHungTool(captured, started)],
+        systemPrompt: 'Teaching test',
+        allowedToolNames: new Set([TOOL_NAME]),
+        // A review receipt can be committed before the tool finishes. The
+        // real teaching boundary then exits locally without a model error.
+        isTurnComplete: () => outcome === 'timeout-at-review' && captured.length > 0,
+      });
+      useResponses([[toolCallPart(), finish('tool-calls')]]);
+      const ctx = { running: new Map(), shuttingDown: false };
+      const run = runSession(ctx, meta);
+      await gate;
+      if (outcome === 'cancel') cancelRequested = true;
+      if (outcome === 'shutdown') {
+        ctx.shuttingDown = true;
+        ctx.running.get(meta.id)!.abort.abort();
+      }
+      if (outcome === 'lease-loss') store.heartbeat.mockResolvedValue(false);
+      await vi.advanceTimersByTimeAsync(120_000);
+      await run;
+
+      expect(captured[0]?.aborted).toBe(true);
+      expect(mocks.streamLLM).toHaveBeenCalledTimes(1);
+      if (outcome === 'shutdown' || outcome === 'lease-loss') {
+        expect(store.finishSession).not.toHaveBeenCalled();
+        if (outcome === 'shutdown') {
+          expect(store.releaseLease).toHaveBeenCalledWith(meta.id, WORKER_ID);
+          expect(store.appendRunEvent).toHaveBeenCalledWith(
+            meta.id,
+            WORKER_ID,
+            expect.objectContaining({ type: 'session_interrupted' }),
+          );
+        } else {
+          // The old worker must not write or release the new owner's lease.
+          expect(store.releaseLease).not.toHaveBeenCalled();
+        }
+      } else {
+        const timedOut = outcome.startsWith('timeout');
+        const expected = timedOut
+          ? {
+              status: 'failed',
+              error: 'Teaching turn timed out after 120 seconds.',
+              resetAttempt: false,
+            }
+          : { status: 'cancelled', resetAttempt: true, consumeCancelRequestedAt: 123 };
+        expect(store.finishSession).toHaveBeenCalledExactlyOnceWith(
+          meta.id,
+          WORKER_ID,
+          expect.objectContaining(expected),
+        );
+        expect(store.appendRunEvent).toHaveBeenCalledWith(
+          meta.id,
+          WORKER_ID,
+          expect.objectContaining({
+            type: 'session_end',
+            data: expect.objectContaining({
+              status: expected.status,
+              ...(timedOut ? { error: expected.error } : {}),
+            }),
+          }),
+        );
+      }
+      expect(ctx.running.size).toBe(0);
+    },
+  );
+
+  it.each(['rejects', 'resolves'] as const)(
+    'settles as timed out without calling the model when late setup %s',
+    async (settlement) => {
+      vi.useFakeTimers();
+      const meta = makeMeta({ id: 'pbl-role-timeout' });
+      const session = await makeEntryTree();
+      const store = makeStore(meta);
+      let entered!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      mocks.openEntryStorage.mockResolvedValue(session.getStorage());
+      mocks.getAgentSessionStore.mockResolvedValue(store);
+      mocks.teachingRunnerConfig.mockImplementation(
+        ({ signal }: { signal: AbortSignal }) =>
+          new Promise((resolve, reject) => {
+            signal.addEventListener('abort', () => {
+              if (settlement === 'rejects') reject(new Error('Operation aborted'));
+              else
+                resolve({
+                  tools: [],
+                  systemPrompt: 'Teaching test',
+                  allowedToolNames: new Set(),
+                  isTurnComplete: () => false,
+                });
+            });
+            entered();
+          }),
+      );
+      const run = runSession({ running: new Map(), shuttingDown: false }, meta);
+      await gate;
+      await vi.advanceTimersByTimeAsync(120_000);
+      await run;
+      expect(store.finishSession).toHaveBeenCalledExactlyOnceWith(
+        meta.id,
+        WORKER_ID,
+        expect.objectContaining({
+          status: 'failed',
+          error: 'Teaching turn timed out after 120 seconds.',
+        }),
+      );
+      expect(mocks.streamLLM).not.toHaveBeenCalled();
+    },
+  );
 });

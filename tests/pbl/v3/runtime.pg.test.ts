@@ -546,7 +546,10 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
       await agents.softDeleteSession(queued.sessionId, principal.ownerId);
     }
   });
-  it('projects safe failure status and retries the same turn without inventing student feedback', async () => {
+  it.each([
+    ['401 unauthorized https://provider.invalid/?key=SECRET', 'authentication'],
+    ['Teaching turn timed out after 120 seconds.', 'timeout'],
+  ])('projects %s and retries without inventing student feedback', async (error, failure) => {
     const study = await freshStudy();
     const queued = (await study.send('chat')) as { sessionId: string };
     const meta = await agents.claimNextSession('failure-worker', process.pid, {
@@ -566,10 +569,10 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
     await agents.finishSession(queued.sessionId, 'failure-worker', {
       status: 'failed',
       expectedAttempt: meta!.attempt,
-      error: '401 unauthorized https://provider.invalid/?key=SECRET',
+      error,
     });
     const view = await learningView(principal, study.id);
-    expect(view.roleRun).toEqual({ status: 'failed', failure: 'authentication', canRetry: true });
+    expect(view.roleRun).toEqual({ status: 'failed', failure, canRetry: true });
     expect(JSON.stringify(view)).not.toContain('SECRET');
     expect(view.messages.at(-1)?.text).toBe('Explain the return value.');
     const messages = await agents.listUserMessages(queued.sessionId);

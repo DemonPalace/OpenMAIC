@@ -332,6 +332,8 @@ export function markRunEventEmitted(alreadyEmitted: boolean, type: string): bool
 export const LENGTH_STOP_ERROR =
   'model output hit the max token limit and was truncated; this run did not finish';
 
+const TEACHING_TIMEOUT_ERROR = 'Teaching turn timed out after 120 seconds.';
+
 export function terminalLoopError(
   messages: readonly AgentMessage[],
   errorMessage: string | undefined,
@@ -960,8 +962,15 @@ export async function runSession(ctx: RunContext, meta: ClaimedAgentSession): Pr
   const attempt = meta.attempt;
   const claimSeq = meta.claimSeq;
   const abort = new AbortController();
+  let teachingTimedOut = false;
   const teachingTimeout = meta.id.startsWith('pbl-role-')
-    ? setTimeout(() => abort.abort(), 120_000)
+    ? setTimeout(() => {
+        if (abort.signal.aborted) return;
+        // Aborting Pi can end normally. Keep the deadline outcome independent
+        // of whether the model/tool reports an error.
+        teachingTimedOut = true;
+        abort.abort(new Error(TEACHING_TIMEOUT_ERROR));
+      }, 120_000)
     : undefined;
   ctx.running.set(id, { abort });
 
@@ -1155,6 +1164,7 @@ export async function runSession(ctx: RunContext, meta: ClaimedAgentSession): Pr
       if (settled) await requeueIfUndelivered('over-cap verdict', true);
       return;
     } finally {
+      if (teachingTimeout) clearTimeout(teachingTimeout);
       await flushAll(false);
       ctx.running.delete(id);
     }
@@ -1298,7 +1308,9 @@ export async function runSession(ctx: RunContext, meta: ClaimedAgentSession): Pr
     );
     const idleAttach = meta.existingCourse;
 
+    if (teachingTimedOut) throw new Error(TEACHING_TIMEOUT_ERROR);
     if ((plan.kind === 'already-complete' || teaching?.isTurnComplete()) && pending.length === 0) {
+      if (teachingTimeout) clearTimeout(teachingTimeout);
       emit(LIFECYCLE.sessionEnd, {
         status: 'succeeded',
         note: 'entry history already terminal',
@@ -1767,6 +1779,8 @@ export async function runSession(ctx: RunContext, meta: ClaimedAgentSession): Pr
     messagePoll.unref?.();
 
     try {
+      // Setup may have outlived the deadline before the Agent subscribed.
+      if (teachingTimedOut) throw new Error(TEACHING_TIMEOUT_ERROR);
       if (plannedStart.kind === 'prompt') {
         // A follow-up-driven prompt is already in the event log; here it
         // enters the transcript. Track its exact sequence immediately so the
@@ -1884,7 +1898,10 @@ export async function runSession(ctx: RunContext, meta: ClaimedAgentSession): Pr
       queueInterruptedToolResults();
       await flushAll();
 
-      const loopError = terminalLoopError(agent.state.messages, agent.state.errorMessage);
+      if (teachingTimeout) clearTimeout(teachingTimeout);
+      const loopError = teachingTimedOut
+        ? TEACHING_TIMEOUT_ERROR
+        : terminalLoopError(agent.state.messages, agent.state.errorMessage);
       const shutdown = ctx.shuttingDown && abort.signal.aborted && !cancelled;
       if (shutdown || tripwireViolated || (leaseLost && abort.signal.aborted)) {
         emit(LIFECYCLE.sessionInterrupted, {
@@ -1928,7 +1945,11 @@ export async function runSession(ctx: RunContext, meta: ClaimedAgentSession): Pr
     } catch (error) {
       queueInterruptedToolResults();
       if (isLeaseLostError(error)) markLeaseLost();
-      const message = error instanceof Error ? error.message : String(error);
+      const message = teachingTimedOut
+        ? TEACHING_TIMEOUT_ERROR
+        : error instanceof Error
+          ? error.message
+          : String(error);
       if (ctx.shuttingDown || leaseLost || tripwireViolated) {
         emit(LIFECYCLE.sessionInterrupted, {
           reason: tripwireViolated
@@ -1966,7 +1987,11 @@ export async function runSession(ctx: RunContext, meta: ClaimedAgentSession): Pr
     }
   } catch (error) {
     if (isLeaseLostError(error)) markLeaseLost();
-    const message = error instanceof Error ? error.message : String(error);
+    const message = teachingTimedOut
+      ? TEACHING_TIMEOUT_ERROR
+      : error instanceof Error
+        ? error.message
+        : String(error);
     if (ctx.shuttingDown || leaseLost || tripwireViolated) {
       if (tripwireViolated) {
         emit(LIFECYCLE.sessionInterrupted, {
