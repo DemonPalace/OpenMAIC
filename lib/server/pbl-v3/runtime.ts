@@ -746,7 +746,7 @@ export async function learningView(principal: OwnerPrincipal, id: string): Promi
     }
   }
 
-  const actions =
+  const actions: string[] =
     row.state.status === 'completed'
       ? []
       : [...transitions.allowedStudentActions(project.definition, row.state)];
