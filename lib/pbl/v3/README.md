@@ -152,6 +152,13 @@ contract; its release synchronization and runtime topology are not copied.
 | Report | Owner-scoped durable facts, versions, quiz attempts and bounded conversation excerpts. No model call or live sandbox required. Viewing a report never advances progress. |
 | Optional exploration | Open-ended coding after required milestones, with no forced review/completion gate. Leaving, reading the report and returning keeps the same study. |
 
+Review feedback is bound to durable student messages after the pending question's
+turn in the same stage. The teaching role can assess multiple replies together and
+quote or summarize them in `studentFeedback`; literal substring matching is not an
+authorization check. The role still assesses whether the answer addresses the
+question, while the server enforces fresh replies, artifact versions and stage
+boundaries. Retries and assistant messages do not create student feedback.
+
 The source set, stage locks, writer-idle checks and ordinary sandbox restrictions
 remain the shared contract above. The dedicated workbench separately supplies file
 management, shell, terminal, preview and checkpoint UI. Both feature branches can

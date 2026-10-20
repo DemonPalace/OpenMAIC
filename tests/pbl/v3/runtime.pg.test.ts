@@ -669,6 +669,56 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
       ).rejects.toThrow();
     });
   });
+  it('accepts wrapped and multi-message review feedback from durable student turns', async () => {
+    const original = studyId;
+    studyId = (await freshStudy()).id;
+    const answer = 'It returns a string to the caller; print returns None.';
+    const first = 'The caller receives the return value.';
+    const second = 'Printing only displays the value.';
+    try {
+      await runTools('Please start.', async (config) => {
+        await invoke(config, 'read_next_skill');
+        await invoke(config, 'request_skill_review', { question: 'Compare return and print.' });
+      });
+      await runTools(answer, async (config) => {
+        expect(config.systemPrompt).toContain(answer);
+        await invoke(config, 'read_next_skill', { studentFeedback: `Student reply: "${answer}"` });
+        await invoke(config, 'request_skill_review', {
+          question: 'Explain how the caller uses it.',
+        });
+        await expect(
+          invoke(config, 'read_next_skill', { studentFeedback: answer }),
+        ).rejects.toThrow();
+      });
+      await runTools(first, async (config) => {
+        expect(config.systemPrompt).toContain(first);
+        expect(config.systemPrompt).not.toContain(answer);
+        // A clarification turn does not replace the pending review or discard its first reply.
+        await invoke(config, 'read_next_skill');
+      });
+      await runTools(second, async (config) => {
+        expect(config.systemPrompt).toContain(first);
+        expect(config.systemPrompt).toContain(second);
+        expect(config.systemPrompt).not.toContain(answer);
+        await invoke(config, 'read_next_skill', {
+          studentFeedback:
+            'Across both replies, the learner distinguishes returning from displaying.',
+        });
+        await invoke(config, 'request_skill_review', { question: 'Confirm your understanding.' });
+        await expect(
+          invoke(config, 'complete_stage', { studentFeedback: second }),
+        ).rejects.toThrow();
+      });
+      await runTools('确认', async (config) => {
+        expect(config.systemPrompt).not.toContain(first);
+        expect(config.systemPrompt).not.toContain(second);
+        await invoke(config, 'complete_stage', { studentFeedback: 'Student reply: "确认"' });
+      });
+      expect((await learningView(principal, studyId)).actions).toContain('next');
+    } finally {
+      studyId = original;
+    }
+  });
   it('retries a chat receipt without duplicating a student turn', async () => {
     const before = await store.get(studyId, principal.ownerId);
     const input = {
@@ -1027,7 +1077,7 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
             type: 'tool-call',
             toolCallId: 'next-section',
             toolName: 'read_next_skill',
-            input: { studentFeedback: reply },
+            input: { studentFeedback: `Student reply: "${reply}"` },
           },
           {
             type: 'tool-call',

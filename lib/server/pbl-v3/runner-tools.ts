@@ -65,7 +65,7 @@ export async function teachingRunnerConfig(input: {
   };
   const review = new GuidedSkillReview(protocol, bound.guided ?? undefined);
   const runId = `${bound.stage_key}:${latest?.seq ?? 0}`;
-  review.beginRun(runId, latest?.text ?? '', bound.feedback_seq > 1);
+  review.beginRun(bound.stage_key, userMessages, bound.feedback_seq > 1);
   const exploring = isExplorationStage(stage);
   const guided = (stage.kind === 'produce' && !exploring) || stage.kind === 'mentor_say';
   let turnComplete =
@@ -239,7 +239,7 @@ export async function teachingRunnerConfig(input: {
     tools.push(
       tool(
         'read_next_skill',
-        'Read the next teaching section. To advance, quote the latest student feedback on the previous review task.',
+        'Read the current or next teaching section. Omit studentFeedback to reread; to advance, explain how the actual student responses answer the pending review. Quotes and summaries are allowed.',
         Type.Object({ studentFeedback: Type.Optional(Type.String({ maxLength: 2000 })) }),
         async (current, p) => {
           const reread = !!review.state.activeFile && !p.studentFeedback;
@@ -281,7 +281,7 @@ export async function teachingRunnerConfig(input: {
     tools.push(
       tool(
         'complete_stage',
-        'Signal completion after the final student review. The server validates the current artifact; the student must still click Continue.',
+        'Signal completion after the final student review. In studentFeedback, explain how the actual student responses answer the pending review; quotes and summaries are allowed. The server validates the current artifact; the student must still click Continue.',
         Type.Object({ studentFeedback: Type.String({ minLength: 1, maxLength: 2000 }) }),
         async (current, p) => {
           const hash = await fingerprint(current);
@@ -367,6 +367,14 @@ export async function teachingRunnerConfig(input: {
       seed: {
         ...seed,
         goal: milestone.goal ?? milestone.title,
+        ...(guided && review.state.pending
+          ? {
+              currentReview: {
+                question: review.state.pending.question,
+                studentResponses: review.studentResponses(),
+              },
+            }
+          : {}),
         ...(recapping
           ? {
               recordedEvidence: {
@@ -412,7 +420,7 @@ export async function teachingRunnerConfig(input: {
     '\n' +
     teachingRules +
     (guided
-      ? '\nUse read_next_skill to open one section at a time. After each section use request_skill_review and wait for a NEW student reply. Quote that actual reply to advance. After final feedback, use complete_stage. A completed tool is only a completion signal; the learner separately confirms progression.'
+      ? '\nUse read_next_skill to open one section at a time. After each section use request_skill_review and wait for a NEW student reply. Assess the actual studentResponses bound to currentReview, combining replies when needed. Supply studentFeedback as an explanation of how those replies answer the question; quoting or summarizing is allowed, but never invent a reply. If understanding is missing, clarify rather than advance. A short confirmation is sufficient only when the question asks for confirmation. After final feedback, use complete_stage. A completed tool is only a completion signal; the learner separately confirms progression.'
       : exploring
         ? '\nThis is optional, ongoing exploration. Discuss the learner’s goal, inspect current files, make focused changes and explain how to verify them. There is no fixed review sequence or completion signal. Preserve existing work; viewing the report never ends exploration.'
         : repairing
