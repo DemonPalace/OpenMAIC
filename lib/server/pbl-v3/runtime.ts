@@ -468,6 +468,7 @@ export async function commandStudy(
         wrong: judged.wrong,
       });
     } else if (command.type === 'compile') {
+      check('edit');
       result = await startBuild(store, row, service, command.id);
       transition = { state: row.state, events: [] };
     } else if (command.type === 'evaluate') {
@@ -750,7 +751,12 @@ export async function learningView(principal: OwnerPrincipal, id: string): Promi
     row.state.status === 'completed'
       ? []
       : [...transitions.allowedStudentActions(project.definition, row.state)];
-  if (stage.kind === 'produce' && stage.writes === 'code' && project.buildCommand)
+  if (
+    actions.includes('edit') &&
+    stage.kind === 'produce' &&
+    stage.writes === 'code' &&
+    project.buildCommand
+  )
     actions.push('compile');
   const guided =
     stage.kind === 'mentor_say' || (stage.kind === 'produce' && !isExplorationStage(stage));

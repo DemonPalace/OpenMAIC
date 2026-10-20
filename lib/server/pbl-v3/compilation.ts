@@ -12,7 +12,12 @@ export async function startBuild(
 ) {
   const stage = stageFor(row),
     command = projectFor(row).buildCommand;
-  if (stage.kind !== 'produce' || stage.writes !== 'code' || !command)
+  if (
+    row.state.status === 'completed' ||
+    stage.kind !== 'produce' ||
+    stage.writes !== 'code' ||
+    !command
+  )
     throw sandboxConflict('No build is installed for this stage.');
   if (row.evaluation && (row.evaluation.purpose !== 'compile' || row.evaluation.id !== id))
     throw sandboxConflict('Collect the pending execution before starting another build.');
