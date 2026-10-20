@@ -23,6 +23,7 @@ import {
   filesFingerprint,
   invalidateWorkspace,
 } from './runtime';
+import { touchEnvironment, assertEnvironmentReady } from './environment';
 import { GuidedSkillReview } from './guided-review';
 
 /** Reserved server-created IDs route to a real role binding; a missing binding fails closed. */
@@ -77,7 +78,16 @@ export async function teachingRunnerConfig(input: {
     const grant = await (await SandboxStore.open()).sessionGrant(input.sessionId, input.ownerId);
     if (!grant || grant.environment_id !== row.environment_id)
       throw sandboxConflict('Project access expired. Send a new teaching message to renew access.');
-    return SandboxService.forAgentSession(input.sessionId, input.ownerId, grant.grant_id);
+    const sandbox = await SandboxService.forAgentSession(
+      input.sessionId,
+      input.ownerId,
+      grant.grant_id,
+    );
+    const current = await store.get(row.id, input.ownerId);
+    if (current.environment_id !== row.environment_id)
+      throw sandboxConflict('The project environment changed. Start a new teaching turn.');
+    assertEnvironmentReady(await touchEnvironment(store, current, sandbox));
+    return sandbox;
   };
   const fingerprint = async (current: Study) =>
     current.environment_id
@@ -109,6 +119,7 @@ export async function teachingRunnerConfig(input: {
             input.attempt,
             store.pool,
           );
+          if (current.environment_id) await service();
           const result = await execute(current, params);
           if (input.signal.aborted || toolSignal?.aborted)
             throw new Error('Teaching run cancelled.');

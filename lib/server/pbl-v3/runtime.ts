@@ -23,6 +23,7 @@ import { judgeQuiz } from '@/lib/pbl/v3/domain/orchestration/quiz';
 import type { EngineTransition } from '@/lib/pbl/v3/domain/orchestration/events';
 import { installedProject } from './catalog';
 import { LearningStore, type Study, type RoleBinding } from './store';
+import { touchEnvironment, assertEnvironmentReady, recoveredProgress } from './environment';
 
 export function digest(value: string): string {
   return createHash('sha256').update(value).digest('hex');
@@ -229,6 +230,8 @@ export async function commandStudy(
     if (await busy(store, row))
       throw sandboxConflict('Wait for the teaching response, or cancel it first.');
     const service = await SandboxService.forOwner(principal);
+    if (command.type !== 'prepare')
+      assertEnvironmentReady(await touchEnvironment(store, row, service));
     const stage = stageFor(row);
     const allowed = transitions.allowedStudentActions(definition, row.state);
     const check = (action: Parameters<typeof transitions.assertStudentActionAllowed>[2]) => {
@@ -298,16 +301,63 @@ export async function commandStudy(
         [id, command.id, hash, stageKey(row)],
       );
     if (command.type === 'prepare') {
-      // The study owns one initial environment, even if a refresh loses the client's request ID.
-      const env = row.environment_id
-        ? await service.get(row.environment_id)
-        : await service.create(row.id, `pbl-${row.id}`);
-      if (env.state !== 'running' || !env.workspaceReady)
-        throw sandboxConflict('The environment is not ready. Retry the same preparation request.');
-      row.environment_id = env.id;
-      const existing = new Set((await service.listFiles(env.id)).map((file) => file.path));
-      for (const [path, text] of Object.entries(project.files))
-        if (!existing.has(path)) await service.writeText(env.id, path, text);
+      const previousId = row.environment_id;
+      const previous = previousId ? await service.reconcile(previousId) : null;
+      if (previous?.state === 'running' && previous.workspaceReady) {
+        await service.renew(previous.id);
+      } else {
+        if (previous && previous.state !== 'destroyed')
+          throw sandboxConflict(
+            'The environment is not confirmed missing. Refresh or retry preparation.',
+          );
+        // Store allocation identity before network I/O. Reloads and lost acknowledgements reuse it.
+        if (!row.environment_recovery || row.environment_recovery.requestId === previousId) {
+          row.environment_recovery = { requestId: previousId ? randomUUID() : row.id };
+          row = await store.transaction((db) =>
+            store.commit(db, row, { state: row.state, events: [] }),
+          );
+        }
+        let env = await service.create(row.environment_recovery!.requestId, `pbl-${row.id}`);
+        env = await service.reconcile(env.id);
+        if (env.state === 'destroyed') {
+          row.environment_recovery = { requestId: randomUUID() };
+          await store.transaction((db) => store.commit(db, row, { state: row.state, events: [] }));
+          throw sandboxConflict(
+            'The replacement expired before preparation completed. Retry preparation.',
+          );
+        }
+        assertEnvironmentReady(env);
+        const checkpoint = await service.checkpoint(env.id);
+        // Seed only a new workspace. A restored checkpoint must never be silently patched with starters.
+        if (!checkpoint) {
+          const existing = new Set((await service.listFiles(env.id)).map((file) => file.path));
+          for (const [path, text] of Object.entries(project.files))
+            if (!existing.has(path)) await service.writeText(env.id, path, text);
+        }
+        row.environment_id = env.id;
+        const restored = recoveredProgress(row, project, await readFiles(service, row));
+        transition = { state: restored.state, events: [] };
+        row.evaluation = null;
+        row.environment_recovery = {
+          requestId: env.id,
+          checkpointRevision: checkpoint?.revision ?? 0,
+          progressReset: restored.reset,
+        };
+        // No role may keep a grant to the old environment, or a completion receipt for invalidated work.
+        await store.transaction(async (db) => {
+          await db.query(
+            'DELETE FROM sandbox_session_grants WHERE session_id IN (SELECT session_id FROM pbl_v3_roles WHERE study_id=$1)',
+            [row.id],
+          );
+          if (restored.reset)
+            await db.query(
+              'UPDATE pbl_v3_roles SET guided=NULL,completion=NULL WHERE study_id=$1',
+              [row.id],
+            );
+          await persist(db);
+        });
+        return result;
+      }
     } else if (command.type === 'save') {
       check('edit');
       if (
@@ -436,7 +486,7 @@ export async function commandStudy(
     } else if (command.type === 'next') {
       check('next');
       const role = roleFor(row);
-      if (role) {
+      if (role && stage.kind !== 'dialogue') {
         const bindings = await store.roles(id);
         const binding = bindings.find((b) => b.role === role && b.stage_key === stageKey(row));
         const meta = binding ? await agents.getSession(binding.session_id) : null;
@@ -463,6 +513,11 @@ export async function commandStudy(
           throw sandboxConflict(
             'Files changed after review or testing. Review and test the current files first.',
           );
+      }
+      if (stage.kind === 'produce') {
+        // Establish a durable artifact before acknowledging the student's stage confirmation.
+        const checkpoint = await service.checkpoint(requireEnvironment(row));
+        await service.saveWorkspace(requireEnvironment(row), checkpoint?.revision ?? 0);
       }
       transition = row.state.introCompleted
         ? transitions.completeCurrentStage(definition, row.state)
@@ -563,18 +618,37 @@ export async function learningView(principal: OwnerPrincipal, id: string): Promi
   const pendingReview = binding?.guided?.pending;
   if (pendingReview?.runId === `${stageKey(row)}:${latestUserSeq ?? 0}` && !currentQuestionShown)
     messages.push({ role: 'assistant', text: pendingReview.question });
+  let environment: LearningView['environment'] = null;
+  let environmentService: SandboxService | undefined;
+  if (row.environment_id) {
+    try {
+      environmentService = await SandboxService.forOwner(principal);
+      const observed = await touchEnvironment(store, row, environmentService);
+      environment = observed
+        ? { state: observed.state, ready: observed.state === 'running' && observed.workspaceReady }
+        : null;
+    } catch {
+      // Provider uncertainty must not hide durable teaching progress or cause another allocation.
+      environment = { state: 'unknown', ready: false };
+    }
+  }
   let evaluation: LearningView['evaluation'] = null;
   if (row.evaluation && row.environment_id) {
-    const observed = await (
-      await SandboxService.forOwner(principal)
-    ).command(row.environment_id, row.evaluation.id);
-    evaluation = {
-      id: observed.id,
-      state: observed.state,
-      stdout: observed.stdout.slice(0, 8000),
-      stderr: observed.stderr.slice(0, 8000),
-    };
+    try {
+      const observed = await environmentService?.command(row.environment_id, row.evaluation.id);
+      if (observed)
+        evaluation = {
+          id: observed.id,
+          state: observed.state,
+          stdout: observed.stdout.slice(0, 8000),
+          stderr: observed.stderr.slice(0, 8000),
+        };
+    } catch {
+      evaluation = { id: row.evaluation.id, state: 'unavailable', stdout: '', stderr: '' };
+      environment = { state: environment?.state ?? 'unknown', ready: false };
+    }
   }
+
   const actions =
     row.state.status === 'completed'
       ? []
@@ -590,6 +664,14 @@ export async function learningView(principal: OwnerPrincipal, id: string): Promi
     revision: row.revision,
     title: project.definition.title,
     environmentId: row.environment_id,
+    environment,
+    recovery:
+      row.environment_recovery?.requestId === row.environment_id && row.environment_id !== row.id
+        ? {
+            checkpointRevision: row.environment_recovery.checkpointRevision ?? 0,
+            progressReset: row.environment_recovery.progressReset ?? false,
+          }
+        : null,
     state: row.state,
     stage,
     role,

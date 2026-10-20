@@ -54,9 +54,18 @@ export function PBLV3Workspace({ sceneId }: { sceneId: string }) {
   }, [open]);
   useEffect(() => {
     if (!view?.busy && !view?.evaluation) return;
-    const timer = setInterval(() => void refresh().catch((e) => setError(e.message)), 2000);
+    const timer = setInterval(() => {
+      if (document.visibilityState === 'visible') void refresh().catch((e) => setError(e.message));
+    }, 2000);
     return () => clearInterval(timer);
   }, [view?.busy, view?.evaluation, refresh]);
+  useEffect(() => {
+    if (!view?.environmentId || view.state.status === 'completed') return;
+    const timer = setInterval(() => {
+      if (document.visibilityState === 'visible') void refresh().catch((e) => setError(e.message));
+    }, 15_000);
+    return () => clearInterval(timer);
+  }, [view?.environmentId, view?.state.status, refresh]);
   const command = async (type: string, payload: Record<string, unknown> = {}, repeat = false) => {
     if (!view) return;
     setPending(true);
@@ -100,13 +109,14 @@ export function PBLV3Workspace({ sceneId }: { sceneId: string }) {
   };
   useEffect(() => {
     setFileHash('');
-    if (view?.environmentId) void loadFile().catch((e) => setError(e.message));
+    if (view?.environmentId && view.environment?.ready)
+      void loadFile().catch((e) => setError(e.message));
     return () => {
       fileRequest.current += 1;
     };
-  }, [file, view?.environmentId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [file, view?.environmentId, view?.environment?.ready]); // eslint-disable-line react-hooks/exhaustive-deps
   const quiz = view?.state.collected[view.state.position.milestoneId ?? '']?.quiz;
-  const disabled = pending || view?.busy;
+  const disabled = pending || view?.busy || !view?.environment?.ready;
   const button = 'rounded-md border px-3 py-2 text-sm disabled:opacity-40 hover:bg-muted';
   return (
     <section
@@ -155,17 +165,29 @@ export function PBLV3Workspace({ sceneId }: { sceneId: string }) {
       {!view && <p>{t('pblV3.loading')}</p>}
       {view && (
         <>
-          {!view.environmentId && (
+          {!view.environment?.ready && (
             <div className="mb-4 rounded-lg border p-4">
-              <p className="mb-3">{t('pblV3.environmentNotice')}</p>
+              <p className="mb-3">
+                {t(view.environmentId ? 'pblV3.environmentUnavailable' : 'pblV3.environmentNotice')}
+              </p>
               <button
                 className={button}
-                disabled={disabled}
+                disabled={pending || view.busy}
                 onClick={() => void command('prepare')}
               >
                 {t('pblV3.prepare')}
               </button>
             </div>
+          )}
+          {view.recovery && (
+            <p role="status" className="mb-4 rounded border p-3">
+              {t(
+                view.recovery.checkpointRevision
+                  ? 'pblV3.restoredCheckpoint'
+                  : 'pblV3.restartedWorkspace',
+              )}
+              {view.recovery.progressReset && ` ${t('pblV3.restoredProgress')}`}
+            </p>
           )}
           {view.state.status === 'completed' ? (
             <p role="status">{t('pblV3.completed')}</p>

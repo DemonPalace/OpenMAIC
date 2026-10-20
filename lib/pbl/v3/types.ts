@@ -21,6 +21,8 @@ export interface LearningView {
   revision: number;
   title: string;
   environmentId: string | null;
+  environment: { state: import('@/lib/sandbox/types').SandboxState; ready: boolean } | null;
+  recovery: { checkpointRevision: number; progressReset: boolean } | null;
   state: PblSessionState;
   stage: StageDefinition;
   role: AgentRole | null;

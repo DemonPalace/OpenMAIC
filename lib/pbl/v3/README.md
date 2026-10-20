@@ -17,7 +17,8 @@ Open `/pbl-v3`, choose the Python sample, then prepare its project environment.
 The configured sandbox template must have Python 3. Follow the teaching sections,
 record a decision, review the plan and implementation, run and collect tests,
 complete the quiz, and reflect with the mentor. Use **Continue** to confirm stage
-progression. Use **Save checkpoint** to persist files separately from progress.
+progression. Confirming a plan or code stage also saves a durable checkpoint before
+advancing. Use **Save checkpoint** to save additional work between these boundaries.
 
 A PBL scene selects `{ projectV3: { id, version } }`. The server resolves that
 reference against installed content. The scene never supplies model credentials,
@@ -42,7 +43,8 @@ scenes keep their existing renderer.
   editing, browsing, media generation, or general shell tools.
 - Role session IDs are reserved for the learning runtime. The ordinary chat list,
   status projection and event stream omit them, and the chat deletion server action
-  refuses them. A previously deleted role is recreated on the next learning message;
+  refuses them. Generic detail, title, message, cancellation and per-session event
+  endpoints return 404 for teaching IDs; only the learning API controls them. A previously deleted role is recreated on the next learning message;
   progress and files remain, while that role's review receipts restart.
 - The runner owns leases, attempt fences, background execution, cancellation,
   durable messages and reconnection. There is no additional process or worker pool.
@@ -66,6 +68,21 @@ scenes keep their existing renderer.
   collection. Changed input invalidates the result; unknown execution is not a
   failed student test. Learning progress survives page refresh independently of
   the execution environment. File durability requires a successful checkpoint.
+- Learner commands, file access, tools and visible-workspace polling renew the
+  environment, throttled to once per 20 seconds. Polling never counts as student
+  feedback or changes the learning revision. Closed/hidden workspaces do not get
+  an indefinite keepalive. Provider uncertainty leaves progress readable and does
+  not authorize another allocation.
+- **Prepare project environment** reconciles an expired environment and restores
+  the latest checkpoint into a new allocation for the same study/workspace. Its
+  allocation ID is durable before provisioning, so retries reuse it. Old role
+  grants and pending evaluations cannot carry over to the replacement. Restored
+  files are checked against plan content and code/test fingerprints; stale
+  dependent evidence is cleared and the active milestone returns to the earliest
+  affected step. With no checkpoint, starter files are restored and the UI says so.
+  Work after the last successful checkpoint cannot be recovered.
+- Discussion at the decision stage is optional. Submitted decisions remain
+  mandatory, and a running role still blocks progression.
 - Reflection receives the saved test status/feedback and tested workspace revision,
   plus the learner's quiz score and attempt summary. Internal diagnostics and
   answer keys are excluded from this evidence projection.
@@ -98,5 +115,21 @@ The same fixture with a failed teaching turn, restored after refresh:
 
 The next slice completes the richer workspace (terminal and application preview),
 cross-milestone sample acceptance, reports/exploration, and comprehensive recovery
-including execution-environment replacement. The full course instance, operational
+beyond the active-milestone checkpoint recovery provided here. The full course instance, operational
 deployment, SSH adapter and project generation are not delivered by this slice.
+
+
+### Explicit follow-ups for the next slice
+
+- Skip workspace invalidation on identical-content saves.
+- Exercise multi-learner concurrency before wider trials; the current learning
+  lock admission is per process and derives its cap from the PG pool size.
+- Decide and enforce how generic sandbox APIs may modify a PBL workspace. They
+  currently enforce owner isolation, not all teaching-stage editing rules.
+- Harden evaluator trust: this sample's learner-owned Python module can exit with
+  code 0 during import. Its result is learning feedback, not an integrity-protected
+  assessment.
+- Validate `complete_stage` artifacts before marking the in-memory review ended,
+  so a validation failure can be repaired within the same turn.
+
+These follow-ups do not introduce another runtime, provider or scheduler here.

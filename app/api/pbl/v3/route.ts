@@ -13,6 +13,7 @@ import type { LearningCommand } from '@/lib/server/pbl-v3/runtime';
 import { LearningStore } from '@/lib/server/pbl-v3/store';
 import { InvalidEngineTransitionError } from '@/lib/pbl/v3/domain/orchestration/transition';
 import { getOwnerScopedDocumentStore } from '@/lib/server/agent-runtime/owner-scoped-documents';
+import { touchEnvironment, assertEnvironmentReady } from '@/lib/server/pbl-v3/environment';
 import { installedProject } from '@/lib/server/pbl-v3/catalog';
 
 export const runtime = 'nodejs';
@@ -23,12 +24,13 @@ export async function GET(request: Request) {
     if (!id) throw sandboxInvalid('A learning session is required.');
     const path = params.get('file');
     if (path !== null) {
-      const row = await (await LearningStore.open()).get(id, principal.ownerId);
+      const store = await LearningStore.open();
+      const row = await store.get(id, principal.ownerId);
       if (!Object.hasOwn(projectFor(row).files, path))
         throw sandboxInvalid('Unknown project file.');
-      const text = await (
-        await SandboxService.forOwner(principal)
-      ).readText(requireEnvironment(row), path);
+      const service = await SandboxService.forOwner(principal);
+      assertEnvironmentReady(await touchEnvironment(store, row, service));
+      const text = await service.readText(requireEnvironment(row), path);
       return Response.json({ text, hash: digest(text) });
     }
     return Response.json(await learningView(principal, id));

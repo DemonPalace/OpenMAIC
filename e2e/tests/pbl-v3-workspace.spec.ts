@@ -32,6 +32,8 @@ test('installed sample opens in the normal classroom and preserves progress afte
     revision: 0,
     title: 'A friendly greeting',
     environmentId: null as string | null,
+    environment: null as LearningView['environment'],
+    recovery: null as LearningView['recovery'],
     state,
     stage: {
       kind: 'mentor_say',
@@ -63,7 +65,11 @@ test('installed sample opens in the normal classroom and preserves progress afte
       calls.push(body.command);
       view.revision++;
       const command = body.command;
-      if (command.type === 'prepare') view.environmentId = '12345678-1234-1234-1234-123456789012';
+      if (command.type === 'prepare') {
+        if (view.environmentId) view.recovery = { checkpointRevision: 1, progressReset: true };
+        view.environmentId = '12345678-1234-1234-1234-123456789012';
+        view.environment = { state: 'running', ready: true };
+      }
       if (command.type === 'chat') {
         view.messages.push(
           { role: 'user', text: command.text },
@@ -114,6 +120,14 @@ test('installed sample opens in the normal classroom and preserves progress afte
   await expect(learningAlert).toHaveCount(0);
   expect(calls.filter((c) => c.type === 'retry')).toHaveLength(1);
   expect(calls.filter((c) => c.type === 'chat')).toHaveLength(1);
+  await page.getByLabel('Your message').fill('Continue after restoring my environment.');
+  view.environment = { state: 'destroyed', ready: false };
+  await page.getByRole('button', { name: 'Refresh progress' }).click();
+  await expect(page.getByText('The environment is unavailable.', { exact: false })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeDisabled();
+  await page.getByRole('button', { name: 'Prepare project environment' }).click();
+  await expect(page.getByText('The workspace was restored', { exact: false })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeEnabled();
   // A late read from PLAN.md must not populate or become savable as greeting.py.
   view.actions = ['chat', 'edit'];
   await page.getByRole('button', { name: 'Refresh progress' }).click();

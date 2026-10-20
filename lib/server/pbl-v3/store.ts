@@ -22,6 +22,12 @@ export interface Study extends Record<string, unknown> {
   revision: number;
   state: PblSessionState;
   environment_id: string | null;
+  environment_checked_at: Date | null;
+  environment_recovery: {
+    requestId: string;
+    checkpointRevision?: number;
+    progressReset?: boolean;
+  } | null;
   evaluation: { id: string; fingerprint: string; stageKey: string; startedAt: string } | null;
 }
 export interface RoleBinding extends Record<string, unknown> {
@@ -62,6 +68,14 @@ CREATE TABLE pbl_v3_events (
  study_id TEXT NOT NULL REFERENCES pbl_v3_studies(id), sequence INTEGER NOT NULL,
  event JSONB NOT NULL, PRIMARY KEY(study_id,sequence)
 );`,
+    },
+    {
+      version: 2,
+      name: 'learning-environment-recovery',
+      transaction: true,
+      up: `ALTER TABLE pbl_v3_studies
+        ADD COLUMN environment_checked_at TIMESTAMPTZ,
+        ADD COLUMN environment_recovery JSONB;`,
     },
   ],
 };
@@ -184,7 +198,7 @@ export class LearningStore {
 
   async commit(db: PoolClient, row: Study, transition: EngineTransition) {
     const result = await db.query<Study>(
-      `UPDATE pbl_v3_studies SET state=$3,revision=revision+1,environment_id=$4,evaluation=$5
+      `UPDATE pbl_v3_studies SET state=$3,revision=revision+1,environment_id=$4,evaluation=$5,environment_recovery=$6
       WHERE id=$1 AND revision=$2 RETURNING *`,
       [
         row.id,
@@ -192,6 +206,7 @@ export class LearningStore {
         JSON.stringify(transition.state),
         row.environment_id,
         JSON.stringify(row.evaluation),
+        JSON.stringify(row.environment_recovery),
       ],
     );
     if (!result.rows[0])

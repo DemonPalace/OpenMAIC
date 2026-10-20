@@ -14,6 +14,14 @@ const mocked = vi.hoisted(() => ({
   pool: undefined as unknown,
   agents: undefined as unknown,
   root: '',
+  missing: new Set<string>(),
+  failInspect: false,
+  failImport: false,
+  loseCreateAck: false,
+  hideDiscovery: false,
+  creates: [] as string[],
+  renewals: [] as string[],
+  objects: new Map<string, Uint8Array>(),
   responses: [] as Array<Array<Record<string, unknown>>>,
   modelCalls: 0,
   modelRequests: [] as ModelMessage[][],
@@ -44,27 +52,64 @@ vi.mock('@/lib/server/model-config/runtime', () => ({
   assertWorkspaceModelsAuthorized: async () => {},
   backgroundWorkspaceId: async (owner: string) => owner,
 }));
+vi.mock('@/lib/persistence/asset-byte-store', () => ({
+  configuredS3Bucket: () => null,
+  resolveConfiguredAssetByteStore: async () => ({
+    writesOutsideRegistryDatabase: true,
+    withPrefix: (prefix: string) => ({
+      write: async (hash: string, bytes: Uint8Array) => {
+        mocked.objects.set(prefix + hash, Uint8Array.from(bytes));
+      },
+      read: async (hash: string) => mocked.objects.get(prefix + hash) ?? null,
+      delete: async (hash: string) => {
+        mocked.objects.delete(prefix + hash);
+      },
+    }),
+  }),
+}));
 vi.mock('@/lib/server/sandbox/settings', () => ({
   assertSandboxSettingsRevision: async () => {},
   resolvedSandboxConfig: async () => ({
     fingerprint: 'test',
     settingsRevision: 0,
     lifetimeMs: 300000,
-    maxActive: 20,
-    maxActivePerOwner: 10,
+    maxActive: 50,
+    maxActivePerOwner: 50,
   }),
 }));
 vi.mock('@/lib/server/sandbox/providers/e2b-compatible', () => ({
   E2BCompatibleSandboxProvider: class {
     async create(id: string) {
+      mocked.creates.push(id);
       await mkdir(join(mocked.root, id), { recursive: true });
+      if (mocked.loseCreateAck) throw new Error('Create acknowledgement lost');
       return { id, state: 'running' };
     }
-    async find() {
-      return null;
+    async find(id: string) {
+      return mocked.hideDiscovery ? [] : [{ id, state: 'running' }];
     }
     async inspect(id: string) {
-      return { id, state: 'running' };
+      if (mocked.failInspect) throw new Error('Provider unavailable');
+      return mocked.missing.has(id) ? null : { id, state: 'running' };
+    }
+    async renew(id: string) {
+      if (mocked.missing.has(id)) throw new Error('Environment missing');
+      mocked.renewals.push(id);
+    }
+    async *exportWorkspace(id: string) {
+      const files: Record<string, string> = {};
+      for (const name of (await readdir(join(mocked.root, id))).sort())
+        if (!name.startsWith('.command-') && name !== '__pycache__')
+          files[name] = await readFile(join(mocked.root, id, name), 'utf8');
+      yield Buffer.from(JSON.stringify(files));
+    }
+    async importWorkspace(id: string, _operation: string, source: AsyncIterable<Uint8Array>) {
+      if (mocked.failImport) throw new Error('Interrupted restore');
+      const chunks = [];
+      for await (const chunk of source) chunks.push(chunk);
+      const files = JSON.parse(Buffer.concat(chunks).toString()) as Record<string, string>;
+      for (const [name, text] of Object.entries(files))
+        await writeFile(join(mocked.root, id, basename(name)), text);
     }
     async initializeWorkspace() {}
     async readText(id: string, _operation: string, path: string) {
@@ -423,7 +468,7 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
     await command('prepare');
     await guided('teaching'); // project intro
     await guided('teaching'); // concepts
-    await runTools('I prefer formatted strings.', async () => {});
+    await expect(command('next')).rejects.toThrow('all milestone decisions');
     await command('decide', { decisionId: 'format', chosen: 'format' });
     await command('next');
     await guided('plan');
@@ -452,7 +497,7 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
       ).rejects.toThrow('cannot write');
       await invoke(config, 'write_file', {
         path: 'greeting.py',
-        text: code,
+        text: code + '\n# repaired\n',
         expectedHash: digest(current),
       });
     });
@@ -472,6 +517,23 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
     });
     expect(wrongQuiz.actions).not.toContain('next');
     await expect(command('next')).rejects.toThrow('not available');
+    // The repair passed tests, but was newer than the code-review checkpoint. Expiry at the
+    // quiz must return to testing the restored version, not strand the learner at the quiz.
+    mocked.missing.add(environmentId);
+    await rm(join(mocked.root, environmentId), { recursive: true });
+    await command('prepare');
+    const recovered = await store.get(studyId, principal.ownerId);
+    expect(recovered.environment_id).not.toBe(environmentId);
+    expect(recovered.state.position.stageIndex).toBe(4);
+    expect(recovered.state.collected.greeting).toMatchObject({
+      tests: null,
+      quiz: null,
+      codeReviewCompleted: false,
+      planReviewCompleted: true,
+    });
+    await command('evaluate');
+    await command('collect');
+    await command('next');
     await command('quiz', { answers: [0] });
     await command('next');
     await runTools('Please reflect on my results.', async (config) => {
@@ -872,5 +934,130 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
         signal: new AbortController().signal,
       }),
     ).rejects.toThrow('changed');
+  });
+  it('renews on learner activity without changing progress and throttles repeated polls', async () => {
+    const study = await freshStudy();
+    const before = await store.get(study.id, principal.ownerId);
+    const count = mocked.renewals.length;
+    expect((await learningView(principal, study.id)).environment?.ready).toBe(true);
+    await learningView(principal, study.id);
+    expect(mocked.renewals.slice(count)).toEqual([before.environment_id]);
+    expect((await store.get(study.id, principal.ownerId)).revision).toBe(before.revision);
+  });
+  it('restores a checkpoint with one durable allocation across an interrupted restore, clearing old evaluation and grants', async () => {
+    const study = await freshStudy();
+    const original = await store.get(study.id, principal.ownerId);
+    const env = original.environment_id!;
+    const service = await SandboxService.forOwner(principal);
+    await service.writeText(env, 'PLAN.md', 'Saved plan');
+    await study.send('checkpoint');
+    await service.writeText(env, 'PLAN.md', 'Unsaved changes');
+    const queued = (await study.send('chat')) as { sessionId: string };
+    const claimed = await agents.claimNextSession('recovery-worker', process.pid, {
+      sessionId: queued.sessionId,
+      leaseTtlMs: 10000,
+      maxAttempts: 5,
+    });
+    await agents.finishSession(queued.sessionId, 'recovery-worker', {
+      status: 'failed',
+      expectedAttempt: claimed!.attempt,
+    });
+    await pool.query(
+      'UPDATE pbl_v3_studies SET evaluation=$2,environment_checked_at=NULL WHERE id=$1',
+      [
+        study.id,
+        JSON.stringify({
+          id: randomUUID(),
+          fingerprint: 'old',
+          stageKey: 'intro:-1',
+          startedAt: new Date().toISOString(),
+        }),
+      ],
+    );
+    mocked.missing.add(env);
+    await rm(join(mocked.root, env), { recursive: true });
+    const expired = await learningView(principal, study.id);
+    expect(expired.environment).toEqual({ state: 'destroyed', ready: false });
+    expect(expired.evaluation?.state).toBe('unavailable');
+    expect(expired.id).toBe(study.id);
+    const creates = mocked.creates.length;
+    mocked.failImport = true;
+    try {
+      await expect(study.send('prepare')).rejects.toThrow('Interrupted restore');
+    } finally {
+      mocked.failImport = false;
+    }
+    const pending = await store.get(study.id, principal.ownerId);
+    expect(pending.environment_id).toBe(env);
+    const allocated = pending.environment_recovery!.requestId;
+    expect(allocated).not.toBe(env);
+    await study.send('prepare'); // different browser command ID after reload, same allocation
+    const recovered = await store.get(study.id, principal.ownerId);
+    expect(recovered.environment_id).toBe(allocated);
+    expect(recovered.evaluation).toBeNull();
+    expect(mocked.creates.slice(creates)).toEqual([allocated]);
+    expect(await service.readText(allocated, 'PLAN.md')).toBe('Saved plan');
+    expect((await learningView(principal, study.id)).recovery?.checkpointRevision).toBe(1);
+    expect(
+      (
+        await pool.query('SELECT * FROM sandbox_session_grants WHERE session_id=$1', [
+          queued.sessionId,
+        ])
+      ).rowCount,
+    ).toBe(0);
+    await study.send('prepare');
+    expect(mocked.creates.slice(creates)).toEqual([allocated]);
+  });
+  it('keeps uncertain environments readable and never replaces them on a provider error', async () => {
+    const study = await freshStudy();
+    const before = await store.get(study.id, principal.ownerId);
+    const creates = mocked.creates.length;
+    mocked.failInspect = true;
+    try {
+      expect((await learningView(principal, study.id)).environment).toEqual({
+        state: 'unknown',
+        ready: false,
+      });
+      await expect(study.send('prepare')).rejects.toThrow('Provider unavailable');
+    } finally {
+      mocked.failInspect = false;
+    }
+    expect(mocked.creates.length).toBe(creates);
+    expect((await store.get(study.id, principal.ownerId)).environment_id).toBe(
+      before.environment_id,
+    );
+  });
+  it('can restart an expired workspace without a checkpoint and reports that data loss', async () => {
+    const study = await freshStudy();
+    const before = await store.get(study.id, principal.ownerId);
+    const env = before.environment_id!;
+    mocked.missing.add(env);
+    await rm(join(mocked.root, env), { recursive: true });
+    await study.send('prepare');
+    const view = await learningView(principal, study.id);
+    expect(view.environment?.ready).toBe(true);
+    expect(view.environmentId).not.toBe(env);
+    expect(view.recovery?.checkpointRevision).toBe(0);
+    const service = await SandboxService.forOwner(principal);
+    expect(await service.readText(view.environmentId!, 'greeting.py')).toBe(
+      project.files['greeting.py'],
+    );
+  });
+  it('does not allocate twice when creation is uncertain and later discovered', async () => {
+    const study = await freshStudy();
+    const before = await store.get(study.id, principal.ownerId);
+    mocked.missing.add(before.environment_id!);
+    const creates = mocked.creates.length;
+    mocked.loseCreateAck = mocked.hideDiscovery = true;
+    try {
+      await expect(study.send('prepare')).rejects.toThrow('Prepare or recover');
+      await expect(study.send('prepare')).rejects.toThrow('Prepare or recover');
+      expect(mocked.creates.length).toBe(creates + 1);
+    } finally {
+      mocked.loseCreateAck = mocked.hideDiscovery = false;
+    }
+    await study.send('prepare');
+    expect(mocked.creates.length).toBe(creates + 1);
+    expect((await learningView(principal, study.id)).environment?.ready).toBe(true);
   });
 });
