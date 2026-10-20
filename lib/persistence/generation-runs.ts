@@ -38,8 +38,8 @@
  * every execution of the run. Null for a run started without them.
  *
  * Version 6 adds `session_id`: the agent session a run writes its
- * conversation into. Null for every run started without one, which keeps
- * working as before.
+ * conversation into, indexed for the runs that have one. Null for every run
+ * started without one, which keeps working as before.
  */
 import type { Queryable } from '@openmaic/storage/document/pg';
 import { applySchemaMigrations, type SchemaMigrationSet } from '@openmaic/storage/pg-migrations';
@@ -128,7 +128,10 @@ const HOST_ATTRIBUTES = `
 ALTER TABLE generation_runs ADD COLUMN IF NOT EXISTS host_attributes JSONB`;
 
 const SESSION_ID = `
-ALTER TABLE generation_runs ADD COLUMN IF NOT EXISTS session_id TEXT`;
+ALTER TABLE generation_runs ADD COLUMN IF NOT EXISTS session_id TEXT;
+
+CREATE INDEX IF NOT EXISTS generation_runs_session_idx
+  ON generation_runs (session_id) WHERE session_id IS NOT NULL`;
 
 export const GENERATION_RUN_MIGRATIONS: SchemaMigrationSet = {
   store: 'generation-runs',

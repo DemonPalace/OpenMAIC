@@ -510,7 +510,18 @@ function decodedObject(value: unknown): Record<string, unknown> {
 
 let savepointSerial = 0;
 
-function assertEntryShape(sessionId: string, entry: AgentSessionEntry): void {
+/** Reference `leafIdAfterEntry`: a leaf target is the leaf id, verbatim. */
+function leafIdAfterEntry(entry: AgentSessionEntry): string | null {
+  if (entry.type !== 'leaf') return entry.id;
+  // An empty-string target is preserved as '' instead of collapsing to null;
+  // only a missing (malformed) target normalizes to null.
+  return (entry.targetId as string | null | undefined) ?? null;
+}
+
+function assertEntryShape(
+  sessionId: string,
+  entry: { id: string; type: string; timestamp: string },
+): void {
   if (!entry.id || !entry.type || !Number.isFinite(new Date(entry.timestamp).getTime())) {
     throw new AgentSessionEntryTreeError(
       sessionId,
@@ -1612,8 +1623,19 @@ export class PgAgentSessionStore
       eventSeqs.push(seq);
       if (event.type === AGENT_SESSION_LIFECYCLE.userMessage) deliveredThrough = seq;
     }
-    for (const entry of turn.entries ?? []) {
-      await this.insertEntry(transaction, sessionId, attempt, entry);
+    const entries = turn.entries ?? [];
+    // Read under the row lock every tree append takes, on the caller's
+    // transaction, so it includes what that transaction appended before.
+    let leafId = entries.some((entry) => entry.parentId === undefined)
+      ? await this.currentLeafIdIn(transaction, sessionId)
+      : null;
+    for (const entry of entries) {
+      const stored = {
+        ...entry,
+        parentId: entry.parentId === undefined ? leafId : entry.parentId,
+      } as AgentSessionEntry;
+      await this.insertEntry(transaction, sessionId, attempt, stored);
+      leafId = leafIdAfterEntry(stored);
     }
     if (deliveredThrough > 0) {
       await transaction.query(
@@ -1625,6 +1647,22 @@ export class PgAgentSessionStore
       );
     }
     return { eventSeqs };
+  }
+
+  /** The tree's logical leaf: what its last entry leaves it at (see {@link leafIdAfterEntry}). */
+  private async currentLeafIdIn(tx: Queryable, sessionId: string): Promise<string | null> {
+    const result = await tx.query<{ entry_id: string; type: string; data: unknown }>(
+      `SELECT entry_id, type, data FROM ${this.table('entries')}
+       WHERE session_id = $1 ORDER BY seq DESC LIMIT 1`,
+      [sessionId],
+    );
+    const last = result.rows[0];
+    if (!last) return null;
+    return leafIdAfterEntry({
+      ...decodedObject(last.data),
+      id: last.entry_id,
+      type: last.type,
+    } as AgentSessionEntry);
   }
 
   async releaseExternalWriterIn(
@@ -1881,14 +1919,6 @@ class PgAgentSessionEntryTreeHandle implements AgentSessionEntryTreeHandle {
   private readonly labelsById = new Map<string, string>();
   private currentLeafId: string | null = null;
 
-  /** Reference `leafIdAfterEntry`: a leaf target is the leaf id, verbatim. */
-  private static leafIdAfter(entry: AgentSessionEntry): string | null {
-    if (entry.type !== 'leaf') return entry.id;
-    // An empty-string target is preserved as '' instead of collapsing to null;
-    // only a missing (malformed) target normalizes to null.
-    return (entry.targetId as string | null | undefined) ?? null;
-  }
-
   constructor(
     private readonly store: PgAgentSessionStore,
     private readonly sessionId: string,
@@ -1907,7 +1937,7 @@ class PgAgentSessionEntryTreeHandle implements AgentSessionEntryTreeHandle {
       }
       this.byId.set(entry.id, entry);
       this.updateLabel(entry);
-      this.currentLeafId = PgAgentSessionEntryTreeHandle.leafIdAfter(entry);
+      this.currentLeafId = leafIdAfterEntry(entry);
     }
   }
 
@@ -1987,7 +2017,7 @@ class PgAgentSessionEntryTreeHandle implements AgentSessionEntryTreeHandle {
     this.entries.push(entry);
     this.byId.set(entry.id, entry);
     this.updateLabel(entry);
-    this.currentLeafId = PgAgentSessionEntryTreeHandle.leafIdAfter(entry);
+    this.currentLeafId = leafIdAfterEntry(entry);
   }
 
   async createEntryId(): Promise<string> {

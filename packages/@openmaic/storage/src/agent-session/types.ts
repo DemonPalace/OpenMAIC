@@ -126,11 +126,28 @@ export interface CreateExternallyWrittenSessionInput extends CreateAgentSessionI
 }
 
 /** What an external writer appends to a session it owns, in one call. */
+/**
+ * An entry an external writer appends. Leaving `parentId` out attaches the
+ * entry to the tree's current leaf; `null` still means a root, and an id still
+ * names its parent. The stored entry always has a concrete `parentId`.
+ */
+export interface AgentSessionExternalEntry {
+  id: string;
+  parentId?: string | null;
+  timestamp: string;
+  type: string;
+  [key: string]: unknown;
+}
+
 export interface AgentSessionExternalTurn {
   /** Stream events, appended in order; each is stored with the session's current attempt. */
   events?: Array<Omit<NewAgentSessionEvent, 'attempt'>>;
-  /** Entry-tree rows, appended in order (parents first). */
-  entries?: AgentSessionEntry[];
+  /**
+   * Entry-tree rows, appended in order (parents first). The leaf advances
+   * entry by entry, so an entry without `parentId` attaches to the one before
+   * it (or, after a `leaf` entry, to that entry's target).
+   */
+  entries?: AgentSessionExternalEntry[];
 }
 
 export interface AgentSessionExternalTurnResult {

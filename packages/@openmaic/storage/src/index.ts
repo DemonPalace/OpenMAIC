@@ -183,6 +183,7 @@ export {
   type AgentSessionEntryTree,
   type AgentSessionEntryTreeHandle,
   type AgentSessionEventLog,
+  type AgentSessionExternalEntry,
   type AgentSessionExternalTurn,
   type AgentSessionExternalTurnResult,
   type AgentSessionExternalWriterStore,

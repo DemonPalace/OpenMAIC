@@ -311,5 +311,151 @@ export function runAgentSessionExternalWriterContract(
       ).rejects.toThrow(/entry identity, type, or timestamp is invalid/);
       expect(await store.lastEventSeq('session-1')).toBe(0);
     });
+
+    describe('entries without a parentId attach to the current leaf', () => {
+      const at = (second: number) => `2026-10-20T00:00:${String(second).padStart(2, '0')}.000Z`;
+      const message = (id: string, second: number, parentId?: string | null) => ({
+        id,
+        ...(parentId === undefined ? {} : { parentId }),
+        type: 'message',
+        timestamp: at(second),
+        message: { role: 'assistant', content: id },
+      });
+      const append = (
+        store: AgentSessionExternalWriterContractStore,
+        entries: Parameters<AgentSessionExternalWriterStore['appendExternalTurnIn']>[3]['entries'],
+        tx?: AgentSessionTransaction,
+      ) =>
+        tx
+          ? store.appendExternalTurnIn(tx, 'session-1', WRITER, { entries })
+          : inTransaction((t) => store.appendExternalTurnIn(t, 'session-1', WRITER, { entries }));
+      const parents = async (store: AgentSessionExternalWriterContractStore) => {
+        const tree = await store.openEntryTree('session-1', 'reader', 0);
+        return {
+          entries: (await tree.getEntries()).map((entry) => [entry.id, entry.parentId]),
+          leaf: await tree.getLeafId(),
+        };
+      };
+
+      test('the first omitted parent of an empty tree is a root', async () => {
+        const store = makeStore();
+        await createMarked(store);
+        await append(store, [message('a', 1)]);
+        expect(await parents(store)).toEqual({ entries: [['a', null]], leaf: 'a' });
+      });
+
+      test('a batch chains entry after entry, and a later call continues it', async () => {
+        const store = makeStore();
+        await createMarked(store);
+        await append(store, [message('a', 1), message('b', 2), message('c', 3)]);
+        await append(store, [message('d', 4)]);
+        expect(await parents(store)).toEqual({
+          entries: [
+            ['a', null],
+            ['b', 'a'],
+            ['c', 'b'],
+            ['d', 'c'],
+          ],
+          leaf: 'd',
+        });
+      });
+
+      test('an explicit null is still a root and an explicit id is still its parent', async () => {
+        const store = makeStore();
+        await createMarked(store);
+        await append(store, [message('a', 1), message('b', 2)]);
+        await append(store, [message('root-2', 3, null), message('x', 4), message('y', 5, 'a')]);
+        await append(store, [message('z', 6)]);
+        expect(await parents(store)).toEqual({
+          entries: [
+            ['a', null],
+            ['b', 'a'],
+            ['root-2', null],
+            ['x', 'root-2'],
+            ['y', 'a'],
+            ['z', 'y'],
+          ],
+          leaf: 'z',
+        });
+      });
+
+      test('follows a leaf marker to its target, in a batch and across calls', async () => {
+        const store = makeStore();
+        await createMarked(store);
+        await append(store, [
+          message('u', 1),
+          message('v', 2),
+          { id: 'cursor', type: 'leaf', timestamp: at(3), targetId: 'u' },
+          message('w', 4),
+        ]);
+        await append(store, [{ id: 'cursor-2', type: 'leaf', timestamp: at(5), targetId: 'v' }]);
+        await append(store, [message('x', 6)]);
+        expect(await parents(store)).toEqual({
+          entries: [
+            ['u', null],
+            ['v', 'u'],
+            ['cursor', 'v'],
+            ['w', 'u'],
+            ['cursor-2', 'w'],
+            ['x', 'v'],
+          ],
+          leaf: 'x',
+        });
+      });
+
+      test('a leaf marker that targets null makes the next omitted parent a root', async () => {
+        const store = makeStore();
+        await createMarked(store);
+        await append(store, [
+          message('a', 1),
+          { id: 'reset', type: 'leaf', timestamp: at(2), targetId: null },
+        ]);
+        await append(store, [message('b', 3)]);
+        expect(await parents(store)).toEqual({
+          entries: [
+            ['a', null],
+            ['reset', 'a'],
+            ['b', null],
+          ],
+          leaf: 'b',
+        });
+      });
+
+      test('a later call in the same transaction sees the entries it appended', async () => {
+        const store = makeStore();
+        await createMarked(store);
+        await inTransaction(async (tx) => {
+          await append(store, [message('a', 1)], tx);
+          await append(store, [message('b', 2)], tx);
+        });
+        expect(await parents(store)).toEqual({
+          entries: [
+            ['a', null],
+            ['b', 'a'],
+          ],
+          leaf: 'b',
+        });
+      });
+
+      test('a rolled-back turn leaves the leaf where it was', async () => {
+        const store = makeStore();
+        await createMarked(store);
+        await append(store, [message('a', 1)]);
+        await expect(
+          inTransaction(async (tx) => {
+            await append(store, [message('b', 2), message('c', 3)], tx);
+            throw new RollbackProbe();
+          }),
+        ).rejects.toBeInstanceOf(RollbackProbe);
+        await append(store, [message('d', 4)]);
+        expect(await parents(store)).toEqual({
+          entries: [
+            ['a', null],
+            ['d', 'a'],
+          ],
+          leaf: 'd',
+        });
+      });
+    });
   });
 }
