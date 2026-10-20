@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useI18n } from '@/lib/hooks/use-i18n';
 import { useStageStore } from '@/lib/store/stage';
 import type { LearningView } from '@/lib/pbl/v3/types';
+import { LearningPanels } from './learning-panels';
 import { MarkdownText } from '../v2/markdown-text';
 import { sandboxErrorMessage } from '@/lib/sandbox/error-message';
 import { SandboxRequestError } from '@/components/sandbox/client';
@@ -179,6 +180,7 @@ export function PBLV3Workspace({ sceneId }: { sceneId: string }) {
       {!view && <p>{t('pblV3.loading')}</p>}
       {view && (
         <>
+          <LearningPanels key={view.id} view={view} />
           {!view.environment?.ready && (
             <div className="mb-4 rounded-lg border p-4">
               <p className="mb-3">
@@ -379,6 +381,15 @@ export function PBLV3Workspace({ sceneId }: { sceneId: string }) {
                   >
                     {t('pblV3.checkpoint')}
                   </button>
+                  {view.actions.includes('compile') && (
+                    <button
+                      className={button}
+                      disabled={disabled || !!view.evaluation}
+                      onClick={() => void command('compile')}
+                    >
+                      {t('pblV3.build')}
+                    </button>
+                  )}
                   {view.actions.includes('evaluate') && (
                     <button
                       className={button}

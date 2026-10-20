@@ -58,7 +58,37 @@ test('installed sample opens in the normal classroom and preserves progress afte
     const req = route.request(),
       url = new URL(req.url());
     const body = req.method() === 'POST' ? req.postDataJSON() : null;
-    if (body?.action === 'sample') return route.continue(); // actual course creation and persistence
+    if (body?.action === 'sample' || url.searchParams.has('samples')) return route.continue(); // actual course creation and persistence
+    if (url.pathname === '/api/pbl/v3/report')
+      return route.fulfill({
+        json: {
+          studyId: view.id,
+          project: { id: 'greeting-python-lab', version: '1.0.0', title: 'Greeting' },
+          revision: view.revision,
+          requiredComplete: false,
+          milestones: [
+            {
+              id: 'greeting',
+              title: 'Greeting',
+              optional: false,
+              status: 'active',
+              stages: ['plan'],
+            },
+          ],
+          evidence: [
+            {
+              sequence: 7,
+              kind: 'artifact.recorded',
+              milestoneId: 'greeting',
+              detail: 'Saved plan evidence',
+              version: 'saved-version',
+            },
+          ],
+          counts: { 'artifact.recorded': 1 },
+          conversations: [],
+          truncated: false,
+        },
+      });
     if (req.method() === 'GET' && url.searchParams.has('file'))
       return route.fulfill({ json: { text: file, hash: 'a'.repeat(64) } });
     if (body?.command) {
@@ -97,9 +127,18 @@ test('installed sample opens in the normal classroom and preserves progress afte
     return route.fulfill({ json: view });
   });
   await page.goto('/pbl-v3');
-  await page.getByRole('button', { name: 'Open Python sample' }).click();
+  await page.getByRole('button', { name: 'Open selected sample' }).click();
   await expect(page).toHaveURL(/\/classroom\/pbl-/, { timeout: 60000 });
   await expect(page.getByTestId('pbl-v3-workspace')).toBeVisible({ timeout: 60000 });
+  const beforeReport = calls.length;
+  await page.getByRole('button', { name: 'Learning report', exact: true }).click();
+  await expect(page.getByRole('region', { name: 'Learning report' })).toContainText(
+    'Learning is still in progress.',
+  );
+  await page.getByRole('region', { name: 'Learning report' }).locator('summary').click();
+  await expect(page.getByText('Saved plan evidence')).toBeVisible();
+  expect(calls.length).toBe(beforeReport);
+  await page.getByRole('button', { name: 'Return to learning' }).click();
   await page.getByRole('button', { name: 'Prepare project environment' }).click();
   // Hold an old progress GET until after a teaching command installs a newer revision.
   let releaseView!: () => void, viewStarted!: () => void;

@@ -1,6 +1,7 @@
 import 'server-only';
 import { projectSchema, type ProjectDefinition } from '@/lib/pbl/v3/domain/project/project-schema';
 import type { PBLV3Reference } from '@/lib/pbl/v3/types';
+import type { ProjectEvaluation } from './evaluation';
 import { SandboxError } from '@/lib/sandbox/errors';
 
 export interface InstalledProject {
@@ -10,7 +11,8 @@ export interface InstalledProject {
   /** Optional trusted relative directories (without trailing slashes), never browser input. */
   sourceRoots?: readonly string[];
   /** Trusted deployment-owned commands, never read from browser scene content. */
-  testCommand: string;
+  evaluations: Record<string, ProjectEvaluation>;
+  buildCommand?: string;
 }
 const agent = (role: string) => ({
   systemPrompt: `You are the ${role} in a programming learning project. Help the learner understand and do the work. Context: {{seed}}`,
@@ -23,7 +25,19 @@ const greeting: InstalledProject = {
     'PLAN.md': '',
     'greeting.py': 'def greet(name):\n    # Implement a friendly greeting.\n    return ""\n',
   },
-  testCommand: `python3 -c 'from greeting import greet; assert greet("Ada") == "Hello, Ada!"; assert greet("Lin") == "Hello, Lin!"; print("2 checks passed")'`,
+  evaluations: {
+    greeting: {
+      cases: ['Ada', 'Lin'].map((name) => ({
+        id: name,
+        argv: [
+          'python3',
+          '-c',
+          `from greeting import greet; print(greet(${JSON.stringify(name)}))`,
+        ],
+        stdout: `Hello, ${name}!\n`,
+      })),
+    },
+  },
   definition: projectSchema.parse({
     id: 'greeting-python',
     title: 'A friendly greeting',
@@ -129,7 +143,136 @@ const greeting: InstalledProject = {
     ],
   }),
 };
-const projects = new Map([[`${greeting.ref.id}@${greeting.ref.version}`, greeting]]);
+function extendedProject(language: 'Python' | 'Java'): InstalledProject {
+  const java = language === 'Java';
+  const ref = { id: java ? 'greeting-java' : 'greeting-python-lab', version: '1.0.0' };
+  const file = java ? 'src/Greeting.java' : 'src/greeting.py';
+  const definition = structuredClone(greeting.definition);
+  definition.id = ref.id;
+  definition.title = java ? 'A Java greeting application' : 'A Python greeting application';
+  definition.language = language;
+  definition.intro.say =
+    'Introduce the project: implement a greeting, then add safe whitespace handling. Explain that earlier code and one evolving PLAN.md carry into the next milestone. Optional exploration remains available after the required work.';
+  const first = definition.milestones[0]!;
+  first.teaching = {
+    purpose: 'Connect a function input to its returned output.',
+    concepts: ['parameters', 'return values'],
+    boundaries: ['Do not teach later input-normalization requirements yet.'],
+  };
+  if (java) {
+    definition.decisions[0]!.options = [
+      { id: 'format', label: 'Formatted string', summary: 'Use String.format.' },
+      { id: 'concat', label: 'Concatenation', summary: 'Join strings with +.' },
+    ];
+    first.contract =
+      'Greeting.greet(name) returns Hello, <name>!. The main method prints the result for its first argument.';
+  }
+  const stages = structuredClone(first.stages);
+  for (const stage of stages) {
+    if (stage.kind === 'produce' && stage.writes === 'plan') {
+      stage.planUpdateMode = 'incremental';
+      stage.skill = 'planner-plan-review';
+    }
+    if (stage.kind === 'produce' && stage.writes === 'code') {
+      stage.compileBeforeReview = true;
+      stage.skill = 'coder-implementation-review';
+    }
+  }
+  first.stages = structuredClone(stages);
+  definition.decisions[0]!.gatesGlobs = [file];
+  definition.milestones.push({
+    ...structuredClone(first),
+    id: 'normalize',
+    title: 'Handle surrounding whitespace',
+    contract: java
+      ? 'Keep Greeting.greet behavior, trimming surrounding whitespace from the name. main prints the returned greeting.'
+      : 'Keep greet behavior, trimming surrounding whitespace from the name.',
+    teaching: {
+      purpose: 'Extend an existing contract without losing earlier behavior.',
+      concepts: ['input normalization', 'regression checks'],
+      boundaries: [],
+    },
+    decisions: [],
+    stages: stages.filter((stage) => stage.kind !== 'dialogue'),
+    quiz: [
+      {
+        q: 'Why run the earlier checks after changing input handling?',
+        options: ['To preserve existing behavior', 'To replace the new checks'],
+        answer: 0,
+        explain: 'New behavior must preserve earlier requirements.',
+      },
+    ],
+  });
+  definition.milestones.push({
+    id: 'explore',
+    type: 'task',
+    title: 'Explore your own extension',
+    optional: true,
+    decisions: [],
+    quiz: [],
+    deliverables: [],
+    tests: [],
+    testScope: 'current',
+    publicTestFeedback: {},
+    stages: [
+      {
+        kind: 'produce',
+        agent: 'coder',
+        reads: ['plan', 'code'],
+        writes: 'code',
+        reviewRequired: false,
+        exploration: {
+          introduction:
+            'Choose an extension: support another greeting style or build a small web page. Keep your existing work and return whenever you wish.',
+        },
+        studentActions: ['chat', 'edit', 'create', 'delete', 'rename', 'move', 'restore'],
+      },
+    ],
+  });
+  const check = (id: string, name: string, expected: string) => ({
+    id,
+    argv: java
+      ? ['java', '-cp', '{build}', 'Greeting', name]
+      : [
+          'python3',
+          '-c',
+          `import sys; sys.path.insert(0, "src"); from greeting import greet; print(greet(${JSON.stringify(name)}))`,
+        ],
+    stdout: expected + '\n',
+  });
+  const prepare = java ? ['javac', '-d', '{build}', file] : undefined;
+  const baseline = [check('Ada', 'Ada', 'Hello, Ada!'), check('Lin', 'Lin', 'Hello, Lin!')];
+  return {
+    ref,
+    definition: projectSchema.parse(definition),
+    sourceRoots: ['src'],
+    files: {
+      'PLAN.md': '',
+      [file]: java
+        ? 'public class Greeting {\n  public static String greet(String name) { return ""; }\n  public static void main(String[] args) { System.out.println(greet(args[0])); }\n}\n'
+        : 'def greet(name):\n    return ""\n',
+    },
+    buildCommand: java
+      ? 'javac -d /tmp/pbl-greeting-build src/Greeting.java'
+      : 'python3 -c \'import ast,pathlib; ast.parse(pathlib.Path("src/greeting.py").read_text())\'',
+    evaluations: {
+      greeting: { prepare, cases: baseline },
+      normalize: { prepare, cases: [...baseline, check('whitespace', '  Ada  ', 'Hello, Ada!')] },
+    },
+  };
+}
+const pythonLab = extendedProject('Python');
+const javaLab = extendedProject('Java');
+const projects = new Map(
+  [greeting, pythonLab, javaLab].map((p) => [`${p.ref.id}@${p.ref.version}`, p]),
+);
+export function publicProjects() {
+  return [pythonLab, javaLab, greeting].map(({ ref, definition }) => ({
+    ref,
+    title: definition.title,
+    language: definition.language,
+  }));
+}
 export function installedProject(ref: PBLV3Reference): InstalledProject {
   const project = projects.get(`${ref.id}@${ref.version}`);
   if (!project)

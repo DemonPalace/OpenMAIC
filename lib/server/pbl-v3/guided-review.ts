@@ -107,7 +107,7 @@ export class GuidedSkillReview {
     return structuredClone(this.state);
   }
 
-  complete(quote: string | undefined, digest: string): void {
+  assertComplete(quote: string | undefined, digest: string): void {
     if (
       this.ended ||
       this.state.activeFile !== this.protocol.final ||
@@ -116,6 +116,10 @@ export class GuidedSkillReview {
     )
       throw new Error('必须完成各段学生反馈和最终确认，不能以协议已读代替审查');
     this.assertFeedback(quote, digest);
+  }
+
+  complete(quote: string | undefined, digest: string): void {
+    this.assertComplete(quote, digest);
     this.ended = true;
   }
 }

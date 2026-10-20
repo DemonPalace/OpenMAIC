@@ -3,7 +3,7 @@ import { beforeAll, afterAll, describe, expect, it, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { mkdtemp, readFile, writeFile, mkdir, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, basename } from 'node:path';
+import { join, dirname } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { Pool } from 'pg';
@@ -99,9 +99,21 @@ vi.mock('@/lib/server/sandbox/providers/e2b-compatible', () => ({
     }
     async *exportWorkspace(id: string) {
       const files: Record<string, string> = {};
-      for (const name of (await readdir(join(mocked.root, id))).sort())
-        if (!name.startsWith('.command-') && name !== '__pycache__')
-          files[name] = await readFile(join(mocked.root, id, name), 'utf8');
+      const walk = async (dir: string, prefix = '') => {
+        for (const entry of (await readdir(dir, { withFileTypes: true })).sort((a, b) =>
+          a.name.localeCompare(b.name),
+        )) {
+          if (
+            entry.name.startsWith('.command-') ||
+            ['__pycache__', 'target', '.venv'].includes(entry.name)
+          )
+            continue;
+          const path = prefix + entry.name;
+          if (entry.isDirectory()) await walk(join(dir, entry.name), path + '/');
+          else files[path] = await readFile(join(dir, entry.name), 'utf8');
+        }
+      };
+      await walk(join(mocked.root, id));
       yield Buffer.from(JSON.stringify(files));
     }
     async importWorkspace(id: string, _operation: string, source: AsyncIterable<Uint8Array>) {
@@ -109,21 +121,38 @@ vi.mock('@/lib/server/sandbox/providers/e2b-compatible', () => ({
       const chunks = [];
       for await (const chunk of source) chunks.push(chunk);
       const files = JSON.parse(Buffer.concat(chunks).toString()) as Record<string, string>;
-      for (const [name, text] of Object.entries(files))
-        await writeFile(join(mocked.root, id, basename(name)), text);
+      for (const [name, text] of Object.entries(files)) {
+        await mkdir(dirname(join(mocked.root, id, name)), { recursive: true });
+        await writeFile(join(mocked.root, id, name), text);
+      }
     }
     async initializeWorkspace() {}
     async readText(id: string, _operation: string, path: string) {
-      return readFile(join(mocked.root, id, basename(path)), 'utf8');
+      path = path.replace(/^\/home\/user\/project\//, '');
+      return readFile(join(mocked.root, id, path), 'utf8');
     }
     async writeText(id: string, _operation: string, path: string, text: string) {
-      await writeFile(join(mocked.root, id, basename(path)), text);
+      path = path.replace(/^\/home\/user\/project\//, '');
+      await mkdir(dirname(join(mocked.root, id, path)), { recursive: true });
+      await writeFile(join(mocked.root, id, path), text);
       if (mocked.loseWriteAck) throw new Error('Write acknowledgement lost');
     }
     async listWorkspace(id: string) {
-      return (await readdir(join(mocked.root, id)))
-        .filter((p) => !p.startsWith('.command-') && p !== '__pycache__')
-        .map((path) => ({ path, kind: 'file', size: 0 }));
+      const result: { path: string; kind: string; size: number }[] = [];
+      const walk = async (dir: string, prefix = '') => {
+        for (const entry of await readdir(dir, { withFileTypes: true })) {
+          if (
+            entry.name.startsWith('.command-') ||
+            ['__pycache__', 'target', '.venv'].includes(entry.name)
+          )
+            continue;
+          const path = prefix + entry.name;
+          if (entry.isDirectory()) await walk(join(dir, entry.name), path + '/');
+          else result.push({ path, kind: 'file', size: 0 });
+        }
+      };
+      await walk(join(mocked.root, id));
+      return result;
     }
     async startCommand(id: string, _operation: string, input: { id: string; command: string }) {
       let stdout = '',
@@ -189,6 +218,7 @@ vi.mock('@/lib/ai/llm', () => ({
 import { runSession, startAgentRunner } from '@/lib/server/agent-runtime/runner';
 import { ensureOwnerMergeSchema } from '@/lib/persistence/owner-merges';
 import { ensureSandboxEnvironmentSchema } from '@/lib/persistence/sandbox-environments';
+import { learningReport } from '@/lib/server/pbl-v3/report';
 import { installedProject } from '@/lib/server/pbl-v3/catalog';
 import * as catalog from '@/lib/server/pbl-v3/catalog';
 import { SandboxError } from '@/lib/sandbox/errors';
@@ -426,6 +456,189 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
     }
     if (mocked.root) await rm(mocked.root, { recursive: true, force: true });
   });
+  it.each(['greeting-python-lab', 'greeting-java'])(
+    'completes two milestones and resumes optional exploration for %s',
+    async (projectId) => {
+      const selected = installedProject({ id: projectId, version: '1.0.0' });
+      const created = await store.create(
+        {
+          ownerId: principal.ownerId,
+          stageId: randomUUID(),
+          sceneId: 'scene',
+          projectId,
+          version: '1.0.0',
+        },
+        startOrchestration(selected.definition),
+      );
+      const id = created.id;
+      const send = async (type: string, payload: Record<string, unknown> = {}) =>
+        commandStudy(principal, id, {
+          id: randomUUID(),
+          revision: (await store.get(id, principal.ownerId)).revision,
+          type,
+          ...payload,
+        });
+      const roleTurn = async (
+        text: string,
+        body: (config: Awaited<ReturnType<typeof teachingRunnerConfig>>) => Promise<void>,
+      ) => {
+        const queued = (await send('chat', { text })) as { sessionId: string };
+        const claimed = await agents.claimNextSession('journey-worker', process.pid, {
+          sessionId: queued.sessionId,
+          leaseTtlMs: 30000,
+          maxAttempts: 5,
+        });
+        const config = await teachingRunnerConfig({
+          sessionId: queued.sessionId,
+          ownerId: principal.ownerId,
+          workerId: 'journey-worker',
+          attempt: claimed!.attempt,
+          signal: new AbortController().signal,
+        });
+        await body(config);
+        await agents.finishSession(queued.sessionId, 'journey-worker', {
+          status: 'succeeded',
+          expectedAttempt: claimed!.attempt,
+        });
+      };
+      const guidedStage = async (
+        write?: { path: string; text: string },
+        repairEmptyPlan = false,
+      ) => {
+        const stage = (await learningView(principal, id)).stage;
+        const parts = stage.kind === 'produce' ? 4 : 3;
+        for (let part = 0; part < parts; part++)
+          await roleTurn(
+            part ? 'I checked this part and understand it.' : 'Please begin.',
+            async (config) => {
+              const section = await invoke(
+                config,
+                'read_next_skill',
+                part ? { studentFeedback: 'I checked this part' } : {},
+              );
+              expect(JSON.stringify(section)).not.toContain('PBL_RESULT');
+              if (part === 0 && write && !repairEmptyPlan) {
+                const row = await store.get(id, principal.ownerId);
+                const current = await (
+                  await SandboxService.forOwner(principal)
+                ).readText(row.environment_id!, write.path);
+                await invoke(config, 'write_file', { ...write, expectedHash: digest(current) });
+              }
+              if (part === 0 && stage.kind === 'produce' && stage.compileBeforeReview) {
+                await expect(
+                  invoke(config, 'request_skill_review', { question: 'Review the code.' }),
+                ).rejects.toThrow('successful build');
+                await invoke(config, 'run_build');
+                await invoke(config, 'collect_build');
+              }
+              await invoke(config, 'request_skill_review', {
+                question: 'Explain the current work and confirm what to change.',
+              });
+              expect(config.isTurnComplete()).toBe(true);
+            },
+          );
+        if (repairEmptyPlan && write)
+          await roleTurn('I checked this part and approve the current version.', async (config) => {
+            await expect(
+              invoke(config, 'complete_stage', { studentFeedback: 'I checked this part' }),
+            ).rejects.toThrow('PLAN.md must contain');
+            expect(config.isTurnComplete()).toBe(false);
+            await invoke(config, 'write_file', { ...write, expectedHash: digest('') });
+            await invoke(config, 'request_skill_review', { question: 'Review the repaired plan.' });
+          });
+        await roleTurn('I checked this part and approve the current version.', async (config) => {
+          await invoke(config, 'complete_stage', { studentFeedback: 'I checked this part' });
+        });
+        await send('next');
+      };
+      await send('prepare');
+      const initialEnv = (await store.get(id, principal.ownerId)).environment_id!;
+      await guidedStage();
+      for (let milestone = 0; milestone < 2; milestone++) {
+        await guidedStage();
+        if (milestone === 0) {
+          await send('decide', { decisionId: 'format', chosen: 'concat' });
+          await send('next');
+        }
+        const oldPlan = await (
+          await SandboxService.forOwner(principal)
+        ).readText(initialEnv, 'PLAN.md');
+        if (milestone === 1)
+          await expect(
+            send('save', {
+              path: 'PLAN.md',
+              text: 'Erase the previous plan',
+              expectedHash: digest(oldPlan),
+            }),
+          ).rejects.toThrow('Preserve');
+        await guidedStage(
+          {
+            path: 'PLAN.md',
+            text:
+              oldPlan +
+              `\n## Milestone ${milestone + 1}\n${milestone ? 'Trim the name and preserve the greeting.' : 'Return a greeting for the supplied name.'}\n`,
+          },
+          milestone === 0,
+        );
+        const java = projectId === 'greeting-java';
+        const code = java
+          ? `public class Greeting { public static String greet(String name) { return "Hello, " + name${milestone ? '.trim()' : ''} + "!"; } public static void main(String[] args) { System.out.println(greet(args[0])); } }`
+          : `def greet(name):\n    return f"Hello, {${milestone ? 'name.strip()' : 'name'}}!"\n`;
+        await guidedStage({ path: java ? 'src/Greeting.java' : 'src/greeting.py', text: code });
+        await send('evaluate');
+        await send('collect');
+        expect(
+          (await store.get(id, principal.ownerId)).state.collected[
+            milestone ? 'normalize' : 'greeting'
+          ]?.tests?.status,
+        ).toBe('passed');
+        await send('next');
+        await send('quiz', { answers: [0] });
+        await send('next');
+        await guidedStage();
+      }
+      const exploring = await learningView(principal, id);
+      expect(exploring.state.position.milestoneId).toBe('explore');
+      expect(exploring.actions).not.toContain('next');
+      const before = await store.get(id, principal.ownerId);
+      const report = await learningReport(principal, id);
+      expect(report.requiredComplete).toBe(true);
+      expect(report.evidence.filter((e) => e.kind === 'evaluation.recorded')).toHaveLength(2);
+      expect(
+        report.evidence.some(
+          (e) => e.kind === 'artifact.recorded' && e.detail.includes('Milestone 2'),
+        ),
+      ).toBe(true);
+      expect((await store.get(id, principal.ownerId)).revision).toBe(before.revision);
+      await expect(
+        learningReport({ ...principal, ownerId: 'someone-else' }, id),
+      ).rejects.toMatchObject({ status: 404 });
+      await roleTurn('I want to explore another greeting.', async (config) => {
+        expect(config.allowedToolNames.has('complete_stage')).toBe(false);
+        expect(config.allowedToolNames.has('read_next_skill')).toBe(false);
+        const path = projectId === 'greeting-java' ? 'src/Greeting.java' : 'src/greeting.py';
+        const original = await (
+          await SandboxService.forOwner(principal)
+        ).readText(initialEnv, path);
+        await invoke(config, 'write_file', {
+          path,
+          text: original + '\n',
+          expectedHash: digest(original),
+        });
+      });
+      await send('checkpoint');
+      mocked.missing.add(initialEnv);
+      await send('prepare');
+      const restored = await learningView(principal, id);
+      expect(restored.state.position.milestoneId).toBe('explore');
+      expect(restored.environmentId).not.toBe(initialEnv);
+      expect((await learningReport(principal, id)).requiredComplete).toBe(true);
+      const bindings = await store.roles(id);
+      expect(bindings.filter((b) => b.role === 'mentor')).toHaveLength(1);
+      expect(bindings.filter((b) => b.role === 'planner')).toHaveLength(2);
+    },
+    120000,
+  );
   it('pins project identity and isolates learners', async () => {
     const same = await store.create(
       {

@@ -12,6 +12,7 @@ import { getOwnerScopedDocumentStore } from '@/lib/server/agent-runtime/owner-sc
 import { isAgentRuntimeConfigured } from '@/lib/config/feature-flags';
 import { assertWorkspaceModelsAuthorized } from '@/lib/server/model-config/runtime';
 import { isPBLV3Reference, type LearningView } from '@/lib/pbl/v3/types';
+import { isExplorationStage } from '@/lib/pbl/v3/domain/project/project-schema';
 import type { AgentRole } from '@/lib/pbl/v3/domain/project/project-schema';
 import {
   currentStage,
@@ -22,6 +23,9 @@ import * as transitions from '@/lib/pbl/v3/domain/orchestration/transition';
 import { judgeQuiz } from '@/lib/pbl/v3/domain/orchestration/quiz';
 import type { EngineTransition } from '@/lib/pbl/v3/domain/orchestration/events';
 import { assertProjectSource, projectFiles } from './workspace-files';
+import { assertIncrementalPlan } from './plan';
+import { startBuild, collectBuild } from './compilation';
+import { evaluationCommand, evaluationFor, evaluationPassed } from './evaluation';
 import { installedProject } from './catalog';
 import { LearningStore, type Study, type RoleBinding } from './store';
 import {
@@ -90,6 +94,21 @@ export function filesFingerprint(files: Record<string, string>) {
 export async function fileSnapshot(service: SandboxService, row: Study) {
   const files = await readFiles(service, row);
   return { files, fingerprint: filesFingerprint(files) };
+}
+async function saveStudyCheckpoint(service: SandboxService, row: Study) {
+  const snapshot = await fileSnapshot(service, row);
+  const previous = await service.checkpoint(requireEnvironment(row));
+  const saved = await service.saveWorkspace(requireEnvironment(row), previous?.revision ?? 0);
+  row.environment_recovery = {
+    ...row.environment_recovery,
+    requestId: row.environment_id!,
+    savedPosition: {
+      revision: saved.checkpoint.revision,
+      milestoneIndex: row.state.position.milestoneIndex,
+      stageIndex: row.state.position.stageIndex,
+      fingerprint: snapshot.fingerprint,
+    },
+  };
 }
 export function invalidateWorkspace(row: Study, changedPath?: string): EngineTransition {
   const state = structuredClone(row.state);
@@ -225,7 +244,7 @@ export async function commandStudy(
       ? ['create', 'restore', 'write']
       : command.type === 'save'
         ? ['write']
-        : command.type === 'evaluate'
+        : command.type === 'evaluate' || command.type === 'compile'
           ? ['command']
           : command.type === 'checkpoint' || command.type === 'next'
             ? ['checkpoint']
@@ -338,7 +357,10 @@ export async function commandStudy(
           );
         // Store allocation identity before network I/O. Reloads and lost acknowledgements reuse it.
         if (!row.environment_recovery || row.environment_recovery.requestId === previousId) {
-          row.environment_recovery = { requestId: previousId ? randomUUID() : row.id };
+          row.environment_recovery = {
+            ...row.environment_recovery,
+            requestId: previousId ? randomUUID() : row.id,
+          };
           row = await store.transaction((db) =>
             store.commit(db, row, { state: row.state, events: [] }),
           );
@@ -349,7 +371,7 @@ export async function commandStudy(
         );
         env = await service.reconcile(env.id);
         if (env.state === 'destroyed') {
-          row.environment_recovery = { requestId: randomUUID() };
+          row.environment_recovery = { ...row.environment_recovery, requestId: randomUUID() };
           await store.transaction((db) => store.commit(db, row, { state: row.state, events: [] }));
           throw sandboxConflict(
             'The replacement expired before preparation completed. Retry preparation.',
@@ -364,10 +386,16 @@ export async function commandStudy(
             if (!existing.has(path)) await service.writeText(env.id, path, text);
         }
         row.environment_id = env.id;
-        const restored = recoveredProgress(row, project, await readFiles(service, row));
+        const restored = recoveredProgress(
+          row,
+          project,
+          await readFiles(service, row),
+          checkpoint?.revision ?? 0,
+        );
         transition = { state: restored.state, events: [] };
         row.evaluation = null;
         row.environment_recovery = {
+          ...row.environment_recovery,
           requestId: env.id,
           checkpointRevision: checkpoint?.revision ?? 0,
           progressReset: restored.reset,
@@ -396,6 +424,7 @@ export async function commandStudy(
         throw sandboxConflict('Only PLAN.md can be edited during planning.');
       if (command.path === 'PLAN.md' && !(stage.kind === 'produce' && stage.writes === 'plan'))
         throw sandboxConflict('The approved plan is read-only during coding.');
+      if (command.path === 'PLAN.md') await assertIncrementalPlan(store, row, command.text);
       await service.compareAndWriteText(
         requireEnvironment(row),
         command.path,
@@ -409,8 +438,7 @@ export async function commandStudy(
       );
       transition = { state: row.state, events: [] };
     } else if (command.type === 'checkpoint') {
-      const checkpoint = await service.checkpoint(requireEnvironment(row));
-      await service.saveWorkspace(requireEnvironment(row), checkpoint?.revision ?? 0);
+      await saveStudyCheckpoint(service, row);
     } else if (command.type === 'decide') {
       check('decide');
       const decision = definition.decisions.find((d) => d.id === command.decisionId);
@@ -439,6 +467,9 @@ export async function commandStudy(
         total: judged.total,
         wrong: judged.wrong,
       });
+    } else if (command.type === 'compile') {
+      result = await startBuild(store, row, service, command.id);
+      transition = { state: row.state, events: [] };
     } else if (command.type === 'evaluate') {
       check('evaluate');
       if (row.evaluation && row.evaluation.id !== command.id)
@@ -455,12 +486,25 @@ export async function commandStudy(
       );
       result = await service.startCommand(requireEnvironment(row), {
         requestId: command.id,
-        command: project.testCommand,
+        command: evaluationCommand(
+          evaluationFor(project, row.state.position.milestoneId!),
+          command.id,
+        ),
         timeoutMs: 60_000,
       });
       transition = { state: row.state, events: [] };
     } else if (command.type === 'collect') {
       if (!row.evaluation) throw sandboxConflict('No test is awaiting collection.');
+      if (row.evaluation.purpose === 'compile') {
+        const buildResult = await collectBuild(store, row, service);
+        if ('pending' in buildResult) return buildResult;
+        result = buildResult;
+        transition = { state: row.state, events: [] };
+        return store.transaction(async (db) => {
+          await persist(db);
+          return result;
+        });
+      }
       const evaluation = row.evaluation;
       const observed = await service.command(requireEnvironment(row), evaluation.id);
       if (['starting', 'running', 'unknown'].includes(observed.state))
@@ -483,7 +527,12 @@ export async function commandStudy(
             id: evaluation.id,
             status:
               observed.state === 'exited'
-                ? observed.exitCode === 0
+                ? observed.exitCode === 0 &&
+                  evaluationPassed(
+                    evaluationFor(project, milestone.id),
+                    evaluation.id,
+                    observed.stdout,
+                  )
                   ? 'passed'
                   : 'failed'
                 : 'error',
@@ -540,10 +589,13 @@ export async function commandStudy(
             'Files changed after review or testing. Review and test the current files first.',
           );
       }
-      if (stage.kind === 'produce') {
+      const endingMilestone =
+        row.state.introCompleted &&
+        row.state.position.stageIndex ===
+          currentMilestone(definition, row.state)!.stages.length - 1;
+      if (stage.kind === 'produce' || endingMilestone) {
         // Establish a durable artifact before acknowledging the student's stage confirmation.
-        const checkpoint = await service.checkpoint(requireEnvironment(row));
-        await service.saveWorkspace(requireEnvironment(row), checkpoint?.revision ?? 0);
+        await saveStudyCheckpoint(service, row);
       }
       transition = row.state.introCompleted
         ? transitions.completeCurrentStage(definition, row.state)
@@ -698,7 +750,10 @@ export async function learningView(principal: OwnerPrincipal, id: string): Promi
     row.state.status === 'completed'
       ? []
       : [...transitions.allowedStudentActions(project.definition, row.state)];
-  const guided = stage.kind === 'mentor_say' || stage.kind === 'produce';
+  if (stage.kind === 'produce' && stage.writes === 'code' && project.buildCommand)
+    actions.push('compile');
+  const guided =
+    stage.kind === 'mentor_say' || (stage.kind === 'produce' && !isExplorationStage(stage));
   const approvalCurrent =
     roleRun?.status === 'succeeded' &&
     binding?.completion?.stageKey === stageKey(row) &&
@@ -720,6 +775,14 @@ export async function learningView(principal: OwnerPrincipal, id: string): Promi
     state: row.state,
     stage,
     role,
+    milestones: project.definition.milestones.map((m) => ({
+      id: m.id,
+      title: m.title,
+      optional: !!m.optional,
+      stages: m.stages.map((s) =>
+        s.kind === 'produce' ? s.writes : s.kind === 'check' ? s.checker : s.kind,
+      ),
+    })),
     actions:
       row.evaluation || (guided && !approvalCurrent)
         ? actions.filter((action) => action !== 'next')

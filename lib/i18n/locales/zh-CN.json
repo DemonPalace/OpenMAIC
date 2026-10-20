@@ -2555,8 +2555,8 @@
     "runTests": "运行测试",
     "collect": "收取测试结果",
     "saveNotice": "编辑保存到当前执行环境。释放环境前请保存检查点，以便保留文件。",
-    "sampleNotice": "在课堂中打开预置的 Python 项目。此 Preview 使用已安装的项目，尚未开放项目生成功能。",
-    "openSample": "打开 Python 示例",
+    "sampleNotice": "在课堂中打开预置的 Java 或 Python 项目。此 Preview 使用已安装的项目，尚未开放项目生成功能。",
+    "openSample": "打开所选示例",
     "checks": "检查",
     "roles": {
       "mentor": "导师",
@@ -2571,6 +2571,39 @@
       "unavailable": "教学回复未能完成，请稍后重试。",
       "cancelled": "本轮教学回复已取消。可以重试或发送新的消息。",
       "missing": "教学会话已失效。发送消息可恢复当前环节，学习进度会保留，当前环节需重新审阅。"
+    },
+    "learningPath": "学习路径",
+    "optional": "可选",
+    "report": "学习报告",
+    "backLearning": "返回学习",
+    "evidenceReportNotice": "报告来自已保存的学习记录。每条记录对应当时的文件版本和结果，不代表当前文件仍已通过。查看报告不会推进学习进度。",
+    "requiredComplete": "必修学习已完成，可选探索可以随时继续。",
+    "inProgress": "学习仍在进行中。",
+    "reportEvidence": "决策、作品和结果",
+    "reportConversations": "学习对话",
+    "truncatedEvidence": "这里仅显示最近的记录，较早记录仍已保存。",
+    "evidenceVersion": "审阅或测试时的版本",
+    "learner": "学生",
+    "build": "编译／检查语法",
+    "sampleSelect": "选择项目",
+    "stageNames": {
+      "mentor_say": "讲解与复盘",
+      "dialogue": "决策",
+      "plan": "计划与审阅",
+      "code": "实现与审阅",
+      "tests": "测试",
+      "quiz": "测验",
+      "course": "课程"
+    },
+    "evidenceKinds": {
+      "decision_recorded": "决策记录",
+      "artifact_recorded": "作品记录",
+      "evaluation_recorded": "测试结果",
+      "quiz_recorded": "测验记录",
+      "milestone_completed": "完成学习阶段",
+      "recap_completed": "完成复盘",
+      "teaching_completed": "完成讲解",
+      "artifact_review_completed": "完成审阅"
     }
   }
 }

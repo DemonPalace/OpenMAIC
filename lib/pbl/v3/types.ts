@@ -25,6 +25,7 @@ export interface LearningView {
   recovery: { checkpointRevision: number; progressReset: boolean } | null;
   state: PblSessionState;
   stage: StageDefinition;
+  milestones?: { id: string; title: string; optional: boolean; stages: string[] }[];
   role: AgentRole | null;
   actions: string[];
   files: string[];

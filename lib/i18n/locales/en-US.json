@@ -2555,8 +2555,8 @@
     "runTests": "Run tests",
     "collect": "Collect test result",
     "saveNotice": "File edits update the running environment. Save a checkpoint to retain files after the environment is released.",
-    "sampleNotice": "Open a prepared Python project in the classroom. This Preview uses installed projects; project generation is not enabled.",
-    "openSample": "Open Python sample",
+    "sampleNotice": "Open a prepared Java or Python project in the classroom. This Preview uses installed projects; project generation is not enabled.",
+    "openSample": "Open selected sample",
     "checks": "Checks",
     "roles": {
       "mentor": "Mentor",
@@ -2571,6 +2571,39 @@
       "unavailable": "The teaching response could not finish. Please retry shortly.",
       "cancelled": "This teaching turn was cancelled. Retry it or send a new message.",
       "missing": "The teaching session is unavailable. Send a message to restart this review step; your learning progress is preserved."
+    },
+    "learningPath": "Learning path",
+    "optional": "Optional",
+    "report": "Learning report",
+    "backLearning": "Return to learning",
+    "evidenceReportNotice": "This report uses saved learning records. Each entry refers to the version and result at that time; it does not certify the files currently in your workspace. Viewing it does not advance your progress.",
+    "requiredComplete": "Required learning completed. Exploration remains optional.",
+    "inProgress": "Learning is still in progress.",
+    "reportEvidence": "Decisions, artifacts and results",
+    "reportConversations": "Learning conversations",
+    "truncatedEvidence": "Only the most recent records are shown here. Earlier records remain saved.",
+    "evidenceVersion": "Reviewed or tested version",
+    "learner": "Learner",
+    "build": "Build / check syntax",
+    "sampleSelect": "Choose a project",
+    "stageNames": {
+      "mentor_say": "Teaching and reflection",
+      "dialogue": "Decisions",
+      "plan": "Plan and review",
+      "code": "Implementation and review",
+      "tests": "Tests",
+      "quiz": "Quiz",
+      "course": "Course"
+    },
+    "evidenceKinds": {
+      "decision_recorded": "Decision",
+      "artifact_recorded": "Artifact",
+      "evaluation_recorded": "Test result",
+      "quiz_recorded": "Quiz attempt",
+      "milestone_completed": "Milestone completed",
+      "recap_completed": "Reflection completed",
+      "teaching_completed": "Teaching completed",
+      "artifact_review_completed": "Review completed"
     }
   }
 }
