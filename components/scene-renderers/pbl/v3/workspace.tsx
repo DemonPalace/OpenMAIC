@@ -33,10 +33,17 @@ export function PBLV3Workspace({ sceneId }: { sceneId: string }) {
     id: string;
     revision: number;
   } | null>(null);
+  const updateView = useCallback((next: LearningView) => {
+    // A delayed poll or command response cannot undo newer progress or replace another study.
+    setView((current) =>
+      current?.id === next.id && current.revision <= next.revision ? next : current,
+    );
+  }, []);
+  const studyId = view?.id;
   const refresh = useCallback(async () => {
-    if (view)
-      setView(await pblRequest<LearningView>(`/api/pbl/v3?id=${encodeURIComponent(view.id)}`));
-  }, [view?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (studyId)
+      updateView(await pblRequest<LearningView>(`/api/pbl/v3?id=${encodeURIComponent(studyId)}`));
+  }, [studyId, updateView]);
   const open = useCallback(async () => {
     if (!stageId) return;
     setPending(true);
@@ -85,7 +92,7 @@ export function PBLV3Workspace({ sceneId }: { sceneId: string }) {
           ...request.payload,
         },
       });
-      setView(result.view);
+      updateView(result.view);
       retry.current = null;
       if (request.type === 'chat') setText('');
       if (request.type === 'save') await loadFile();

@@ -62,6 +62,7 @@ test('installed sample opens in the normal classroom and preserves progress afte
     if (req.method() === 'GET' && url.searchParams.has('file'))
       return route.fulfill({ json: { text: file, hash: 'a'.repeat(64) } });
     if (body?.command) {
+      expect(body.command.revision).toBe(view.revision);
       calls.push(body.command);
       view.revision++;
       const command = body.command;
@@ -100,8 +101,40 @@ test('installed sample opens in the normal classroom and preserves progress afte
   await expect(page).toHaveURL(/\/classroom\/pbl-/, { timeout: 60000 });
   await expect(page.getByTestId('pbl-v3-workspace')).toBeVisible({ timeout: 60000 });
   await page.getByRole('button', { name: 'Prepare project environment' }).click();
+  // Hold an old progress GET until after a teaching command installs a newer revision.
+  let releaseView!: () => void, viewStarted!: () => void;
+  const viewGate = new Promise<void>((resolve) => {
+    releaseView = resolve;
+  });
+  const viewSeen = new Promise<void>((resolve) => {
+    viewStarted = resolve;
+  });
+  let holdView = true;
+  await page.route('**/api/pbl/v3?**', async (route) => {
+    if (!holdView || new URL(route.request().url()).searchParams.has('file'))
+      return route.fallback();
+    holdView = false;
+    const stale = structuredClone(view);
+    viewStarted();
+    await viewGate;
+    await route.fulfill({ json: stale, headers: { 'x-pbl-stale-fixture': '1' } });
+  });
+  await page.getByRole('button', { name: 'Refresh progress' }).click();
+  await viewSeen;
   await page.getByLabel('Your message').fill('Please introduce the project.');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(page.getByText('What should greet(name) return?', { exact: true })).toBeVisible();
+  const staleViewResponse = page.waitForResponse(
+    (response) => response.headers()['x-pbl-stale-fixture'] === '1',
+  );
+  releaseView();
+  await (await staleViewResponse).finished();
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+  );
   await expect(page.getByText('What should greet(name) return?', { exact: true })).toBeVisible();
   await page.reload();
   await expect(page.getByText('What should greet(name) return?', { exact: true })).toBeVisible();
