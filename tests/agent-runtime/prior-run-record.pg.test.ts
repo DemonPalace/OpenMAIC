@@ -1,4 +1,5 @@
 import { Pool } from 'pg';
+import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import {
@@ -35,15 +36,20 @@ function transactionFor(pool: Pool): WithTransaction {
  */
 describe.skipIf(!contractUrl)('prior runs read from the PostgreSQL event log', () => {
   const claimOptions = { leaseTtlMs: 10_000, maxAttempts: 5 };
+  const schema = `prior_run_${randomUUID().replaceAll('-', '')}`;
+  let admin: Pool;
   let pool: Pool;
   let store: PgAgentSessionStore;
 
   beforeAll(async () => {
-    pool = new Pool({ connectionString: contractUrl });
+    admin = new Pool({ connectionString: contractUrl });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    pool = new Pool({ connectionString: contractUrl, options: `-c search_path=${schema}` });
     await ensureAgentSessionSchema(pool as Queryable);
   });
 
   beforeEach(async () => {
+    // Keep cleanup local to this suite, even while other contracts claim sessions.
     await pool.query(
       `TRUNCATE agent_session_entries, agent_session_events,
                 agent_owner_session_events, agent_owner_session_event_counters,
@@ -53,7 +59,14 @@ describe.skipIf(!contractUrl)('prior runs read from the PostgreSQL event log', (
   });
 
   afterAll(async () => {
-    await pool.end();
+    await pool?.end();
+    if (admin) {
+      try {
+        await admin.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+      } finally {
+        await admin.end();
+      }
+    }
   });
 
   it('tells a failed start from a run that completed messages', async () => {

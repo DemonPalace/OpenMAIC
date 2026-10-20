@@ -1,4 +1,5 @@
 import { Pool } from 'pg';
+import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import {
@@ -33,18 +34,23 @@ describe.skipIf(!contractUrl)('session attempt budget takeovers', () => {
   /** Mirrors the runner's verdict against this suite's bound, not its config. */
   const overAttemptCap = (claim: { attempt: number }) => claim.attempt > maxAttempts;
 
+  const schema = `park_budget_${randomUUID().replaceAll('-', '')}`;
+  let admin: Pool;
   let pool: Pool;
   let store: PgAgentSessionStore;
 
   beforeAll(async () => {
-    pool = new Pool({ connectionString: contractUrl });
+    admin = new Pool({ connectionString: contractUrl });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    pool = new Pool({ connectionString: contractUrl, options: `-c search_path=${schema}` });
     await ensureAgentSessionSchema(pool as Queryable);
   });
 
   beforeEach(async () => {
     // CASCADE absorbs every table that has since gained an FK to agent_sessions
     // (agent_session_urls from the URL trust gate, agent_session_materials from
-    // the material store); the suite owns the whole database.
+    // the material store). Only this suite's schema is cleared; parallel
+    // contracts must not lose their sessions during a takeover.
     await pool.query(
       `TRUNCATE agent_session_entries, agent_session_events,
                 agent_owner_session_events, agent_owner_session_event_counters,
@@ -54,7 +60,14 @@ describe.skipIf(!contractUrl)('session attempt budget takeovers', () => {
   });
 
   afterAll(async () => {
-    await pool.end();
+    await pool?.end();
+    if (admin) {
+      try {
+        await admin.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+      } finally {
+        await admin.end();
+      }
+    }
   });
 
   it('survives six clean park and takeover cycles with a cap of five', async () => {
