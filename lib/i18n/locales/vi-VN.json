@@ -2263,7 +2263,9 @@
         "perFile": "Tối đa {{document}} cho mỗi tài liệu hoặc hình ảnh, {{media}} cho mỗi âm thanh hoặc video"
       },
       "usage": {
-        "summary": "Đã dùng {{used}} / {{max}} · {{count}} / {{maxCount}} tệp"
+        "summary": "Đã dùng {{used}} / {{max}} · {{count}} / {{maxCount}} tệp",
+        "fileStorage": "Bộ nhớ tệp tính riêng: đã dùng {{used}} / {{max}} (gồm nội dung đã phân tích và tư liệu khóa học)",
+        "fileStorageUnlimited": "Bộ nhớ tệp tính riêng: đã dùng {{used}} (gồm nội dung đã phân tích và tư liệu khóa học)"
       },
       "empty": {
         "title": "Kho kiến thức của bạn đang trống",

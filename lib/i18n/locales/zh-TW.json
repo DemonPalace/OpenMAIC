@@ -2248,7 +2248,9 @@
         "perFile": "單一文件或圖片不超過 {{document}}，音訊與影片不超過 {{media}}"
       },
       "usage": {
-        "summary": "已用 {{used}} / {{max}} · {{count}} / {{maxCount}} 個檔案"
+        "summary": "已用 {{used}} / {{max}} · {{count}} / {{maxCount}} 個檔案",
+        "fileStorage": "另計檔案儲存：已用 {{used}} / {{max}}（含解析內容與課程素材）",
+        "fileStorageUnlimited": "另計檔案儲存：已用 {{used}}（含解析內容與課程素材）"
       },
       "empty": {
         "title": "知識庫還是空的",

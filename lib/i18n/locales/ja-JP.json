@@ -2263,7 +2263,9 @@
         "perFile": "文書・画像は {{document}} まで、音声・動画は {{media}} まで"
       },
       "usage": {
-        "summary": "{{max}} 中 {{used}} を使用 · {{count}} / {{maxCount}} ファイル"
+        "summary": "{{max}} 中 {{used}} を使用 · {{count}} / {{maxCount}} ファイル",
+        "fileStorage": "別枠のファイルストレージ：{{max}} 中 {{used}} を使用（解析内容とコース素材を含む）",
+        "fileStorageUnlimited": "別枠のファイルストレージ：{{used}} を使用（解析内容とコース素材を含む）"
       },
       "empty": {
         "title": "ナレッジベースはまだ空です",

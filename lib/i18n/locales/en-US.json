@@ -2263,7 +2263,9 @@
         "perFile": "Up to {{document}} per document or image, {{media}} per audio or video"
       },
       "usage": {
-        "summary": "Used {{used}} of {{max}} · {{count}} of {{maxCount}} files"
+        "summary": "Used {{used}} of {{max}} · {{count}} of {{maxCount}} files",
+        "fileStorage": "File storage, counted separately: {{used}} of {{max}} (includes parsed content and course media)",
+        "fileStorageUnlimited": "File storage, counted separately: {{used}} used (includes parsed content and course media)"
       },
       "empty": {
         "title": "Your knowledge base is empty",

@@ -2263,7 +2263,9 @@
         "perFile": "Bis {{document}} pro Dokument oder Bild, {{media}} pro Audio oder Video"
       },
       "usage": {
-        "summary": "{{used}} von {{max}} belegt · {{count}} von {{maxCount}} Dateien"
+        "summary": "{{used}} von {{max}} belegt · {{count}} von {{maxCount}} Dateien",
+        "fileStorage": "Separater Dateispeicher: {{used}} von {{max}} belegt (inkl. analysierter Inhalte und Kursmedien)",
+        "fileStorageUnlimited": "Separater Dateispeicher: {{used}} belegt (inkl. analysierter Inhalte und Kursmedien)"
       },
       "empty": {
         "title": "Deine Wissensbasis ist leer",

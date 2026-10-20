@@ -2263,7 +2263,9 @@
         "perFile": "单个文档或图片不超过 {{document}}，音视频不超过 {{media}}"
       },
       "usage": {
-        "summary": "已用 {{used}} / {{max}} · {{count}} / {{maxCount}} 个文件"
+        "summary": "已用 {{used}} / {{max}} · {{count}} / {{maxCount}} 个文件",
+        "fileStorage": "另计文件存储：已用 {{used}} / {{max}}（含解析内容与课程素材）",
+        "fileStorageUnlimited": "另计文件存储：已用 {{used}}（含解析内容与课程素材）"
       },
       "empty": {
         "title": "知识库还是空的",

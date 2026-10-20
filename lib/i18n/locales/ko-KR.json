@@ -2263,7 +2263,9 @@
         "perFile": "문서·이미지는 최대 {{document}}, 오디오·동영상은 최대 {{media}}"
       },
       "usage": {
-        "summary": "{{max}} 중 {{used}} 사용 · 파일 {{count}} / {{maxCount}}개"
+        "summary": "{{max}} 중 {{used}} 사용 · 파일 {{count}} / {{maxCount}}개",
+        "fileStorage": "별도 파일 저장 공간: {{max}} 중 {{used}} 사용 (분석된 내용과 수업 자료 포함)",
+        "fileStorageUnlimited": "별도 파일 저장 공간: {{used}} 사용 (분석된 내용과 수업 자료 포함)"
       },
       "empty": {
         "title": "지식 베이스가 비어 있습니다",

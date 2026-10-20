@@ -2263,7 +2263,9 @@
         "perFile": "Até {{document}} por documento ou imagem, {{media}} por áudio ou vídeo"
       },
       "usage": {
-        "summary": "{{used}} usados de {{max}} · {{count}} de {{maxCount}} arquivos"
+        "summary": "{{used}} usados de {{max}} · {{count}} de {{maxCount}} arquivos",
+        "fileStorage": "Armazenamento de arquivos à parte: {{used}} usados de {{max}} (inclui conteúdo analisado e mídias de cursos)",
+        "fileStorageUnlimited": "Armazenamento de arquivos à parte: {{used}} usados (inclui conteúdo analisado e mídias de cursos)"
       },
       "empty": {
         "title": "Sua base de conhecimento está vazia",

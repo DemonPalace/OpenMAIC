@@ -234,7 +234,7 @@ function StatusLabel({
 
 /**
  * One group (#1835 review §2): "Used 781.7 KB of 2 GB · 1 of 100 files" and a
- * short bar beside it. The pool quota is not shown.
+ * short bar beside it. The pool quota is the separate line below it.
  */
 function Usage({
   limits,
@@ -276,6 +276,35 @@ function Usage({
         />
       </div>
     </div>
+  );
+}
+
+/**
+ * The pool quota, which the usage above does not cover (RFC #1716 §8): every
+ * file the owner keeps in storage -- uploads, extracted text and images, course
+ * media -- counted separately. Without a pool quota only the usage is shown,
+ * and nothing when the server sends no pool usage.
+ */
+function FileStorage({
+  limits,
+  locale,
+  t,
+}: {
+  readonly limits: LibraryLimits;
+  readonly locale: string;
+  readonly t: Translate;
+}) {
+  if (!Number.isFinite(limits.assetUsedBytes)) return null;
+  const used = formatMaterialBytes(limits.assetUsedBytes, locale);
+  return (
+    <p data-testid="kb-file-storage" className="mt-1.5 text-[12px] text-[color:var(--ws-ink-mute)]">
+      {limits.assetQuotaBytes
+        ? t('workspace.knowledgeBase.usage.fileStorage', {
+            used,
+            max: formatMaterialBytes(limits.assetQuotaBytes, locale),
+          })
+        : t('workspace.knowledgeBase.usage.fileStorageUnlimited', { used })}
+    </p>
   );
 }
 
@@ -1631,6 +1660,7 @@ export function MaterialLibraryPage({
         {tree.limits ? (
           <section>
             <Usage limits={tree.limits} locale={locale} t={t} />
+            <FileStorage limits={tree.limits} locale={locale} t={t} />
           </section>
         ) : null}
 

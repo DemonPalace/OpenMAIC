@@ -387,7 +387,7 @@ describe('the list', () => {
     await page.dispose();
   });
 
-  it('shows the usage as one bar with the file count, the per-file limits on the upload, no pool quota', async () => {
+  it('shows the usage as one bar with the file count, the per-file limits on the upload, the pool quota below', async () => {
     const page = await openPage();
     const bar = page.query('kb-usage-bar')!;
     expect(bar.getAttribute('role')).toBe('progressbar');
@@ -407,9 +407,42 @@ describe('the list', () => {
       'workspace.knowledgeBase.limits.perFile{"document":"50 MB","media":"50 MB"}',
     );
     expect(page.query('kb-upload-limits')?.className).toContain('md:hidden');
-    // The pool quota stays off the page.
-    expect(page.container.textContent).not.toContain('10 GB');
-    expect(page.container.textContent).not.toContain('4 KB');
+    // The pool quota is its own line, outside the usage group and its bar.
+    const storage = page.query('kb-file-storage')!;
+    expect(storage.textContent).toBe(
+      'workspace.knowledgeBase.usage.fileStorage{"used":"4 KB","max":"10 GB"}',
+    );
+    expect(page.query('kb-usage')!.contains(storage)).toBe(false);
+    await page.dispose();
+  });
+
+  it('shows the file storage line without a pool quota, at zero, and not without pool usage', async () => {
+    const withLimits = (limits: Record<string, unknown>) => {
+      library = (params) =>
+        json({
+          materials: [source('a')],
+          ...(params.get('limits') === '0' ? {} : { limits: { ...LIMITS, ...limits } }),
+        });
+    };
+
+    withLimits({ assetQuotaBytes: null });
+    let page = await openPage();
+    expect(page.query('kb-file-storage')?.textContent).toBe(
+      'workspace.knowledgeBase.usage.fileStorageUnlimited{"used":"4 KB"}',
+    );
+    await page.dispose();
+
+    withLimits({ assetUsedBytes: 0 });
+    page = await openPage();
+    expect(page.query('kb-file-storage')?.textContent).toBe(
+      'workspace.knowledgeBase.usage.fileStorage{"used":"0 B","max":"10 GB"}',
+    );
+    await page.dispose();
+
+    withLimits({ assetUsedBytes: undefined });
+    page = await openPage();
+    expect(page.query('kb-usage')).not.toBeNull();
+    expect(page.query('kb-file-storage')).toBeNull();
     await page.dispose();
   });
 
