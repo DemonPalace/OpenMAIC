@@ -475,6 +475,7 @@
       "moreActions": "Thêm hành động",
       "rename": "Đổi tên",
       "sceneIncomplete": "Trang này còn thiếu nội dung",
+      "sceneHasErrors": "Trang này có lỗi",
       "addPage": "Thêm trang",
       "nextPage": "Trang sau",
       "prevPage": "Trang trước"
@@ -1718,7 +1719,6 @@
     "videoModel": "Model tạo video",
     "providerSeedance": "Seedance (ByteDance)",
     "providerKling": "Kling (Kuaishou)",
-    "providerVeo": "Veo (Google)",
     "providerSora": "Sora (OpenAI)",
     "providerMiniMaxVideo": "MiniMax Video",
     "providerGrokVideo": "Grok Video (xAI)",
