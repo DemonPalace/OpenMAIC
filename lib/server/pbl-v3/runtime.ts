@@ -78,7 +78,8 @@ export async function readFiles(service: SandboxService, row: Study, project = p
   for (const path of await projectFiles(service, environmentId, project)) {
     const text = await service.readText(environmentId, path);
     bytes += Buffer.byteLength(text);
-    if (bytes > 1_048_576) throw sandboxInvalid('Project source snapshots are limited to 1 MiB.');
+    if (bytes > 1_048_576)
+      throw sandboxInvalid('Project source snapshots are limited to 1 MiB.', 'PBL_SOURCE_SIZE');
     result[path] = text;
   }
   return result;

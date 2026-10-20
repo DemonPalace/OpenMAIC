@@ -2,8 +2,9 @@ import 'server-only';
 import type { InstalledProject } from './catalog';
 import type { SandboxService } from '@/lib/server/sandbox/service';
 import { sandboxInvalid } from '@/lib/sandbox/errors';
+import { WORKSPACE_EXCLUDES } from '@/lib/server/sandbox/workspace-archive';
 
-const excluded = new Set(['.git', 'node_modules', '__pycache__', 'target', 'build', 'dist']);
+const excluded = new Set([...WORKSPACE_EXCLUDES, '.git', 'build', 'dist']);
 function validPath(path: unknown): path is string {
   return (
     typeof path === 'string' &&
@@ -27,7 +28,7 @@ export function assertProjectSource(
   path: unknown,
 ): asserts path is string {
   if (!isProjectSource(project, path))
-    throw sandboxInvalid('This path is outside the project source files.');
+    throw sandboxInvalid('This path is outside the project source files.', 'PBL_SOURCE_PATH');
 }
 export async function projectFiles(
   service: SandboxService,
@@ -41,7 +42,7 @@ export async function projectFiles(
     : Object.keys(project.files);
   const unique = [...new Set(paths)].sort();
   if (unique.length > 256)
-    throw sandboxInvalid('Learning projects support at most 256 source files.');
+    throw sandboxInvalid('Learning projects support at most 256 source files.', 'PBL_SOURCE_COUNT');
   for (const path of unique) assertProjectSource(project, path);
   return unique;
 }

@@ -22,7 +22,12 @@ import {
 
 import type { SandboxConfig } from '../config';
 import { COMMAND_RUNNER, shellQuote } from '../command-runner';
-import { WORKSPACE_FILE_RUNNER, WORKSPACE_ROOT, workspacePath } from '../workspace-archive';
+import {
+  WORKSPACE_EXCLUDES,
+  WORKSPACE_FILE_RUNNER,
+  WORKSPACE_ROOT,
+  workspacePath,
+} from '../workspace-archive';
 import { CHECKPOINT_RUNNER } from '../checkpoint-runner';
 import { checkpointPolicy, checkpointArchiveLimit } from '../checkpoint-policy';
 import { Readable } from 'node:stream';
@@ -614,7 +619,7 @@ import os,json,stat
 root='/home/user/project'; out=[]
 if os.path.realpath(root)!=root: raise ValueError('root')
 for parent,dirs,files in os.walk(root,followlinks=False):
-    dirs[:]=sorted(n for n in dirs if n not in ('node_modules','.next','target','__pycache__','.venv'))
+    dirs[:]=sorted(n for n in dirs if n not in ${JSON.stringify(WORKSPACE_EXCLUDES)})
     for name in dirs+files:
         p=os.path.join(parent,name); info=os.lstat(p)
         if stat.S_ISDIR(info.st_mode): continue

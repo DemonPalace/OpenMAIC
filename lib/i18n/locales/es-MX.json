@@ -2359,6 +2359,14 @@
     }
   },
   "sandbox": {
+    "errors": {
+      "learningManaged": "Este espacio de trabajo pertenece a un proyecto de aprendizaje. Usa los controles del espacio de aprendizaje.",
+      "sourcePath": "Este archivo no forma parte de los archivos fuente del proyecto.",
+      "sourceCount": "Los proyectos de aprendizaje admiten un máximo de 256 archivos fuente.",
+      "sourceSize": "El contenido fuente del proyecto no debe superar 1 MiB en total.",
+      "commandActive": "Detén los comandos en ejecución y obtén sus resultados antes de leer o guardar una instantánea del espacio de trabajo.",
+      "terminalActive": "Cierra las terminales antes de leer o guardar una instantánea del espacio de trabajo."
+    },
     "settings": {
       "title": "Sandbox",
       "advanced": "Advanced: connection, desktop and limits",

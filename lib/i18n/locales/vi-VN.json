@@ -2359,6 +2359,14 @@
     }
   },
   "sandbox": {
+    "errors": {
+      "learningManaged": "Không gian làm việc này thuộc một dự án học tập. Hãy sử dụng các chức năng điều khiển trong không gian học tập.",
+      "sourcePath": "Tệp này nằm ngoài phạm vi mã nguồn của dự án.",
+      "sourceCount": "Dự án học tập hỗ trợ tối đa 256 tệp mã nguồn.",
+      "sourceSize": "Tổng nội dung mã nguồn của dự án không được vượt quá 1 MiB.",
+      "commandActive": "Hãy dừng các lệnh đang chạy và lấy kết quả trước khi đọc hoặc lưu ảnh chụp trạng thái không gian làm việc.",
+      "terminalActive": "Hãy đóng các cửa sổ terminal trước khi đọc hoặc lưu ảnh chụp trạng thái không gian làm việc."
+    },
     "settings": {
       "title": "Sandbox",
       "advanced": "Advanced: connection, desktop and limits",

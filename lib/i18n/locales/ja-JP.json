@@ -2359,6 +2359,14 @@
     }
   },
   "sandbox": {
+    "errors": {
+      "learningManaged": "このワークスペースは学習プロジェクトに属しています。学習ワークスペースの操作機能を使用してください。",
+      "sourcePath": "このファイルはプロジェクトのソースファイルの範囲外です。",
+      "sourceCount": "学習プロジェクトで扱えるソースファイルは最大256個です。",
+      "sourceSize": "プロジェクトのソース内容の合計は1 MiB以下にしてください。",
+      "commandActive": "ワークスペースのスナップショットを読み取るか保存する前に、実行中のコマンドを停止して結果を取得してください。",
+      "terminalActive": "ワークスペースのスナップショットを読み取るか保存する前に、ターミナルを閉じてください。"
+    },
     "settings": {
       "title": "Sandbox",
       "advanced": "Advanced: connection, desktop and limits",

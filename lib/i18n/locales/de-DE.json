@@ -2359,6 +2359,14 @@
     }
   },
   "sandbox": {
+    "errors": {
+      "learningManaged": "Dieser Arbeitsbereich gehört zu einem Lernprojekt. Verwenden Sie die Bedienelemente des Lernarbeitsbereichs.",
+      "sourcePath": "Diese Datei gehört nicht zu den Quelldateien des Projekts.",
+      "sourceCount": "Lernprojekte unterstützen höchstens 256 Quelldateien.",
+      "sourceSize": "Der Quellinhalt des Projekts darf insgesamt 1 MiB nicht überschreiten.",
+      "commandActive": "Beenden Sie laufende Befehle und rufen Sie deren Ergebnisse ab, bevor Sie einen Arbeitsbereich-Snapshot lesen oder speichern.",
+      "terminalActive": "Schließen Sie die Terminals, bevor Sie einen Arbeitsbereich-Snapshot lesen oder speichern."
+    },
     "settings": {
       "title": "Sandbox",
       "advanced": "Advanced: connection, desktop and limits",

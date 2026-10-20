@@ -5,6 +5,7 @@ import { isProjectSource, projectFiles } from '@/lib/server/pbl-v3/workspace-fil
 import { filesFingerprint, readFiles } from '@/lib/server/pbl-v3/runtime';
 import type { SandboxService } from '@/lib/server/sandbox/service';
 import type { Study } from '@/lib/server/pbl-v3/store';
+import { WORKSPACE_EXCLUDES } from '@/lib/server/sandbox/workspace-archive';
 const project = installedProject({ id: 'greeting-python', version: '1.0.0' });
 const expanded = { ...project, sourceRoots: ['src'] };
 const row = { environment_id: 'environment' } as Study;
@@ -15,6 +16,8 @@ describe('shared project source scope', () => {
     expect(isProjectSource(project, null)).toBe(false);
     expect(isProjectSource(project, 'src/Extra.java')).toBe(false);
     expect(isProjectSource(expanded, 'src/nested/Extra.java')).toBe(true);
+    expect(isProjectSource(expanded, 'src/next/page.ts')).toBe(true);
+    expect(isProjectSource(expanded, 'src/venv_helpers.py')).toBe(true);
     for (const path of [
       'src2/Extra.java',
       '../PLAN.md',
@@ -27,8 +30,12 @@ describe('shared project source scope', () => {
       'src/node_modules/x.js',
       'src/target/X.java',
       'src/.git/x.py',
+      ...WORKSPACE_EXCLUDES.map((name) => `src/nested/${name}/x.py`),
     ])
       expect(isProjectSource(expanded, path), path).toBe(false);
+    expect(
+      isProjectSource({ ...expanded, files: { 'src/.venv/main.py': '' } }, 'src/.venv/main.py'),
+    ).toBe(false);
   });
   it('uses the same discovered files for evidence and detects added/removed source files', async () => {
     const files: Record<string, string> = {

@@ -688,12 +688,18 @@ export class SandboxService {
     for (const cmd of await this.store.listCommands(row)) {
       const result = await this.command(row.id, cmd.id);
       if (['starting', 'running', 'unknown'].includes(result.state))
-        throw sandboxConflict('Stop and collect running commands before saving the workspace.');
+        throw sandboxConflict(
+          'Stop and collect running commands before saving the workspace.',
+          'WORKSPACE_COMMAND_ACTIVE',
+        );
     }
     for (const t of await this.store.listTerminals(row)) {
       const observed = await this.terminal(row.id, t.id);
       if (observed.state !== 'closed')
-        throw sandboxConflict('Close terminals before saving the workspace.');
+        throw sandboxConflict(
+          'Close terminals before saving the workspace.',
+          'WORKSPACE_TERMINAL_ACTIVE',
+        );
     }
   }
 
