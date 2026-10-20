@@ -190,6 +190,8 @@ import { runSession, startAgentRunner } from '@/lib/server/agent-runtime/runner'
 import { ensureOwnerMergeSchema } from '@/lib/persistence/owner-merges';
 import { ensureSandboxEnvironmentSchema } from '@/lib/persistence/sandbox-environments';
 import { installedProject } from '@/lib/server/pbl-v3/catalog';
+import * as catalog from '@/lib/server/pbl-v3/catalog';
+import { SandboxError } from '@/lib/sandbox/errors';
 import { LearningStore } from '@/lib/server/pbl-v3/store';
 import { commandStudy, learningView, digest } from '@/lib/server/pbl-v3/runtime';
 import { teachingRunnerConfig } from '@/lib/server/pbl-v3/runner-tools';
@@ -1091,6 +1093,52 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
     ).toBe(0);
     await study.send('prepare');
     expect(mocked.creates.slice(creates)).toEqual([allocated]);
+  });
+  it('surfaces source-policy errors while keeping provider listing failures recoverable', async () => {
+    const study = await freshStudy();
+    const before = await store.get(study.id, principal.ownerId);
+    const creates = mocked.creates.length;
+    const selectedProject = vi.spyOn(catalog, 'installedProject').mockReturnValue({
+      ...project,
+      sourceRoots: ['src'],
+    });
+    const listing = vi
+      .spyOn(SandboxService.prototype, 'listFiles')
+      .mockResolvedValue(
+        Array.from({ length: 257 }, (_, i) => ({ path: `src/${i}.py`, bytes: 0 })),
+      );
+    try {
+      await expect(learningView(principal, study.id)).rejects.toMatchObject({
+        code: 'SANDBOX_INVALID_REQUEST',
+        status: 400,
+        reason: 'PBL_SOURCE_COUNT',
+      });
+      selectedProject.mockReturnValue({ ...project, files: { '../outside.py': '' } });
+      await expect(learningView(principal, study.id)).rejects.toMatchObject({
+        code: 'SANDBOX_INVALID_REQUEST',
+        reason: 'PBL_SOURCE_PATH',
+      });
+      selectedProject.mockReturnValue({ ...project, sourceRoots: ['src'] });
+      // Structured provider failures still preserve progress instead of escaping the view.
+      listing.mockRejectedValueOnce(new SandboxError('SANDBOX_UNAVAILABLE', 503, 'Unavailable'));
+      const unavailable = await learningView(principal, study.id);
+      expect(unavailable.environment).toEqual({ state: 'unknown', ready: false });
+      expect(unavailable.id).toBe(study.id);
+      expect(unavailable.state).toEqual(before.state);
+
+      listing.mockResolvedValue([{ path: 'src/main.py', bytes: 0 }]);
+      const ready = await learningView(principal, study.id);
+      expect(ready.environment).toEqual({ state: 'running', ready: true });
+      expect(ready.files).toEqual(['src/main.py']);
+      expect(mocked.creates.length).toBe(creates);
+      const after = await store.get(study.id, principal.ownerId);
+      expect(after.environment_id).toBe(before.environment_id);
+      expect(after.revision).toBe(before.revision);
+      expect(after.state).toEqual(before.state);
+    } finally {
+      selectedProject.mockRestore();
+      listing.mockRestore();
+    }
   });
   it('keeps uncertain environments readable and never replaces them on a provider error', async () => {
     const study = await freshStudy();

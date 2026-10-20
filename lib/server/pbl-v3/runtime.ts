@@ -667,7 +667,12 @@ export async function learningView(principal: OwnerPrincipal, id: string): Promi
         : null;
       if (environment?.ready)
         files = await projectFiles(environmentService, row.environment_id, project);
-    } catch {
+    } catch (error) {
+      if (
+        error instanceof SandboxError &&
+        (error.reason === 'PBL_SOURCE_COUNT' || error.reason === 'PBL_SOURCE_PATH')
+      )
+        throw error;
       // Provider uncertainty must not hide durable teaching progress or cause another allocation.
       environment = { state: 'unknown', ready: false };
     }
