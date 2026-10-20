@@ -135,18 +135,22 @@ no tables, workers, provider, or configuration switches.
   fingerprints and clears stale active-milestone evidence. Cross-milestone recovery
   and workspace stop/save/restart UI remain follow-up work.
 
-### Integration with subsequent features
+### Development sequence and follow-up PRs
 
-Richer teaching flows, cross-milestone progression and reports must reuse the
-source fingerprints and evidence-invalidation rules. A dedicated workspace UI
-must use explicit learning operations for file management, shell/preview access
-and checkpoint recovery. It must settle existing processes before review, testing
-and checkpoint boundaries; enabling generic sandbox controls would reopen the
-bypass.
+This shared workspace contract is delivered first because both the teaching experience and the workbench need the same permission, source-version and recovery rules. Merging it first gives the two feature PRs a stable shared baseline and avoids duplicating those rules or making one large feature PR depend on the other.
 
-Cross-milestone teaching and workspace integration should be validated together:
-edit → review → test → milestone progression → restore. The current sample and
-workspace contract do not establish complete-course or live-provider acceptance.
+1. Review and merge this PR into `integration/shared-sandbox`.
+2. Branch the two follow-up PRs from the updated integration branch. Both target `integration/shared-sandbox` and can be developed in parallel; neither needs to wait for the other feature PR to finish.
+
+| Follow-up PR | Delivery scope |
+| --- | --- |
+| **Complete learning experience** | Teaching materials/Skills, cross-milestone progression, teaching panels, reports/exploration, and Java/non-Java sample journeys. Includes the #1951 follow-ups for evaluator false passes and artifact validation before ending a review. |
+| **Complete workspace and recovery** | File management, terminal/preview controls, controlled execution, checkpoint/recovery UX, deployment guidance, and multi-learner lock-admission validation. Integrates those controls with the shared teaching and file-version rules. |
+
+3. Combine the branches early and jointly validate edit → run → stop → save → review → test → next milestone → restore. Check the interfaces together as they become usable, rather than leaving integration until both PRs are complete.
+4. If no new dependency is introduced, either follow-up can merge first after review. Update the other to the latest integration branch and rerun the affected checks; final combined acceptance is still required. Any new shared-interface dependency must be made explicit.
+
+The workbench must provide a dedicated teaching-aware shell/preview path and settle existing processes before evidence boundaries. Enabling generic sandbox controls would reopen the bypass. This PR independently validates the existing classroom sample; complete-course and live-provider acceptance remain part of the follow-up delivery.
 
 ## Validation and remaining scope
 
