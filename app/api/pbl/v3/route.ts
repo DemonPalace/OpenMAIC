@@ -14,6 +14,7 @@ import { LearningStore } from '@/lib/server/pbl-v3/store';
 import { InvalidEngineTransitionError } from '@/lib/pbl/v3/domain/orchestration/transition';
 import { getOwnerScopedDocumentStore } from '@/lib/server/agent-runtime/owner-scoped-documents';
 import { touchEnvironment, assertEnvironmentReady } from '@/lib/server/pbl-v3/environment';
+import { assertProjectSource } from '@/lib/server/pbl-v3/workspace-files';
 import { installedProject } from '@/lib/server/pbl-v3/catalog';
 
 export const runtime = 'nodejs';
@@ -26,8 +27,7 @@ export async function GET(request: Request) {
     if (path !== null) {
       const store = await LearningStore.open();
       const row = await store.get(id, principal.ownerId);
-      if (!Object.hasOwn(projectFor(row).files, path))
-        throw sandboxInvalid('Unknown project file.');
+      assertProjectSource(projectFor(row), path);
       const service = await SandboxService.forOwner(principal);
       assertEnvironmentReady(await touchEnvironment(store, row, service));
       const text = await service.readText(requireEnvironment(row), path);

@@ -7,6 +7,8 @@ export interface InstalledProject {
   ref: PBLV3Reference;
   definition: ProjectDefinition;
   files: Record<string, string>;
+  /** Optional trusted relative directories (without trailing slashes), never browser input. */
+  sourceRoots?: readonly string[];
   /** Trusted deployment-owned commands, never read from browser scene content. */
   testCommand: string;
 }

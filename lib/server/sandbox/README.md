@@ -498,3 +498,17 @@ with a fresh UUID.
 end-user product features. Keep them on the integration branch for validation and remove
 the routes before the final integration-to-main PR. Reusable provider, API and UI components
 remain available for feature consumers. Pause/resume and desktop streaming remain deferred.
+
+
+## Learning-managed workspaces
+
+The `pbl-<study UUID>` namespace is owned by the PBL learning runtime. Generic
+sandbox controls cannot mutate those workspaces or issue preview/agent grants;
+existing preview tickets are checked again on use. Owner/resource checks still
+apply, and normal workspace IDs keep their existing behavior. Only narrow,
+server-only scopes established by the teaching runtime under its study lock allow
+specific mutations. Read/observe, renew, cancel and close remain available.
+
+See the [PBL workspace contract](../../pbl/v3/README.md#learning-workspace-contract)
+for evidence invalidation, source scope, recovery handoff and the dedicated
+workbench follow-up. Do not bypass this boundary when adding a new workspace UI.
