@@ -114,6 +114,7 @@ export function ttsSelection(
   const usable =
     preference.providerId === providerId &&
     !!preference.voice &&
+    (!target.voices || target.voices.some((voice) => voice.id === preference.voice)) &&
     voiceServesModel(providerId, preference.voice, model, target.voices);
   return {
     providerId,

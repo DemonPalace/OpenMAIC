@@ -245,3 +245,48 @@ it('recovers stale VC model bindings to the configured ordinary Qwen model', asy
     )?.modelId,
   ).toBe('qwen3-tts');
 });
+
+it('drops stale global preferences outside a replacement catalogue but retains course bindings', async () => {
+  const { ttsSelection } = await import('@/lib/audio/tts-selection');
+  const { slotVoice, clipVoice } = await import('@/lib/server/generation/run/narration-voice');
+  const parsed = parseModelConfig(JSON.stringify(config(voices)));
+  const effective = resolveSlot('tts', [{ source: 'deployment', config: parsed }]);
+  if (effective.status !== 'assigned') throw new Error('unassigned');
+  const capabilities = {
+    known: true,
+    tts: effective,
+    llm: null,
+    asr: null,
+    image: null,
+    video: null,
+    webSearch: null,
+    webFetch: null,
+    document: null,
+    resolved: new Set(['tts'] as const),
+  };
+  expect(
+    ttsSelection(capabilities, { voice: 'alloy', providerId: 'openai-tts', speed: 1 })?.voice,
+  ).toBe('vivian');
+  const target = {
+    providerId: 'openai-tts' as const,
+    modelId: 'qwen3-tts',
+    connection: {
+      providerId: 'openai-tts',
+      modelId: 'qwen3-tts',
+      managed: true,
+      userEndpoint: false,
+      origin: 'configuration' as const,
+      voices,
+    },
+  };
+  expect(slotVoice(target, { providerId: 'openai-tts', voiceId: 'alloy' }).voice).toBe('vivian');
+  expect(slotVoice(target, { providerId: 'openai-tts', voiceId: 'serena' }).voice).toBe('serena');
+  expect(
+    clipVoice({
+      target,
+      preference: undefined,
+      bound: { providerId: 'openai-tts', voiceId: 'alloy' },
+      unavailable: new Set(),
+    })?.voice.voiceId,
+  ).toBe('alloy');
+});

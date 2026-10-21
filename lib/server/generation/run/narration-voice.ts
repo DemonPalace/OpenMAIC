@@ -87,6 +87,8 @@ export function slotVoice(
   const usable =
     preference?.providerId === target.providerId &&
     !!preference.voiceId &&
+    (!target.connection.voices ||
+      target.connection.voices.some((voice) => voice.id === preference.voiceId)) &&
     voiceServesModel(
       target.providerId,
       preference.voiceId,
