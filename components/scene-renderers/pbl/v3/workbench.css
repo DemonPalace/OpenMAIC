@@ -45,9 +45,13 @@
 .pbl-workbench .pbl-assistant-bubble {
   background: var(--pbl-assistant-bubble);
 }
+.pbl-workbench .pbl-task-area {
+  /* This flex area excludes the actual toolbar, notices and composer height. */
+  container-type: size;
+}
 .pbl-workbench .pbl-task-drawer {
-  /* Reserve the scene toolbar, task strip and composer in embedded classrooms. */
-  max-height: min(560px, 58cqh, max(84px, calc(100cqh - 240px)));
+  /* Keep its close control inside the chat area, even in a short scene. */
+  max-height: min(560px, max(0px, calc(100cqh - 64px)));
 }
 /* OpenPBL's filled ready action, with a neutral unavailable state. */
 .pbl-workbench .pbl-stage-action {

@@ -32,7 +32,7 @@ import {
 import { touchEnvironment, assertEnvironmentReady } from './environment';
 import { assertIncrementalPlan } from './plan';
 import { startBuild, collectBuild, assertBuilt } from './compilation';
-import { stageSkill, teachingRules, interactionRules } from './skills';
+import { stageSkill, teachingRules, interactionRules, assessmentRules } from './skills';
 import { isExplorationStage } from '@/lib/pbl/v3/domain/project/project-schema';
 import { GuidedSkillReview } from './guided-review';
 import { currentTeachingContext, type TeachingHistoryWindow } from './teaching-context';
@@ -532,6 +532,24 @@ export async function teachingRunnerConfig(input: {
               },
             }
           : {}),
+        ...(stage.kind === 'check'
+          ? {
+              assessmentContext: {
+                checker: stage.checker,
+                pendingRun: row.evaluation?.id ?? null,
+                tests: collected.tests
+                  ? { status: collected.tests.status, feedback: collected.tests.publicFeedback }
+                  : null,
+                quiz: collected.quiz
+                  ? {
+                      passed: collected.quiz.passed,
+                      score: collected.quiz.score,
+                      total: collected.quiz.total,
+                    }
+                  : null,
+              },
+            }
+          : {}),
         ...(recapping
           ? {
               recordedEvidence: {
@@ -576,7 +594,7 @@ export async function teachingRunnerConfig(input: {
     }) +
     '\n' +
     teachingRules +
-    interactionRules +
+    (stage.kind === 'check' ? assessmentRules : interactionRules) +
     (completionRecorded
       ? '\nThe current stage is ALREADY complete for the recorded evidence. Answer any follow-up directly and point to the task-bar Continue action. Do not restart teaching, invent a new required question, or require complete_stage again just because the learner sent another message. Actual artifact changes invalidate the affected review and require reviewing that new version before completion.'
       : '') +

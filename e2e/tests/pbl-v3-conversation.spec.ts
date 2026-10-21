@@ -135,12 +135,71 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
   let openings = 0;
   let failOpening = true;
   let advances = 0;
+  let collections = 0;
+  let failCollection = true;
+  let testRun = 0;
   await page.route('**/api/pbl/v3**', async (route) => {
     const command =
       route.request().method() === 'POST' ? route.request().postDataJSON()?.command : undefined;
     if (command?.type === 'chat') {
       // The server preserves a completed review while answering a follow-up.
       view.activitySequence!++;
+      return route.fulfill({ json: { view } });
+    }
+    if (command?.type === 'evaluate') {
+      testRun++;
+      view.evaluation = {
+        id: `test-run-${testRun}`,
+        state: 'running',
+        stdout: 'PRIVATE DRIVER OUTPUT',
+        stderr: 'PRIVATE STDERR',
+      };
+      view.actions = ['chat', 'evaluate'];
+      view.revision++;
+      return route.fulfill({ json: { view } });
+    }
+    if (command?.type === 'collect') {
+      collections++;
+      expect(command.evaluationId).toBe(view.evaluation?.id);
+      if (failCollection) {
+        failCollection = false;
+        return route.fulfill({
+          status: 503,
+          json: { error: { code: 'SANDBOX_UNAVAILABLE', message: 'private error' } },
+        });
+      }
+      const passed = testRun > 1;
+      view.state.collected.greeting!.tests = {
+        id: view.evaluation!.id,
+        status: passed ? 'passed' : 'failed',
+        publicDiagnostics: {
+          kind: 'assertion',
+          summary: 'Safe assessment feedback',
+          reportGenerated: true,
+          caseResults: [
+            { id: 'append', label: 'Add one task', passed },
+            { id: 'order', label: 'Keep the original order', passed: true },
+          ],
+        },
+      } as NonNullable<LearningView['state']['collected'][string]['tests']>;
+      view.evaluation = null;
+      view.actions = passed ? ['chat', 'evaluate', 'next'] : ['chat', 'evaluate'];
+      view.revision++;
+      return route.fulfill({ json: { view } });
+    }
+    if (command?.type === 'next' && view.stage.kind === 'check' && view.stage.checker === 'tests') {
+      expect(view.actions).toContain('next');
+      view.stage = {
+        kind: 'check',
+        checker: 'quiz',
+        studentActions: ['chat', 'quiz', 'next'],
+      } as LearningView['stage'];
+      view.state.position.stageIndex = 5;
+      view.actions = ['chat', 'quiz'];
+      view.questions = [
+        { q: 'What does return do?', options: ['Gives a value back', 'Prints text'] },
+      ];
+      view.revision++;
       return route.fulfill({ json: { view } });
     }
     if (command?.type === 'next') {
@@ -322,7 +381,7 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
   await expect(
     details.getByText('Plan review and approval · Awaiting review', { exact: true }),
   ).toBeVisible();
-  await details.getByRole('button', { name: 'Close task details' }).click();
+  await details.getByRole('button', { name: 'Close task details' }).click({ timeout: 7000 });
   await expect(details).toHaveCount(0);
   view.stage = originalStage;
   view.role = 'discussion';
@@ -452,7 +511,7 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
   await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
   await thinking.getByRole('button').click();
   await expect(thinking.getByRole('button')).toHaveAttribute('aria-expanded', 'false');
-  await tools.getByTestId('workbench-tool-card').first().getByRole('button').click();
+  await tools.getByTestId('workbench-tool-card').first().getByRole('button').press('Enter');
 
   await expect(page.locator('.monaco-editor .view-lines')).toContainText('Greeting plan');
   await page.getByLabel('Your message', { exact: true }).fill('My draft answer');
@@ -478,6 +537,88 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
   );
   await expect(page.getByTestId('workbench-tool-group')).toHaveAttribute('data-open', 'false');
   await expect(page.getByTestId('workbench-waiting-bar')).toHaveCount(0);
+  // The test control and verdict stay outside the drawer. Execution is not
+  // progression: automatic collection must first save the server verdict.
+  view.stage = {
+    kind: 'check',
+    checker: 'tests',
+    studentActions: ['chat', 'evaluate', 'next'],
+  } as LearningView['stage'];
+  view.state.position.stageIndex = 4;
+  view.role = 'mentor';
+  view.actions = ['chat', 'evaluate'];
+  view.evaluation = null;
+  view.state.collected.greeting!.tests = null;
+  view.revision++;
+  await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
+  const summary = page.getByTestId('pbl-test-summary');
+  const runTests = task.getByRole('button', { name: 'Run tests', exact: true });
+  await expect(details).toHaveCount(0);
+  await expect(summary).toHaveAttribute('data-state', 'idle');
+  await expect(runTests).toBeEnabled();
+  await page.mouse.move(0, 0);
+  await expect
+    .poll(async () =>
+      greens.includes(await runTests.evaluate((el) => getComputedStyle(el).backgroundColor)),
+    )
+    .toBe(true);
+  await runTests.click();
+  await expect(summary).toHaveAttribute('data-state', 'running');
+  await expect(summary.locator('.animate-spin')).toHaveCount(1);
+  await expect(task.getByRole('button', { name: 'Running tests…', exact: true })).toBeDisabled();
+  await expect(details).toHaveCount(0);
+  await expect(page.getByText('PRIVATE DRIVER OUTPUT', { exact: true })).toHaveCount(0);
+  view.evaluation!.state = 'exited';
+  view.revision++;
+  await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
+  await expect.poll(() => collections).toBe(1);
+  const retryResult = task.getByRole('button', { name: 'Retry getting results', exact: true });
+  await expect(retryResult).toBeEnabled();
+  await expect(summary).toHaveAttribute('data-state', 'unavailable');
+  expect(collections).toBe(1); // Failed collection cannot create an automatic retry loop.
+  await retryResult.click();
+  await expect(summary).toHaveAttribute('data-state', 'failed');
+  await expect(summary).toContainText('1/2 passed');
+  await expect(
+    task.getByRole('button', { name: 'Continue to Check your understanding', exact: true }),
+  ).toHaveCount(0);
+  await task.getByRole('button', { name: /Current task details/ }).click();
+  await expect(page.getByTestId('pbl-test-details')).toHaveAttribute('data-state', 'failed');
+  await expect(
+    details.getByText('Add one task: Output did not satisfy the contract', { exact: true }),
+  ).toBeVisible();
+  await expect(details.getByRole('listitem')).toHaveCount(2);
+  await expect(details.getByText('PRIVATE STDERR', { exact: true })).toHaveCount(0);
+  await details.getByRole('button', { name: 'Close task details' }).click({ timeout: 7000 });
+  await runTests.click();
+  await expect(summary).toHaveAttribute('data-state', 'running');
+  // Refresh/reopen during a completed run must still collect it automatically.
+  view.evaluation!.state = 'exited';
+  view.revision++;
+  await page.reload();
+  await page.getByTestId('scene-title').filter({ hasText: 'Practice project' }).click();
+  await expect(summary).toHaveAttribute('data-state', 'passed');
+  await expect(summary).toContainText('2/2 passed');
+  await expect(details).toHaveCount(0);
+  const enterQuiz = task.getByRole('button', {
+    name: 'Continue to Check your understanding',
+    exact: true,
+  });
+  await expect(enterQuiz).toBeEnabled();
+  await page.mouse.move(0, 0);
+  await expect
+    .poll(async () =>
+      greens.includes(await enterQuiz.evaluate((el) => getComputedStyle(el).backgroundColor)),
+    )
+    .toBe(true);
+  await task.getByRole('button', { name: /Current task details/ }).click();
+  await expect(page.getByTestId('pbl-test-details')).toHaveAttribute('data-state', 'passed');
+  await expect(details.getByRole('listitem')).toHaveCount(2);
+  await details.getByRole('button', { name: 'Close task details' }).click({ timeout: 7000 });
+  await enterQuiz.click();
+  await expect(task.getByText('6/7', { exact: true })).toBeVisible();
+  await expect(summary).toHaveCount(0);
+
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole('button', { name: 'Expand project workspace' }).click();
   await expect(page.getByLabel('Your message', { exact: true })).toBeVisible();

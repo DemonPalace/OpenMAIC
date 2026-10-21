@@ -9,6 +9,7 @@ import {
   Sun,
   PanelLeft,
   PanelRight,
+  LoaderCircle,
 } from 'lucide-react';
 import { useTheme } from '@/lib/hooks/use-theme';
 import { WorkbenchSplit } from './workbench-split';
@@ -20,6 +21,7 @@ import { LearningWorkbenchPanel } from './workbench-panel';
 import { LearningPanels } from './learning-panels';
 import { LearningConversation } from './conversation';
 import { WorkspaceFrame } from './workspace-frame';
+import { TestEvaluation } from './test-evaluation';
 import { TaskDock } from './task-dock';
 import { ProductionContext } from './production-context';
 import { sandboxErrorMessage } from '@/lib/sandbox/error-message';
@@ -121,16 +123,20 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
       retry.current = request;
       if (type === 'chat' && !repeat) setSent((n) => n + 1);
       try {
-        const result = await pblRequest<{ view: LearningView }>('/api/pbl/v3', {
-          studyId: view.id,
-          command: {
-            id: request.id,
-            revision: request.revision,
-            type: request.type,
-            ...request.payload,
+        const result = await pblRequest<{ view: LearningView; result?: { stale?: boolean } }>(
+          '/api/pbl/v3',
+          {
+            studyId: view.id,
+            command: {
+              id: request.id,
+              revision: request.revision,
+              type: request.type,
+              ...request.payload,
+            },
           },
-        });
+        );
         updateView(result.view);
+        if (result.result?.stale) setError(t('pblV3.testResult.stale'));
         retry.current = null;
         if (request.type === 'chat')
           setText((current) => (current === request.payload.text ? '' : current));
@@ -143,8 +149,37 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
         setPending(false);
       }
     },
-    [view, updateView, refresh],
+    [view, updateView, refresh, t],
   );
+  // Polling observes execution; a separate, idempotent command commits the verdict.
+  // Collect terminal test runs automatically, including after refresh. A failed
+  // collection offers a manual retry instead of an unbounded request loop.
+  const collectionAttempt = useRef('');
+  const [collectionFailed, setCollectionFailed] = useState('');
+  const testStage = view?.stage.kind === 'check' && view.stage.checker === 'tests';
+  const evaluationKey = view?.evaluation ? `${view.id}:${view.evaluation.id}` : '';
+  useEffect(() => {
+    if (
+      !testStage ||
+      !view?.evaluation ||
+      pending ||
+      view.busy ||
+      dirtyFiles ||
+      !view.environment?.ready ||
+      !['exited', 'cancelled', 'timed_out', 'failed'].includes(view.evaluation.state) ||
+      collectionAttempt.current === evaluationKey
+    )
+      return;
+    collectionAttempt.current = evaluationKey;
+    void command('collect', { evaluationId: view.evaluation.id }).then((ok) => {
+      if (!ok) setCollectionFailed(evaluationKey);
+    });
+  }, [testStage, view, pending, dirtyFiles, evaluationKey, command]);
+  const resultUnavailable =
+    testStage &&
+    !!view?.evaluation &&
+    (collectionFailed === evaluationKey ||
+      ['unknown', 'unavailable'].includes(view.evaluation.state));
   const opening = useRef('');
   useEffect(() => {
     if (!view?.needsOpening || !view.environment?.ready || view.busy || pending || dirtyFiles)
@@ -370,144 +405,172 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
                     </div>
                   )}
 
-                <LearningConversation view={view} sent={sent} />
-                {dirtyFiles && (
-                  <p
-                    role="status"
-                    className="border-t px-3 py-2 text-xs text-amber-700 dark:text-amber-300"
-                  >
-                    {t('pblV3.workbench.unsaved')}
-                  </p>
-                )}
-                <TaskDock
-                  key={`${view.id}:${view.state.introCompleted}:${view.state.position.milestoneIndex}:${view.state.position.stageIndex}`}
-                  view={view}
-                  action={
-                    view.actions.includes('next') && (
-                      <button
-                        className="pbl-stage-action inline-flex h-7 min-w-0 max-w-[220px] shrink-0 items-center justify-center truncate rounded-md border px-3 text-xs font-semibold transition-colors disabled:cursor-not-allowed"
-                        data-state={disabled ? 'disabled' : 'ready'}
-                        disabled={disabled}
-                        onClick={() => void command('next')}
-                      >
-                        {view.milestones?.[view.state.position.milestoneIndex]?.stages[
-                          view.state.position.stageIndex + 1
-                        ]
-                          ? t('pblV3.journey.enterStep', {
-                              step: t(
-                                `pblV3.journey.steps.${view.milestones[view.state.position.milestoneIndex]!.stages[view.state.position.stageIndex + 1]}`,
-                              ),
-                            })
-                          : t('pblV3.next')}
-                      </button>
-                    )
-                  }
-                >
-                  {view.stage.kind === 'produce' && <ProductionContext view={view} />}
-                  {view.stage.kind === 'produce' && view.stage.exploration && (
-                    <p className="mb-2 rounded border p-2">{view.stage.exploration.introduction}</p>
-                  )}
-                  {view.stage.kind === 'check' && view.stage.checker === 'tests' && (
-                    <>
-                      {view.actions.includes('evaluate') && (
-                        <button
-                          className={button}
-                          disabled={disabled || !!view.evaluation}
-                          onClick={() => void command('evaluate')}
-                        >
-                          {t('pblV3.runTests')}
-                        </button>
-                      )}
-                      {view.evaluation && (
-                        <>
-                          <button
-                            className={button}
-                            disabled={disabled}
-                            onClick={() => void command('collect')}
-                          >
-                            {t('pblV3.collect')}
-                          </button>
-                          <pre>
-                            {view.evaluation.state}
-                            {view.evaluation.stdout}
-                            {view.evaluation.stderr}
-                          </pre>
-                        </>
-                      )}
-                      {view.state.collected[view.state.position.milestoneId ?? '']?.tests && (
-                        <pre className="whitespace-pre-wrap text-xs">
-                          {
-                            view.state.collected[view.state.position.milestoneId ?? '']?.tests
-                              ?.publicFeedback
-                          }
-                        </pre>
-                      )}
-                    </>
-                  )}
-                  {view.decisions.map((decision) => (
-                    <fieldset key={decision.id}>
-                      <legend>{decision.prompt}</legend>
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        {decision.options.map((option) => (
-                          <button
-                            key={option.id}
-                            className={button}
-                            aria-pressed={view.state.collected[
-                              view.state.position.milestoneId ?? ''
-                            ]?.decisions.some(
-                              (d) => d.id === decision.id && d.chosen === option.id,
-                            )}
-                            disabled={disabled}
-                            onClick={() =>
-                              void command('decide', { decisionId: decision.id, chosen: option.id })
-                            }
-                          >
-                            {option.label}
-                          </button>
-                        ))}
-                      </div>
-                    </fieldset>
-                  ))}
-                  {view.questions.map((question, index) => (
-                    <fieldset key={index}>
-                      <legend>{question.q}</legend>
-                      {question.options.map((option, i) => (
-                        <label className="block" key={i}>
-                          <input
-                            type="radio"
-                            name={`quiz-${index}`}
-                            checked={answers[index] === i}
-                            onChange={() =>
-                              setQuizAnswers((previous) => {
-                                const next = previous.key === answerKey ? [...previous.values] : [];
-                                next[index] = i;
-                                return { key: answerKey, values: next };
-                              })
-                            }
-                          />{' '}
-                          {option}
-                        </label>
-                      ))}
-                    </fieldset>
-                  ))}
-                  {view.questions.length > 0 && quiz && (
-                    <p role="status">
-                      {t(quiz.passed ? 'pblV3.quizPassed' : 'pblV3.quizRetry', {
-                        score: quiz.score,
-                        total: quiz.total,
-                      })}
+                <div className="pbl-task-area flex min-h-0 flex-1 flex-col">
+                  <LearningConversation view={view} sent={sent} />
+                  {dirtyFiles && (
+                    <p
+                      role="status"
+                      className="border-t px-3 py-2 text-xs text-amber-700 dark:text-amber-300"
+                    >
+                      {t('pblV3.workbench.unsaved')}
                     </p>
                   )}
-                  {view.actions.includes('quiz') && (
-                    <button
-                      className={button}
-                      disabled={disabled || answers.length !== view.questions.length}
-                      onClick={() => void command('quiz', { answers })}
-                    >
-                      {t('pblV3.submitQuiz')}
-                    </button>
-                  )}
-                </TaskDock>
+                  <TaskDock
+                    key={`${view.id}:${view.state.introCompleted}:${view.state.position.milestoneIndex}:${view.state.position.stageIndex}`}
+                    view={view}
+                    working={testStage && !!view.evaluation && !resultUnavailable}
+                    summary={
+                      testStage ? (
+                        <TestEvaluation
+                          view={view}
+                          mode="summary"
+                          collectionFailed={resultUnavailable}
+                        />
+                      ) : undefined
+                    }
+                    action={
+                      testStage && !view.actions.includes('next') ? (
+                        <button
+                          className="pbl-stage-action inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border px-3 text-xs font-semibold"
+                          disabled={
+                            disabled ||
+                            (!!view.evaluation && !resultUnavailable) ||
+                            (!view.evaluation && !view.actions.includes('evaluate'))
+                          }
+                          data-state={
+                            disabled ||
+                            (!!view.evaluation && !resultUnavailable) ||
+                            (!view.evaluation && !view.actions.includes('evaluate'))
+                              ? 'pending'
+                              : 'ready'
+                          }
+                          onClick={() => {
+                            if (view.evaluation) {
+                              collectionAttempt.current = '';
+                              setCollectionFailed('');
+                              void command('collect', { evaluationId: view.evaluation.id }).then(
+                                (ok) => {
+                                  if (!ok) setCollectionFailed(evaluationKey);
+                                },
+                              );
+                            } else void command('evaluate');
+                          }}
+                        >
+                          {view.evaluation && !resultUnavailable && (
+                            <LoaderCircle size={13} className="animate-spin" aria-hidden="true" />
+                          )}
+                          {t(
+                            resultUnavailable
+                              ? 'pblV3.testResult.retryCollect'
+                              : view.evaluation
+                                ? 'pblV3.testResult.running'
+                                : 'pblV3.runTests',
+                          )}
+                        </button>
+                      ) : (
+                        view.actions.includes('next') && (
+                          <button
+                            className="pbl-stage-action inline-flex h-7 min-w-0 max-w-[220px] shrink-0 items-center justify-center truncate rounded-md border px-3 text-xs font-semibold transition-colors disabled:cursor-not-allowed"
+                            data-state={disabled ? 'disabled' : 'ready'}
+                            disabled={disabled}
+                            onClick={() => void command('next')}
+                          >
+                            {view.milestones?.[view.state.position.milestoneIndex]?.stages[
+                              view.state.position.stageIndex + 1
+                            ]
+                              ? t('pblV3.journey.enterStep', {
+                                  step: t(
+                                    `pblV3.journey.steps.${view.milestones[view.state.position.milestoneIndex]!.stages[view.state.position.stageIndex + 1]}`,
+                                  ),
+                                })
+                              : t('pblV3.next')}
+                          </button>
+                        )
+                      )
+                    }
+                  >
+                    {view.stage.kind === 'produce' && <ProductionContext view={view} />}
+                    {view.stage.kind === 'produce' && view.stage.exploration && (
+                      <p className="mb-2 rounded border p-2">
+                        {view.stage.exploration.introduction}
+                      </p>
+                    )}
+                    {testStage && (
+                      <TestEvaluation
+                        view={view}
+                        mode="details"
+                        collectionFailed={resultUnavailable}
+                      />
+                    )}
+                    {view.decisions.map((decision) => (
+                      <fieldset key={decision.id}>
+                        <legend>{decision.prompt}</legend>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {decision.options.map((option) => (
+                            <button
+                              key={option.id}
+                              className={button}
+                              aria-pressed={view.state.collected[
+                                view.state.position.milestoneId ?? ''
+                              ]?.decisions.some(
+                                (d) => d.id === decision.id && d.chosen === option.id,
+                              )}
+                              disabled={disabled}
+                              onClick={() =>
+                                void command('decide', {
+                                  decisionId: decision.id,
+                                  chosen: option.id,
+                                })
+                              }
+                            >
+                              {option.label}
+                            </button>
+                          ))}
+                        </div>
+                      </fieldset>
+                    ))}
+                    {view.questions.map((question, index) => (
+                      <fieldset key={index}>
+                        <legend>{question.q}</legend>
+                        {question.options.map((option, i) => (
+                          <label className="block" key={i}>
+                            <input
+                              type="radio"
+                              name={`quiz-${index}`}
+                              checked={answers[index] === i}
+                              onChange={() =>
+                                setQuizAnswers((previous) => {
+                                  const next =
+                                    previous.key === answerKey ? [...previous.values] : [];
+                                  next[index] = i;
+                                  return { key: answerKey, values: next };
+                                })
+                              }
+                            />{' '}
+                            {option}
+                          </label>
+                        ))}
+                      </fieldset>
+                    ))}
+                    {view.questions.length > 0 && quiz && (
+                      <p role="status">
+                        {t(quiz.passed ? 'pblV3.quizPassed' : 'pblV3.quizRetry', {
+                          score: quiz.score,
+                          total: quiz.total,
+                        })}
+                      </p>
+                    )}
+                    {view.actions.includes('quiz') && (
+                      <button
+                        className={button}
+                        disabled={disabled || answers.length !== view.questions.length}
+                        onClick={() => void command('quiz', { answers })}
+                      >
+                        {t('pblV3.submitQuiz')}
+                      </button>
+                    )}
+                  </TaskDock>
+                </div>
                 {view.actions.includes('chat') && (
                   <form
                     className="shrink-0 border-t bg-background p-3"

@@ -732,6 +732,12 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
             attempt: claimed!.attempt,
             signal: new AbortController().signal,
           });
+          if (entered.stage.kind === 'check') {
+            expect(config.systemPrompt).toContain('Do not ask a warm-up');
+            expect(config.systemPrompt).not.toContain('每次回复只执行当前已披露部分');
+            expect(config.allowedToolNames.has('request_skill_review')).toBe(false);
+            expect(config.allowedToolNames.has('complete_stage')).toBe(false);
+          }
           expect(config.systemPrompt).toContain('"automatic":true');
           expect(config.systemPrompt).toContain(
             `"currentStep":"${entered.milestones![entered.state.position.milestoneIndex]!.stages[entered.state.position.stageIndex]}"`,
@@ -1105,9 +1111,23 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
     await command('collect');
     const tested = await store.get(studyId, principal.ownerId);
     expect(tested.state.collected.greeting!.tests?.status).toBe('passed');
+    expect(tested.state.collected.greeting!.tests?.publicDiagnostics?.caseResults).toHaveLength(2);
+    const completedId = tested.state.collected.greeting!.tests!.id;
+    await commandStudy(principal, studyId, {
+      id: randomUUID(),
+      revision: 0,
+      type: 'collect',
+      evaluationId: completedId,
+    });
+    expect((await store.get(studyId, principal.ownerId)).revision).toBe(tested.revision);
+
     expect(tested.state.collected.greeting!.tests?.publicFeedback).toContain('2 checks passed');
     // A previous pass must not authorize progression while a newer run awaits collection.
     await command('evaluate');
+    await expect(command('collect', { evaluationId: completedId })).rejects.toThrow(
+      'pending evaluation changed',
+    );
+
     expect((await learningView(principal, studyId)).actions).not.toContain('next');
     await expect(command('next')).rejects.toThrow('pending test result');
     expect((await store.get(studyId, principal.ownerId)).state.position.stageIndex).toBe(4);

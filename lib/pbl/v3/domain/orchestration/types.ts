@@ -43,6 +43,13 @@ export interface PublicEvaluationDiagnostics {
   reportGenerated: boolean;
   locations?: PublicEvaluationDiagnosticLocation[];
   checks?: string[];
+  /** Safe public case metadata only; never expected values, scripts or raw tracebacks. */
+  caseResults?: {
+    id: string;
+    label: string;
+    passed: boolean;
+    reason?: 'output' | 'execution' | 'timeout' | 'environment' | 'not_run';
+  }[];
 }
 
 export interface WorkspaceRevision {

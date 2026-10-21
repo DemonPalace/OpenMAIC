@@ -2562,6 +2562,35 @@
     "reloadFile": "Reload file",
     "saveFile": "Save file",
     "checkpoint": "Save checkpoint",
+    "testResult": {
+      "stale": "Files changed during the test run. Run tests again for the current version.",
+      "idle": "Ready to run tests",
+      "running": "Running tests…",
+      "collecting": "Confirming test results…",
+      "passed": "Tests passed",
+      "failed": "Tests did not pass",
+      "error": "Evaluation could not complete",
+      "unavailable": "Test result needs attention",
+      "retryCollect": "Retry getting results",
+      "count": "{{passed}}/{{total}} passed",
+      "casePassed": "passed",
+      "reasons": {
+        "output": "Output did not satisfy the contract",
+        "execution": "Code could not execute successfully",
+        "timeout": "Check timed out",
+        "environment": "Test environment unavailable",
+        "not_run": "Not run because the build failed"
+      },
+      "hints": {
+        "idle": "Run tests using the green button on the task bar. Detailed results appear here.",
+        "running": "The test runner is working. Results will be saved automatically; you do not need to send a message.",
+        "collecting": "Execution finished. The server is checking the file version and saving the result.",
+        "passed": "The result is saved. Use Continue on the task bar to enter the next step.",
+        "failed": "Review the failed checks and ask the coding assistant for help, then rerun tests. Hidden tests and expected answers are not shown.",
+        "error": "No reliable code verdict is available. Check the environment and rerun; this is not a confirmed code failure.",
+        "unavailable": "The result is not confirmed. Retry getting results on the task bar; an earlier pass cannot authorize progression."
+      }
+    },
     "runTests": "Run tests",
     "collect": "Collect test result",
     "saveNotice": "File edits update the running environment. Save a checkpoint to retain files after the environment is released.",

@@ -24,12 +24,7 @@ import type { EngineTransition } from '@/lib/pbl/v3/domain/orchestration/events'
 import { assertProjectSource, projectFiles } from './workspace-files';
 import { assertIncrementalPlan } from './plan';
 import { startBuild, collectBuild } from './compilation';
-import {
-  evaluationCommand,
-  evaluationFor,
-  evaluationPassed,
-  evaluationFeedback,
-} from './evaluation';
+import { evaluationCommand, evaluationFor, evaluationOutcome } from './evaluation';
 import { installedProject } from './catalog';
 import { LearningStore, type Study, type RoleBinding } from './store';
 import { hasStageCompletion, succeededWithoutTeachingReceipt } from './stage-progress';
@@ -251,6 +246,7 @@ export interface LearningCommand {
   decisionId?: string;
   chosen?: string;
   answers?: number[];
+  evaluationId?: string;
 }
 function validateCommand(command: LearningCommand) {
   if (
@@ -267,6 +263,11 @@ function validateCommand(command: LearningCommand) {
     (typeof command.text !== 'string' || command.text.length > 64_000)
   )
     throw sandboxInvalid('Text is limited to 64000 characters.');
+  if (
+    command.evaluationId !== undefined &&
+    (typeof command.evaluationId !== 'string' || !/^[a-f0-9-]{36}$/.test(command.evaluationId))
+  )
+    throw sandboxInvalid('A valid evaluation ID is required.');
 }
 export async function commandStudy(
   principal: OwnerPrincipal,
@@ -305,6 +306,15 @@ export async function commandStudy(
       );
       alreadyStarted = !!bound && !!(await agents.getSession(bound.session_id));
     }
+    // Refreshes and multiple tabs may observe the same terminal run. Its durable
+    // result is the idempotence receipt; never collect a newer run by accident.
+    const collecting = command.type === 'collect' && !!command.evaluationId;
+    if (collecting) {
+      const saved = row.state.collected[row.state.position.milestoneId ?? '']?.tests;
+      if (!row.evaluation && saved?.id === command.evaluationId) return { collected: true };
+      if (row.evaluation?.id !== command.evaluationId)
+        throw sandboxConflict('The pending evaluation changed. Refresh before collecting.');
+    }
     const hash = digest(JSON.stringify(command));
     const receipt = (
       await store.pool.query<{ hash: string; result: unknown; stage_key: string }>(
@@ -320,7 +330,7 @@ export async function commandStudy(
         throw sandboxConflict('This unfinished request belongs to an earlier learning stage.');
       // Remote operation retries below reuse the original environment / command ID.
     } else {
-      if (row.revision !== command.revision && !alreadyStarted)
+      if (row.revision !== command.revision && !alreadyStarted && !collecting)
         throw sandboxConflict('Progress changed. Refresh before submitting.');
     }
     if (alreadyStarted) return { alreadyStarted: true };
@@ -603,17 +613,7 @@ export async function commandStudy(
           row.state,
           {
             id: evaluation.id,
-            status:
-              observed.state === 'exited'
-                ? observed.exitCode === 0 &&
-                  evaluationPassed(
-                    evaluationFor(project, milestone.id),
-                    evaluation.id,
-                    observed.stdout,
-                  )
-                  ? 'passed'
-                  : 'failed'
-                : 'error',
+            ...evaluationOutcome(evaluationFor(project, milestone.id), evaluation.id, observed),
             evaluator: 'sandbox-command',
             milestoneId: milestone.id,
             stageIndex: row.state.position.stageIndex,
@@ -627,8 +627,6 @@ export async function commandStudy(
             codeArtifactId: collected.code?.id,
             startedAt: evaluation.startedAt,
             completedAt: new Date().toISOString(),
-            publicFeedback: evaluationFeedback(observed.stdout, observed.stderr),
-            failureKind: observed.state === 'exited' ? 'assertion' : 'infrastructure',
           },
           { remediationId: randomUUID() },
         );
@@ -834,10 +832,7 @@ export async function learningView(principal: OwnerPrincipal, id: string): Promi
         evaluation = {
           id: observed.id,
           state: observed.state,
-          stdout:
-            row.evaluation.purpose === 'compile'
-              ? observed.stdout.slice(0, 8000)
-              : evaluationFeedback(observed.stdout, observed.stderr),
+          stdout: row.evaluation.purpose === 'compile' ? observed.stdout.slice(0, 8000) : '',
           stderr: row.evaluation.purpose === 'compile' ? observed.stderr.slice(0, 8000) : '',
         };
     } catch {

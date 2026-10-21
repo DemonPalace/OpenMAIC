@@ -2562,6 +2562,35 @@
     "reloadFile": "Reload file",
     "saveFile": "Save file",
     "checkpoint": "Save checkpoint",
+    "testResult": {
+      "stale": "測試期間檔案發生變更。請對目前版本重新執行測試。",
+      "idle": "可以開始測試",
+      "running": "正在執行測試…",
+      "collecting": "正在確認測試結果…",
+      "passed": "測試通過",
+      "failed": "測試未通過",
+      "error": "評測暫時無法完成",
+      "unavailable": "測試結果待確認",
+      "retryCollect": "重新取得結果",
+      "count": "{{passed}}/{{total}} 項通過",
+      "casePassed": "通過",
+      "reasons": {
+        "output": "輸出未滿足專案要求",
+        "execution": "程式碼執行異常",
+        "timeout": "該項檢查逾時",
+        "environment": "測試環境暫不可用",
+        "not_run": "建置未通過，該項尚未執行"
+      },
+      "hints": {
+        "idle": "點擊狀態列右側的綠色按鈕執行測試，具體結果會在這裡顯示。",
+        "running": "測試正在執行，結束後會自動確認並儲存結果，不需要傳送訊息。",
+        "collecting": "執行已結束，正在核對檔案版本並儲存結果。",
+        "passed": "結果已儲存。點擊狀態列右側的繼續按鈕進入下一環節。",
+        "failed": "查看未通過的檢查，可以在對話中聯絡編碼助手修復後重新測試；不會展示隱藏測試和標準答案。",
+        "error": "尚未取得可靠的程式碼測試結論。請檢查環境後重試，不能據此認定程式碼有誤。",
+        "unavailable": "結果尚未確認。請點擊狀態列右側「重新取得結果」；此前的通過記錄不能代替本次結果。"
+      }
+    },
     "runTests": "Run tests",
     "collect": "Collect test result",
     "saveNotice": "File edits update the running environment. Save a checkpoint to retain files after the environment is released.",

@@ -325,3 +325,12 @@ protocol state, then reports an explicit retryable failure if the turn is still 
 Retry and worker takeover preserve the same rule; no synthetic learner approval is added.
 Successful completion displays a localized handoff above the composer. Progression remains
 a separate learner action, with existing artifact, test and quiz checks unchanged.
+
+Assessment stages use dedicated control instructions, not the guided review question protocol.
+The task bar runs tests directly and shows a running indicator or the saved verdict without
+opening the drawer. Terminal runs are collected automatically, including on refresh; a failed
+collection offers an explicit retry. Collection names its evaluation ID, is idempotent after
+saving, and rejects a stale request for a different pending run. The drawer shows safe per-case
+results. Hidden test programs, expected values and raw provider/runner tracebacks are omitted.
+A missing or invalid receipt is an evaluation error, not an implementation failure. A new
+pending run takes precedence over an earlier pass; only a saved current verdict unlocks Next.

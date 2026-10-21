@@ -10,10 +10,14 @@ export function TaskDock({
   view,
   children,
   action,
+  summary,
+  working = false,
 }: {
   view: LearningView;
   children: ReactNode;
   action: ReactNode;
+  summary?: ReactNode;
+  working?: boolean;
 }) {
   const { t } = useI18n();
   const id = useId();
@@ -25,7 +29,8 @@ export function TaskDock({
   const open = hasDrawer && openKey === key;
   const progress = learningProgress(view);
   const step = learningStep(view);
-  const ready = view.actions.includes('next') && !view.busy;
+  const running = view.busy || working;
+  const ready = view.actions.includes('next') && !running;
   const hint = t(
     view.state.status === 'completed'
       ? 'pblV3.completed'
@@ -53,7 +58,7 @@ export function TaskDock({
   const copy = (
     <>
       <span
-        className={`h-1.5 w-1.5 shrink-0 rounded-full ${view.busy ? 'animate-pulse bg-primary' : ready ? 'bg-primary' : 'bg-muted-foreground'}`}
+        className={`h-1.5 w-1.5 shrink-0 rounded-full ${running ? 'animate-pulse bg-primary' : ready ? 'bg-primary' : 'bg-muted-foreground'}`}
       />
       <span className="shrink-0 text-muted-foreground">
         M{view.state.position.milestoneIndex + 1} ·{' '}
@@ -62,8 +67,11 @@ export function TaskDock({
         </span>
       </span>
       <strong className="shrink-0">{t(`pblV3.journey.steps.${step}`)}</strong>
-      <span className="min-w-0 flex-1 truncate text-muted-foreground" title={hint}>
-        {hint}
+      <span
+        className={`${summary ? 'order-last basis-full' : 'flex-1'} min-w-0 truncate text-muted-foreground`}
+        title={hint}
+      >
+        {summary ?? hint}
       </span>
     </>
   );
@@ -110,14 +118,14 @@ export function TaskDock({
           </div>
         </div>
       )}
-      <div className="flex h-10 items-center gap-2 px-3 py-2">
+      <div className={`flex ${summary ? 'min-h-12' : 'h-10'} items-center gap-2 px-3 py-2`}>
         {hasDrawer ? (
           <button
             ref={toggle}
             type="button"
             aria-expanded={open}
             aria-controls={id}
-            className="flex min-w-0 flex-1 items-center gap-2 text-left text-xs"
+            className={`flex min-w-0 flex-1 ${summary ? 'flex-wrap gap-x-2 gap-y-0.5' : 'gap-2'} items-center text-left text-xs`}
             onClick={() => setOpenKey(open ? null : key)}
           >
             {copy}
