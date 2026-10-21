@@ -25,6 +25,16 @@ reference against installed content. The scene never supplies model credentials,
 executable test commands, answers, or authoritative learning state. Existing v1/v2
 scenes keep their existing renderer.
 
+## Current interface
+
+The sample picker opens a real classroom scene. Its learning UI provides a basic
+conversation, stage actions, file selector/text editor, learning path and report.
+It does not yet reproduce the previous OpenPBL workbench UX: role-aware turn cards,
+structured tool activity, token streaming, a file-tree/code-editor layout and the
+full entry journey still need explicit UI integration and acceptance. The companion
+workbench supplies execution, terminal, preview and recovery controls; those controls
+alone do not establish UI/UX parity. Generated-project entry remains separate.
+
 ## Execution and persistence
 
 - `domain/` preserves the teaching state machine, artifact projection, decision
