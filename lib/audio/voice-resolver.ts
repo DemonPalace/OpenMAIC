@@ -37,7 +37,10 @@ export interface AgentVoiceOverride {
 /** Persisted per-agent voice picks, keyed by agent id (settings store). */
 export type AgentVoiceOverrides = Record<string, AgentVoiceOverride>;
 
-type ProviderConfigMap = Record<string, (TTSEnablementConfig & { modelId?: string }) | undefined>;
+type ProviderConfigMap = Record<
+  string,
+  (TTSEnablementConfig & { modelId?: string; voices?: ConfiguredTTSVoice[] }) | undefined
+>;
 
 /** Prefer a persisted narrator binding, retaining the global fallback when it is unusable. */
 export function resolveNarratorVoiceBinding(
@@ -54,6 +57,7 @@ export function resolveNarratorVoiceBinding(
       bound.providerId,
       bound.voiceId,
       providerConfigs[bound.providerId]?.modelId || bound.modelId,
+      providerConfigs[bound.providerId]?.voices,
     )
   ) {
     // Qwen clone IDs are account-scoped but self-contained: local IndexedDB is
@@ -285,12 +289,15 @@ export function narratorVoiceAfterMissingClone(input: {
 export function resolveNarratorVoiceForGeneration(
   providerId: TTSProviderId,
   voiceId: string | undefined,
-  providerConfig: (TTSEnablementConfig & { modelId?: string }) | undefined,
+  providerConfig:
+    | (TTSEnablementConfig & { modelId?: string; voices?: ConfiguredTTSVoice[] })
+    | undefined,
 ): ResolvedVoice | undefined {
   const trimmed = voiceId?.trim();
   if (!providerId || !trimmed) return undefined;
   if (!isTTSProviderEnabled(providerId, providerConfig)) return undefined;
-  if (!voiceServesModel(providerId, trimmed, providerConfig?.modelId)) return undefined;
+  if (!voiceServesModel(providerId, trimmed, providerConfig?.modelId, providerConfig?.voices))
+    return undefined;
   const modelId =
     providerId === 'qwen-tts' && isQwenCloneVoice(trimmed)
       ? resolveTTSModelForVoice(providerId, trimmed, providerConfig?.modelId)

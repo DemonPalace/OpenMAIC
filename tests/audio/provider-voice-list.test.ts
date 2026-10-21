@@ -95,3 +95,54 @@ it('honors configured catalogue membership over conflicting built-in model metad
   } as AgentConfig;
   expect(resolveAgentVoice(agent, 0, groups)?.voiceId).toBe('marin');
 });
+
+it('retains a configured restricted id through user selection and generated narration', async () => {
+  const { ttsSelection } = await import('@/lib/audio/tts-selection');
+  const { clipVoice, slotVoice, narratorVoiceForGeneration } =
+    await import('@/lib/server/generation/run/narration-voice');
+  const parsed = parseModelConfig(
+    JSON.stringify(config([...voices, { id: 'marin', name: 'Custom Marin' }])),
+  );
+  const effective = resolveSlot('tts', [{ source: 'deployment', config: parsed }]);
+  if (effective.status !== 'assigned') throw new Error('unassigned');
+  const capabilities = {
+    known: true,
+    tts: effective,
+    llm: null,
+    asr: null,
+    image: null,
+    video: null,
+    webSearch: null,
+    webFetch: null,
+    document: null,
+    resolved: new Set(['tts'] as const),
+  };
+  expect(
+    ttsSelection(capabilities, { voice: 'marin', providerId: 'openai-tts', speed: 1 })?.voice,
+  ).toBe('marin');
+  const target = {
+    providerId: 'openai-tts' as const,
+    modelId: 'qwen3-tts',
+    connection: {
+      providerId: 'openai-tts',
+      modelId: 'qwen3-tts',
+      managed: true,
+      userEndpoint: false,
+      origin: 'configuration' as const,
+      options: { defaultVoice: 'vivian' },
+      voices: [...voices, { id: 'marin', name: 'Custom Marin' }],
+    },
+  };
+  expect(slotVoice(target, { providerId: 'openai-tts', voiceId: 'marin' }).voice).toBe('marin');
+  expect(
+    narratorVoiceForGeneration(target, { providerId: 'openai-tts', voiceId: 'marin' })?.voiceId,
+  ).toBe('marin');
+  expect(
+    clipVoice({
+      target,
+      preference: undefined,
+      bound: { providerId: 'openai-tts', voiceId: 'marin' },
+      unavailable: new Set(),
+    })?.voice.voiceId,
+  ).toBe('marin');
+});

@@ -124,7 +124,14 @@ export function resolveTTSModelForVoice(
  * other voice (no such list, a clone, a user voice) on any model. Without a
  * model the provider's default model is meant.
  */
-export function voiceServesModel(providerId: string, voiceId: string, modelId?: string): boolean {
+export function voiceServesModel(
+  providerId: string,
+  voiceId: string,
+  modelId?: string,
+  configuredVoices?: readonly { id: string }[],
+): boolean {
+  // Explicit provider-local entries take precedence over static vendor metadata.
+  if (configuredVoices?.some((voice) => voice.id === voiceId)) return true;
   const provider = TTS_PROVIDERS[providerId as BuiltInTTSProviderId];
   const voice = provider?.voices.find((entry) => entry.id === voiceId);
   if (!voice?.compatibleModels) return true;

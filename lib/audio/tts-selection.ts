@@ -113,7 +113,7 @@ export function ttsSelection(
   const usable =
     preference.providerId === providerId &&
     !!preference.voice &&
-    voiceServesModel(providerId, preference.voice, model);
+    voiceServesModel(providerId, preference.voice, model, target.voices);
   return {
     providerId,
     ...(target.modelId ? { modelId: target.modelId } : {}),

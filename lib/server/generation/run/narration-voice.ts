@@ -86,7 +86,12 @@ export function slotVoice(
   const usable =
     preference?.providerId === target.providerId &&
     !!preference.voiceId &&
-    voiceServesModel(target.providerId, preference.voiceId, target.modelId);
+    voiceServesModel(
+      target.providerId,
+      preference.voiceId,
+      target.modelId,
+      target.connection.voices,
+    );
   return {
     voice: usable
       ? preference!.voiceId
