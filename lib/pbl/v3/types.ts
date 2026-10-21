@@ -30,6 +30,9 @@ export interface LearningView {
   actions: string[];
   files: string[];
   busy: boolean;
+  conversation?: import('./conversation').LearningConversationEntry[];
+  activitySequence?: number;
+  task?: { title: string; goal: string };
   messages: { role: 'user' | 'assistant'; text: string }[];
   roleRun: {
     status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'missing';

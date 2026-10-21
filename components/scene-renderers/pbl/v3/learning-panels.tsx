@@ -3,6 +3,8 @@ import { useEffect, useState } from 'react';
 import { useI18n } from '@/lib/hooks/use-i18n';
 import type { LearningView } from '@/lib/pbl/v3/types';
 import type { LearningReport } from '@/lib/pbl/v3/report';
+import { learningStep } from '@/lib/pbl/v3/presentation';
+import { TextBlock } from '@/components/workbench/chat/text-block';
 import { sandboxErrorMessage } from '@/lib/sandbox/error-message';
 
 export function LearningPanels({ view }: { view: LearningView }) {
@@ -52,9 +54,7 @@ export function LearningPanels({ view }: { view: LearningView }) {
               {m.optional ? ` (${t('pblV3.optional')})` : ''}
               {i === view.state.position.milestoneIndex && (
                 <span className="block text-xs text-muted-foreground">
-                  {t(
-                    `pblV3.stageNames.${m.stages[view.state.position.stageIndex] ?? 'mentor_say'}`,
-                  )}
+                  {t(`pblV3.journey.steps.${learningStep(view)}`)}
                 </span>
               )}
             </li>
@@ -96,6 +96,69 @@ export function LearningPanels({ view }: { view: LearningView }) {
                   </li>
                 ))}
               </ul>
+              {!!report.outcomes?.length && (
+                <section className="space-y-3" aria-label={t('pblV3.journey.outcomes')}>
+                  <h4 className="font-semibold">{t('pblV3.journey.outcomes')}</h4>
+                  <div className="grid gap-3 md:grid-cols-2">
+                    {report.outcomes.map((outcome) => (
+                      <article
+                        key={outcome.milestoneId}
+                        className="rounded-xl border bg-muted/20 p-4"
+                      >
+                        <h5 className="font-medium">
+                          {report.milestones.find((m) => m.id === outcome.milestoneId)?.title}
+                        </h5>
+                        <p className="mt-2 text-sm">
+                          {t('pblV3.stageNames.tests')}:{' '}
+                          {outcome.tests ?? t('pblV3.journey.noTests')}
+                        </p>
+                        <p className="text-sm">
+                          {t('pblV3.stageNames.quiz')}:{' '}
+                          {outcome.quiz
+                            ? `${outcome.quiz.score}/${outcome.quiz.total}`
+                            : t('pblV3.journey.noQuiz')}
+                        </p>
+                        <p className="text-sm">
+                          {t(
+                            outcome.reflected
+                              ? 'pblV3.journey.reflected'
+                              : 'pblV3.journey.notReflected',
+                          )}
+                        </p>
+                        <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                          {report.evidence
+                            .filter(
+                              (e) =>
+                                e.milestoneId === outcome.milestoneId &&
+                                [
+                                  'evaluation.recorded',
+                                  'quiz.recorded',
+                                  'recap.completed',
+                                ].includes(e.kind),
+                            )
+                            .slice(-3)
+                            .map((e) => (
+                              <a
+                                className="underline"
+                                key={e.sequence}
+                                href={`#pbl-evidence-${e.sequence}`}
+                                onClick={() => {
+                                  const target = document.getElementById(
+                                    `pbl-evidence-${e.sequence}`,
+                                  );
+                                  if (target instanceof HTMLDetailsElement) target.open = true;
+                                }}
+                              >
+                                #{e.sequence}{' '}
+                                {t(`pblV3.evidenceKinds.${e.kind.replaceAll('.', '_')}`)}
+                              </a>
+                            ))}
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                </section>
+              )}
               {report.truncated && <p>{t('pblV3.truncatedEvidence')}</p>}
               <h4 className="font-semibold">{t('pblV3.reportEvidence')}</h4>
               {report.evidence.map((item) => (
@@ -109,9 +172,9 @@ export function LearningPanels({ view }: { view: LearningView }) {
                     {report.milestones.find((m) => m.id === item.milestoneId)?.title} ·{' '}
                     {t(`pblV3.evidenceKinds.${item.kind.replaceAll('.', '_')}`)}
                   </summary>
-                  <pre className="max-h-64 overflow-auto whitespace-pre-wrap text-sm">
-                    {item.detail}
-                  </pre>
+                  <div className="max-h-64 overflow-auto text-sm">
+                    <TextBlock text={item.detail} />
+                  </div>
                   {item.version && (
                     <p className="break-all text-xs text-muted-foreground">
                       {t('pblV3.evidenceVersion')}: {item.version}

@@ -1,3 +1,4 @@
+import { projectConversation } from './conversation';
 import 'server-only';
 import { reviewQuestion } from './review-question';
 import { createHash, randomUUID } from 'node:crypto';
@@ -633,10 +634,11 @@ export async function learningView(principal: OwnerPrincipal, id: string): Promi
     stage = stageFor(row),
     role = roleFor(row),
     milestone = currentMilestone(project.definition, row.state)!;
-  const binding = (await store.roles(id)).find(
-    (b) => b.role === role && b.stage_key === stageKey(row),
-  );
+  const bindings = await store.roles(id);
+  const binding = bindings.find((b) => b.role === role && b.stage_key === stageKey(row));
   const messages: LearningView['messages'] = [];
+  let conversation: LearningView['conversation'] = [];
+  let activitySequence = 0;
   let roleRun: LearningView['roleRun'] = null;
   let latestUserSeq: number | undefined;
   let currentQuestionShown = false;
@@ -659,7 +661,13 @@ export async function learningView(principal: OwnerPrincipal, id: string): Promi
     latestUserSeq = (await listAgentUserMessages(agents, binding.session_id)).at(-1)?.seq;
     // Bounded transcript projection; durable role history remains in the runner's entry tree.
     const last = await agents.lastEventSeq(binding.session_id);
+    activitySequence = last;
     const events = await agents.readEventsAfter(binding.session_id, Math.max(0, last - 1000), 1000);
+    conversation = projectConversation(
+      events,
+      binding.role,
+      meta?.status === 'running' || meta?.status === 'queued',
+    );
     for (const event of events) {
       const data = event.data as {
         text?: string;
@@ -693,10 +701,40 @@ export async function learningView(principal: OwnerPrincipal, id: string): Promi
       }
     }
   }
+  // At most the current milestone's three roles and the project mentor. Keep the
+  // host event log authoritative; no second chat store or subscription protocol.
+  const agents = await getAgentSessionStore();
+  conversation = conversation.map((entry) => ({
+    ...entry,
+    id: `${binding?.session_id}:${entry.id}`,
+  }));
+  for (const previous of bindings.filter(
+    (item) =>
+      item.session_id !== binding?.session_id &&
+      (item.context_key === milestone.id || item.context_key === 'project'),
+  )) {
+    const last = await agents.lastEventSeq(previous.session_id);
+    activitySequence += last;
+    const events = await agents.readEventsAfter(previous.session_id, Math.max(0, last - 500), 500);
+    conversation.push(
+      ...projectConversation(events, previous.role, false).map((entry) => ({
+        ...entry,
+        id: `${previous.session_id}:${entry.id}`,
+      })),
+    );
+  }
+  conversation.sort((a, b) => (a.at ?? 0) - (b.at ?? 0));
+  conversation = conversation.slice(-60);
   // The review transaction can commit before the runner persists its display event.
   const pendingReview = binding?.guided?.pending;
-  if (pendingReview?.runId === `${stageKey(row)}:${latestUserSeq ?? 0}` && !currentQuestionShown)
+  if (pendingReview?.runId === `${stageKey(row)}:${latestUserSeq ?? 0}` && !currentQuestionShown) {
     messages.push({ role: 'assistant', text: pendingReview.question });
+    conversation.push({
+      id: `pending-${pendingReview.runId}`,
+      speaker: binding!.role,
+      parts: [{ kind: 'text', id: 'pending-question', text: pendingReview.question }],
+    });
+  }
   let environment: LearningView['environment'] = null;
   let environmentService: SandboxService | undefined;
   let files = Object.keys(project.files);
@@ -786,8 +824,11 @@ export async function learningView(principal: OwnerPrincipal, id: string): Promi
         ? actions.filter((action) => action !== 'next')
         : actions,
     files,
-    busy: await busy(store, row),
+    busy: roleRun?.status === 'running' || roleRun?.status === 'queued' || (await busy(store, row)),
     messages: messages.slice(-60),
+    conversation,
+    activitySequence,
+    task: { title: milestone.title, goal: milestone.goal ?? milestone.title },
     roleRun,
     evaluation,
     decisions:

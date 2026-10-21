@@ -25,15 +25,48 @@ reference against installed content. The scene never supplies model credentials,
 executable test commands, answers, or authoritative learning state. Existing v1/v2
 scenes keep their existing renderer.
 
-## Current interface
+## Classroom experience
 
-The sample picker opens a real classroom scene. Its learning UI provides a basic
-conversation, stage actions, file selector/text editor, learning path and report.
-It does not yet reproduce the previous OpenPBL workbench UX: role-aware turn cards,
-structured tool activity, token streaming, a file-tree/code-editor layout and the
-full entry journey still need explicit UI integration and acceptance. The companion
-workbench supplies execution, terminal, preview and recovery controls; those controls
-alone do not establish UI/UX parity. Generated-project entry remains separate.
+A PBL project remains a scene inside an OpenMAIC course. Neighboring slides, quizzes
+and other scenes provide course teaching; this change does not embed another
+OpenMAIC course inside the project. Native workspace expansion retains the same
+component instance and returns to the host layout without resetting a draft reply.
+Scene re-entry reloads durable study state; unsent drafts are not durable records.
+
+The teaching panel uses the host's existing OpenPBL-derived chat skin, Markdown
+renderer and sticky scrolling, with four role identities and ordered turn parts.
+Existing runner event snapshots update replies through the learning poll; no second
+stream, runner or chat database is introduced. Tool cards expose only an allowlisted
+action and status, never raw inputs/results, protocol sections or model reasoning.
+Recent conversations span the current milestone roles and project mentor; older
+records remain available in the report. Explicit sends re-anchor the conversation;
+reading older messages does not force scrolling to the bottom.
+
+Stage guidance, selected decisions, version-bound review and quiz actions use the
+server's progress/actions. Quiz answer drafts are scoped to their milestone/stage.
+Reports summarize retained test/quiz/reflection results and link to historical
+evidence without claiming that old test results certify subsequently edited files.
+
+The companion workbench owns file management, terminal, preview and recovery
+controls. This PR retains the basic file editor for standalone learning validation;
+it does not introduce a second editor or reproduce the old platform shell.
+
+![Classroom teaching conversation — local API fixtures](screenshots/conversation.png)
+
+### Teaching protocol reuse
+
+`teaching-sections.ts` adapts the general OpenPBL pre-decision, PLAN and implementation
+review sections. Project names, language-specific assumptions and legacy tool calls
+are removed; project teaching materials still come from the installed catalog.
+Shared rules preserve one disclosed step per reply, direct help before further
+questioning, meaningful rather than keyword-based feedback, non-repetitive review,
+and fresh approval after a changed artifact. The existing guided-review receipts
+still enforce ordering, real new student messages and current artifact versions.
+Named Discussion Skills select teaching, not mentor reflection. Public assets contain
+no private course decisions, tests, reference answers or milestone-specific material.
+
+The new interface copy is provided in English and Simplified Chinese; other locale
+bundles currently retain the English fallback for these additions.
 
 ## Execution and persistence
 
@@ -226,10 +259,10 @@ The report below is from the local classroom browser fixture, with saved evidenc
 Live-provider/model acceptance, the private full Java curriculum and its operational
 Preview remain separate delivery work. General course/project generation, SSH and
 local Docker providers are not added here. The legacy `course` stage schema is not
-an installed sample feature: the old release-backed course completion protocol has
-no trusted completion source in this host adapter. A course instance that requires
-it must first connect an authenticated host completion signal; a browser assertion
-must never mark it complete. Normal OpenMAIC classroom entry is already reused.
+an installed sample feature. The previous standalone platform embedded its introductory
+course; OpenMAIC instead hosts PBL alongside other course scenes. No nested-course
+adapter or browser-reported course-completion shortcut is added. Course content
+assembly remains separate from the seven-step project learning flow.
 
 The #1951 follow-ups for evaluator false passes and completion-before-validation are
 addressed here. Multi-learner execution pressure and dedicated workspace controls

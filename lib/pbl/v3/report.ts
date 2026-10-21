@@ -5,6 +5,12 @@ export interface LearningReport {
   revision: number;
   requiredComplete: boolean;
   milestones: { id: string; title: string; optional: boolean; status: string; stages: string[] }[];
+  outcomes?: {
+    milestoneId: string;
+    tests: string | null;
+    quiz: { score: number; total: number; attempt: number } | null;
+    reflected: boolean;
+  }[];
   counts: Record<string, number>;
   evidence: {
     sequence: number;

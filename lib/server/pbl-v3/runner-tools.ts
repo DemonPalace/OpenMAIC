@@ -31,7 +31,7 @@ import {
 import { touchEnvironment, assertEnvironmentReady } from './environment';
 import { assertIncrementalPlan } from './plan';
 import { startBuild, collectBuild, assertBuilt } from './compilation';
-import { stageSkill, teachingRules } from './skills';
+import { stageSkill, teachingRules, interactionRules } from './skills';
 import { isExplorationStage } from '@/lib/pbl/v3/domain/project/project-schema';
 import { GuidedSkillReview } from './guided-review';
 
@@ -366,6 +366,8 @@ export async function teachingRunnerConfig(input: {
       role: bound.role,
       seed: {
         ...seed,
+        projectContext: { title: project.definition.title, language: project.definition.language },
+        milestone: { id: milestone.id, title: milestone.title },
         goal: milestone.goal ?? milestone.title,
         ...(guided && review.state.pending
           ? {
@@ -419,6 +421,7 @@ export async function teachingRunnerConfig(input: {
     }) +
     '\n' +
     teachingRules +
+    interactionRules +
     (guided
       ? '\nUse read_next_skill to open one section at a time. After each section use request_skill_review and wait for a NEW student reply. Assess the actual studentResponses bound to currentReview, combining replies when needed. Supply studentFeedback as an explanation of how those replies answer the question; quoting or summarizing is allowed, but never invent a reply. If understanding is missing, clarify rather than advance. A short confirmation is sufficient only when the question asks for confirmation. After final feedback, use complete_stage. A completed tool is only a completion signal; the learner separately confirms progression.'
       : exploring

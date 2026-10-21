@@ -137,6 +137,21 @@ export async function learningReport(
         s.kind === 'check' ? s.checker : s.kind === 'produce' ? s.writes : s.kind,
       ),
     })),
+    outcomes: project.definition.milestones.map((m) => {
+      const collected = row.state.collected[m.id];
+      return {
+        milestoneId: m.id,
+        tests: collected?.tests?.status ?? null,
+        quiz: collected?.quiz
+          ? {
+              score: collected.quiz.score,
+              total: collected.quiz.total,
+              attempt: collected.quiz.attempt,
+            }
+          : null,
+        reflected: collected?.recapCompleted === true,
+      };
+    }),
     evidence,
     counts,
     conversations,

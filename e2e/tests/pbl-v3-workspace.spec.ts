@@ -84,6 +84,14 @@ test('installed sample opens in the normal classroom and preserves progress afte
               version: 'saved-version',
             },
           ],
+          outcomes: [
+            {
+              milestoneId: 'greeting',
+              tests: 'passed',
+              quiz: { score: 1, total: 1, attempt: 1 },
+              reflected: false,
+            },
+          ],
           counts: { 'artifact.recorded': 1 },
           conversations: [],
           truncated: false,

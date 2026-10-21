@@ -603,6 +603,20 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
       const before = await store.get(id, principal.ownerId);
       const report = await learningReport(principal, id);
       expect(report.requiredComplete).toBe(true);
+      expect(report.outcomes?.filter((outcome) => outcome.milestoneId !== 'explore')).toEqual([
+        {
+          milestoneId: 'greeting',
+          tests: 'passed',
+          quiz: { score: 1, total: 1, attempt: 1 },
+          reflected: true,
+        },
+        {
+          milestoneId: 'normalize',
+          tests: 'passed',
+          quiz: { score: 1, total: 1, attempt: 1 },
+          reflected: true,
+        },
+      ]);
       expect(report.evidence.filter((e) => e.kind === 'evaluation.recorded')).toHaveLength(2);
       expect(
         report.evidence.some(
@@ -664,6 +678,15 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
     await command('prepare');
     await expect(command('next')).rejects.toThrow('teaching interaction');
     await runTools('Please start.', async (config) => {
+      expect(config.systemPrompt).toContain(
+        JSON.stringify({ title: project.definition.title, language: project.definition.language }),
+      );
+      expect(config.systemPrompt).toContain(
+        JSON.stringify({
+          id: project.definition.milestones[0]!.id,
+          title: project.definition.milestones[0]!.title,
+        }),
+      );
       await expect(
         invoke(config, 'complete_stage', { studentFeedback: 'Please start.' }),
       ).rejects.toThrow();

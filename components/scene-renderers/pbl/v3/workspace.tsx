@@ -4,7 +4,9 @@ import { useI18n } from '@/lib/hooks/use-i18n';
 import { useStageStore } from '@/lib/store/stage';
 import type { LearningView } from '@/lib/pbl/v3/types';
 import { LearningPanels } from './learning-panels';
-import { MarkdownText } from '../v2/markdown-text';
+import { LearningConversation } from './conversation';
+import { WorkspaceFrame } from './workspace-frame';
+import { learningStep } from '@/lib/pbl/v3/presentation';
 import { sandboxErrorMessage } from '@/lib/sandbox/error-message';
 import { SandboxRequestError } from '@/components/sandbox/client';
 
@@ -23,17 +25,23 @@ export async function pblRequest<T>(url: string, body?: unknown): Promise<T> {
     );
   return data as T;
 }
-export function PBLV3Workspace({ sceneId }: { sceneId: string }) {
+function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
   const { t } = useI18n(),
     stageId = useStageStore((state) => state.stage?.id);
   const [view, setView] = useState<LearningView | null>(null),
     [error, setError] = useState(''),
     [pending, setPending] = useState(false);
+  const [sent, setSent] = useState(0);
   const [text, setText] = useState(''),
     [file, setFile] = useState('PLAN.md'),
     [editor, setEditor] = useState(''),
     [fileHash, setFileHash] = useState('');
-  const [answers, setAnswers] = useState<number[]>([]);
+  const [quizAnswers, setQuizAnswers] = useState<{ key: string; values: number[] }>({
+    key: '',
+    values: [],
+  });
+  const answerKey = `${view?.id}:${view?.state.position.milestoneId}:${view?.state.position.stageIndex}`;
+  const answers = quizAnswers.key === answerKey ? quizAnswers.values : [];
   const fileRequest = useRef(0);
   const retry = useRef<{
     type: string;
@@ -44,7 +52,12 @@ export function PBLV3Workspace({ sceneId }: { sceneId: string }) {
   const updateView = useCallback((next: LearningView) => {
     // A delayed poll or command response cannot undo newer progress or replace another study.
     setView((current) =>
-      current?.id === next.id && current.revision <= next.revision ? next : current,
+      current?.id === next.id &&
+      (current.revision < next.revision ||
+        (current.revision === next.revision &&
+          (current.activitySequence ?? 0) <= (next.activitySequence ?? 0)))
+        ? next
+        : current,
     );
   }, []);
   const studyId = view?.id;
@@ -90,6 +103,7 @@ export function PBLV3Workspace({ sceneId }: { sceneId: string }) {
         ? retry.current
         : { type, payload, id: crypto.randomUUID(), revision: view.revision };
     retry.current = request;
+    if (type === 'chat' && !repeat) setSent((n) => n + 1);
     try {
       const result = await pblRequest<{ view: LearningView }>('/api/pbl/v3', {
         studyId: view.id,
@@ -132,10 +146,11 @@ export function PBLV3Workspace({ sceneId }: { sceneId: string }) {
   }, [file, view?.environmentId, view?.environment?.ready]); // eslint-disable-line react-hooks/exhaustive-deps
   const quiz = view?.state.collected[view.state.position.milestoneId ?? '']?.quiz;
   const disabled = pending || view?.busy || !view?.environment?.ready;
-  const button = 'rounded-md border px-3 py-2 text-sm disabled:opacity-40 hover:bg-muted';
+  const button =
+    'rounded-md border px-3 py-2 text-sm disabled:opacity-40 hover:bg-muted aria-pressed:bg-primary aria-pressed:text-primary-foreground';
   return (
     <section
-      className="h-full overflow-auto bg-background p-4 text-foreground"
+      className="min-h-full bg-background p-4 text-foreground"
       data-testid="pbl-v3-workspace"
     >
       <header className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -181,6 +196,28 @@ export function PBLV3Workspace({ sceneId }: { sceneId: string }) {
       {view && (
         <>
           <LearningPanels key={view.id} view={view} />
+          <section
+            aria-label={t('pblV3.journey.currentTask')}
+            className="mb-4 rounded-xl border bg-muted/30 p-4"
+          >
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              {t(`pblV3.journey.steps.${learningStep(view)}`)}
+            </p>
+            <h2 className="mt-1 text-lg font-semibold">{view.task?.title ?? view.title}</h2>
+            {view.task?.goal && view.task.goal !== view.task.title && <p>{view.task.goal}</p>}
+            <p className="mt-2 text-sm">{t(`pblV3.journey.hints.${learningStep(view)}`)}</p>
+            <p role="status" className="mt-2 text-sm font-medium">
+              {t(
+                view.busy
+                  ? 'pblV3.thinking'
+                  : view.evaluation
+                    ? 'pblV3.journey.collectResult'
+                    : view.actions.includes('next')
+                      ? 'pblV3.journey.ready'
+                      : 'pblV3.journey.followStep',
+              )}
+            </p>
+          </section>
           {!view.environment?.ready && (
             <div className="mb-4 rounded-lg border p-4">
               <p className="mb-3">
@@ -208,8 +245,8 @@ export function PBLV3Workspace({ sceneId }: { sceneId: string }) {
           {view.state.status === 'completed' ? (
             <p role="status">{t('pblV3.completed')}</p>
           ) : (
-            <div className="grid gap-4 lg:grid-cols-2">
-              <div className="space-y-3 rounded-lg border p-4">
+            <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
+              <div className="min-w-0 space-y-3 rounded-xl border p-4">
                 <h3 className="font-semibold">{t('pblV3.learning')}</h3>
                 {view.roleRun &&
                   ['failed', 'cancelled', 'missing'].includes(view.roleRun.status) && (
@@ -226,17 +263,7 @@ export function PBLV3Workspace({ sceneId }: { sceneId: string }) {
                       )}
                     </div>
                   )}
-                <div className="max-h-96 space-y-3 overflow-auto" aria-live="polite">
-                  {view.messages.map((message, index) => (
-                    <article
-                      key={index}
-                      className={message.role === 'user' ? 'rounded-md bg-muted p-3' : 'p-2'}
-                    >
-                      <MarkdownText content={message.text} />
-                    </article>
-                  ))}
-                  {view.busy && <p role="status">{t('pblV3.thinking')}</p>}
-                </div>
+                <LearningConversation view={view} sent={sent} />
                 {view.actions.includes('chat') && (
                   <form
                     onSubmit={(event) => {
@@ -269,6 +296,9 @@ export function PBLV3Workspace({ sceneId }: { sceneId: string }) {
                         <button
                           key={option.id}
                           className={button}
+                          aria-pressed={view.state.collected[
+                            view.state.position.milestoneId ?? ''
+                          ]?.decisions.some((d) => d.id === decision.id && d.chosen === option.id)}
                           disabled={disabled}
                           onClick={() =>
                             void command('decide', { decisionId: decision.id, chosen: option.id })
@@ -290,10 +320,10 @@ export function PBLV3Workspace({ sceneId }: { sceneId: string }) {
                           name={`quiz-${index}`}
                           checked={answers[index] === i}
                           onChange={() =>
-                            setAnswers((previous) => {
-                              const next = [...previous];
+                            setQuizAnswers((previous) => {
+                              const next = previous.key === answerKey ? [...previous.values] : [];
                               next[index] = i;
-                              return next;
+                              return { key: answerKey, values: next };
                             })
                           }
                         />{' '}
@@ -329,7 +359,7 @@ export function PBLV3Workspace({ sceneId }: { sceneId: string }) {
                   </button>
                 )}
               </div>
-              <div className="space-y-3 rounded-lg border p-4">
+              <div className="min-w-0 space-y-3 rounded-xl border p-4">
                 <h3 className="font-semibold">{t('pblV3.files')}</h3>
                 <div className="flex flex-wrap gap-2">
                   <select
@@ -432,5 +462,13 @@ export function PBLV3Workspace({ sceneId }: { sceneId: string }) {
         </>
       )}
     </section>
+  );
+}
+
+export function PBLV3Workspace({ sceneId }: { sceneId: string }) {
+  return (
+    <WorkspaceFrame>
+      <PBLV3WorkspaceContent sceneId={sceneId} />
+    </WorkspaceFrame>
   );
 }
