@@ -333,6 +333,9 @@ function crossCheck(
       issues.push(`providers.${id}.voices: only TTS presets support a voice catalogue`);
     }
     if (provider.options?.defaultVoice !== undefined) {
+      if (!provider.voices) {
+        issues.push(`providers.${id}.voices: required when options.defaultVoice is configured`);
+      }
       const voice = provider.options.defaultVoice;
       if (typeof voice !== 'string' || !voice.trim()) {
         issues.push(`providers.${id}.options.defaultVoice: must be a nonblank string`);

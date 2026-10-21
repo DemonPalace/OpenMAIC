@@ -88,7 +88,7 @@ describe('agent profiles step', () => {
   });
 });
 
-it('preserves a standalone provider default through profile generation and narration', async () => {
+it('preserves a catalogue-backed provider default through profile generation and narration', async () => {
   const { advertisedVoices, narratorVoiceForGeneration, clipVoice } =
     await import('@/lib/server/generation/run/narration-voice');
   const target = {
@@ -100,6 +100,7 @@ it('preserves a standalone provider default through profile generation and narra
       userEndpoint: false,
       origin: 'configuration' as const,
       options: { defaultVoice: 'vivian' },
+      voices: [{ id: 'vivian', name: 'Vivian' }],
     },
   };
   answer(classroom.map((agent) => ({ ...agent, voice: 'openai-tts::alloy' })));
@@ -124,5 +125,5 @@ it('preserves a standalone provider default through profile generation and narra
       unavailable: new Set(),
     })?.voice.voiceId,
   ).toBe('vivian');
-  expect(advertisedVoices(target).some((voice) => voice.voiceId === 'alloy')).toBe(true);
+  expect(advertisedVoices(target).map((voice) => voice.voiceId)).toEqual(['vivian']);
 });

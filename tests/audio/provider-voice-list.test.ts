@@ -411,8 +411,16 @@ it.each([42, true, false, '', '   '])(
   },
 );
 
-it('accepts a standalone defaultVoice without requiring a catalogue', () => {
+it('requires a catalogue when defaultVoice is configured', () => {
   const input = config();
+  Object.assign(input.providers['custom-tts'], { options: { defaultVoice: 'vivian' } });
+  expect(() => parseModelConfig(JSON.stringify(input))).toThrow(
+    /providers.custom-tts.voices.*required.*defaultVoice/,
+  );
+});
+
+it('accepts defaultVoice when its catalogue contains the selected voice', () => {
+  const input = config(voices);
   Object.assign(input.providers['custom-tts'], { options: { defaultVoice: 'vivian' } });
   expect(
     parseModelConfig(JSON.stringify(input)).providers?.['custom-tts'].options?.defaultVoice,

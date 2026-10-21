@@ -68,7 +68,7 @@ providers:
   #   apiKey: ${CUSTOM_TTS_API_KEY}
   #   models: [your-tts-model]
   #   options:
-  #     defaultVoice: vivian
+  #     defaultVoice: vivian # Requires a voices list containing this ID.
   #   voices:
   #     - id: vivian
   #       name: Vivian
