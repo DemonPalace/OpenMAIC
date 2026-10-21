@@ -1,8 +1,18 @@
 import 'server-only';
 import type { PersistedAgentSessionEvent } from '@openmaic/storage';
 import type { AgentRole } from '@/lib/pbl/v3/domain/project/project-schema';
-import type { LearningConversationEntry } from '@/lib/pbl/v3/conversation';
+import type { LearningConversationEntry, LearningRunFailure } from '@/lib/pbl/v3/conversation';
 import { reviewQuestion } from './review-question';
+
+/** Never send provider diagnostics, addresses or credentials to a learner. */
+export function learningRunFailure(error: unknown): LearningRunFailure {
+  const message = typeof error === 'string' ? error : '';
+  return /\b(401|403)\b|unauthori[sz]ed|authentication|api.?key/i.test(message)
+    ? 'authentication'
+    : /timed?\s*out|timeout|deadline/i.test(message)
+      ? 'timeout'
+      : 'unavailable';
+}
 
 type Part = LearningConversationEntry['parts'][number];
 type ToolPart = Extract<Part, { kind: 'tool' }>;
@@ -183,6 +193,7 @@ export function projectConversation(
           : data.status === 'failed' || data.status === 'cancelled'
             ? data.status
             : 'succeeded';
+      if (data.status === 'failed') getAssistant(event).failure = learningRunFailure(data.error);
       assistant = undefined;
       continue;
     }

@@ -1,10 +1,13 @@
 import type { AgentRole } from './domain/project/project-schema';
 
+export type LearningRunFailure = 'authentication' | 'timeout' | 'unavailable';
+
 /** Learner-owned conversation, with explicit display fields rather than raw runner payloads. */
 export interface LearningConversationEntry {
   id: string;
   at?: number;
   status?: 'running' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted';
+  failure?: LearningRunFailure;
   speaker: 'user' | AgentRole;
   boundary?: {
     milestoneId: string;

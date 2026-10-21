@@ -1,4 +1,4 @@
-import { projectConversation } from './conversation';
+import { projectConversation, learningRunFailure } from './conversation';
 import 'server-only';
 import { reviewQuestion } from './review-question';
 import { createHash, randomUUID } from 'node:crypto';
@@ -76,14 +76,24 @@ export function requireEnvironment(row: Study): string {
   if (!row.environment_id) throw sandboxConflict('Prepare the project environment first.');
   return row.environment_id;
 }
-export async function readFiles(service: SandboxService, row: Study, project = projectFor(row)) {
+export async function readFiles(
+  service: SandboxService,
+  row: Study,
+  project = projectFor(row),
+  signal?: AbortSignal,
+  onProgress?: () => void,
+) {
+  signal?.throwIfAborted();
   const result: Record<string, string> = {};
   const environmentId = requireEnvironment(row);
   // A process can modify files without using our file API. Refuse evidence until managed writers stop.
   await service.assertWorkspaceIdle(environmentId);
   let bytes = 0;
   for (const path of await projectFiles(service, environmentId, project)) {
+    signal?.throwIfAborted();
     const text = await service.readText(environmentId, path);
+    signal?.throwIfAborted();
+    onProgress?.();
     bytes += Buffer.byteLength(text);
     if (bytes > 1_048_576)
       throw sandboxInvalid('Project source snapshots are limited to 1 MiB.', 'PBL_SOURCE_SIZE');
@@ -689,14 +699,7 @@ export async function learningView(principal: OwnerPrincipal, id: string): Promi
       status: meta?.status ?? 'missing',
       canRetry: !!meta && ['failed', 'cancelled'].includes(meta.status),
       // Never expose raw provider errors, URLs, or credentials to the browser.
-      failure:
-        meta?.status === 'failed'
-          ? /\b(401|403)\b|unauthori[sz]ed|authentication|api.?key/i.test(meta.error ?? '')
-            ? 'authentication'
-            : /timed?\s*out|timeout|deadline/i.test(meta.error ?? '')
-              ? 'timeout'
-              : 'unavailable'
-          : null,
+      failure: meta?.status === 'failed' ? learningRunFailure(meta.error) : null,
     };
     latestUserSeq = (await listAgentUserMessages(agents, binding.session_id)).at(-1)?.seq;
     // Bounded transcript projection; durable role history remains in the runner's entry tree.

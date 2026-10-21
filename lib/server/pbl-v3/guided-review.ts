@@ -132,14 +132,22 @@ export class GuidedSkillReview {
     return structuredClone(this.state);
   }
 
-  assertComplete(feedback: string | undefined, digest: string): void {
+  assertCompletable(): void {
     if (
       this.ended ||
       this.state.activeFile !== this.protocol.final ||
       JSON.stringify(this.state.reviewedFiles) !==
         JSON.stringify(this.protocol.progression.slice(1, -1))
     )
-      throw new Error('必须完成各段学生反馈和最终确认，不能以协议已读代替审查');
+      throw new Error(
+        '必须完成各段学生反馈和最终确认，不能以协议已读代替审查。' +
+          'Use teachingContext and read_next_skill to deliver the unfinished section, ' +
+          'then request_skill_review and wait for its new student reply before completing.',
+      );
+  }
+
+  assertComplete(feedback: string | undefined, digest: string): void {
+    this.assertCompletable();
     this.assertFeedback(feedback, digest);
   }
 

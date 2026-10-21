@@ -78,6 +78,47 @@ describe('student conversation projection', () => {
     ]);
     expect(output[1]?.parts[0]).toMatchObject({ text: 'Partial', streaming: false });
   });
+  it('distinguishes a recovered tool gate from a stalled model turn without leaking diagnostics', () => {
+    const recovered = projectConversation(
+      [
+        event(1, 'session_start', {}),
+        event(2, 'tool_execution_end', {
+          toolName: 'complete_stage',
+          toolCallId: 'gate',
+          isError: true,
+        }),
+        event(3, 'message_end', message('We still need to review the plan.')),
+        event(4, 'session_end', { status: 'succeeded' }),
+      ],
+      'planner',
+      false,
+    );
+    expect(recovered[0]).toMatchObject({
+      status: 'succeeded',
+      parts: [{ status: 'failed' }, { text: 'We still need to review the plan.' }],
+    });
+    expect(recovered[0].failure).toBeUndefined();
+    const failed = projectConversation(
+      [
+        event(1, 'session_start', {}),
+        event(2, 'message_end', message('Partial reply')),
+        event(3, 'session_end', {
+          status: 'failed',
+          error:
+            'Teaching turn timed out after 120 seconds without progress (model). private-provider-diagnostic',
+        }),
+      ],
+      'planner',
+      false,
+      'failed',
+    );
+    expect(failed[0]).toMatchObject({
+      status: 'failed',
+      failure: 'timeout',
+      parts: [{ text: 'Partial reply', streaming: false }],
+    });
+    expect(JSON.stringify(failed)).not.toContain('private-provider');
+  });
   it('replays durable stage dividers and hides system opening requests', () => {
     const boundary = {
       milestoneId: 'one',

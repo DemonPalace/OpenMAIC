@@ -411,7 +411,16 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
   await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
   await expect(conversation.getByRole('status')).toContainText('This teaching turn was cancelled.');
   await expect(conversation.getByTestId('workbench-waiting-bar')).toHaveCount(0);
+  finished.status = 'failed';
+  finished.failure = 'timeout';
+  view.activitySequence++;
+  await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
+  await expect(conversation.getByRole('status')).toContainText(
+    'The teaching response timed out. You can retry this turn.',
+  );
+  await expect(conversation.getByText('A completed explanation', { exact: true })).toBeVisible();
   finished.status = 'succeeded';
+  delete finished.failure;
   view.activitySequence++;
   await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
   await thinking.getByRole('button').click();

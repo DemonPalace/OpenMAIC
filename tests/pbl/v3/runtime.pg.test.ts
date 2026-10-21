@@ -1562,6 +1562,110 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
     expect(mocked.renewals.slice(count)).toEqual([before.environment_id]);
     expect((await store.get(study.id, principal.ownerId)).revision).toBe(before.revision);
   });
+  it('opens and rereads local protocol without cloud calls, while review still checks live evidence', async () => {
+    const study = await freshStudy();
+    const queued = (await study.send('chat')) as { sessionId: string };
+    const meta = await agents.claimNextSession('protocol-worker', process.pid, {
+      sessionId: queued.sessionId,
+      leaseTtlMs: 10000,
+      maxAttempts: 5,
+    });
+    const config = await teachingRunnerConfig({
+      sessionId: queued.sessionId,
+      ownerId: principal.ownerId,
+      workerId: 'protocol-worker',
+      attempt: meta!.attempt,
+      signal: new AbortController().signal,
+    });
+    const inspect = vi.spyOn(E2BCompatibleSandboxProvider.prototype, 'inspect');
+    const read = vi.spyOn(SandboxService.prototype, 'readText');
+    try {
+      mocked.failInspect = true;
+      await pool.query('UPDATE pbl_v3_studies SET environment_checked_at=NULL WHERE id=$1', [
+        study.id,
+      ]);
+      await invoke(config, 'read_next_skill');
+      await invoke(config, 'read_next_skill');
+      expect(inspect).not.toHaveBeenCalled();
+      expect(read).not.toHaveBeenCalled();
+      await expect(
+        invoke(config, 'complete_stage', { studentFeedback: 'Too early.' }),
+      ).rejects.toThrow('必须完成');
+      expect(inspect).not.toHaveBeenCalled();
+      expect(read).not.toHaveBeenCalled();
+      await expect(
+        invoke(config, 'request_skill_review', { question: 'Explain the greeting.' }),
+      ).rejects.toThrow('Provider unavailable');
+      expect((await store.binding(queued.sessionId))?.guided?.pending).toBeUndefined();
+    } finally {
+      mocked.failInspect = false;
+      inspect.mockRestore();
+      read.mockRestore();
+      await agents.finishSession(queued.sessionId, 'protocol-worker', {
+        status: 'succeeded',
+        expectedAttempt: meta!.attempt,
+      });
+    }
+  });
+
+  it('stops an aborted evidence read before another file or teaching receipt is written', async () => {
+    const study = await freshStudy();
+    const queued = (await study.send('chat')) as { sessionId: string };
+    const meta = await agents.claimNextSession('abort-evidence-worker', process.pid, {
+      sessionId: queued.sessionId,
+      leaseTtlMs: 10000,
+      maxAttempts: 5,
+    });
+    const config = await teachingRunnerConfig({
+      sessionId: queued.sessionId,
+      ownerId: principal.ownerId,
+      workerId: 'abort-evidence-worker',
+      attempt: meta!.attempt,
+      signal: new AbortController().signal,
+    });
+    await invoke(config, 'read_next_skill');
+    const abort = new AbortController();
+    let release!: () => void, entered!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const ready = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const original = SandboxService.prototype.readText;
+    const read = vi
+      .spyOn(SandboxService.prototype, 'readText')
+      .mockImplementationOnce(async function (this: SandboxService, id, path) {
+        entered();
+        await gate;
+        return original.call(this, id, path);
+      });
+    try {
+      const tool = config.tools.find((t) => t.name === 'request_skill_review')!;
+      const operation = tool.execute(
+        randomUUID(),
+        { question: 'Explain the greeting.' },
+        abort.signal,
+      );
+      const rejected = expect(operation).rejects.toThrow();
+      await ready;
+      abort.abort();
+      release();
+      await rejected;
+      expect(read).toHaveBeenCalledTimes(1);
+      expect((await store.binding(queued.sessionId))?.guided?.pending).toBeUndefined();
+      // The study lock is released; the same turn can reread its last committed section.
+      await expect(invoke(config, 'read_next_skill')).resolves.toBeDefined();
+    } finally {
+      release();
+      read.mockRestore();
+      await agents.finishSession(queued.sessionId, 'abort-evidence-worker', {
+        status: 'succeeded',
+        expectedAttempt: meta!.attempt,
+      });
+    }
+  });
+
   it('keeps teaching tools available while a background poll renews the same environment', async () => {
     const study = await freshStudy();
     const queued = (await study.send('chat')) as { sessionId: string };
@@ -1577,6 +1681,7 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
       attempt: meta!.attempt,
       signal: new AbortController().signal,
     });
+    await invoke(config, 'read_next_skill');
     await pool.query('UPDATE pbl_v3_studies SET environment_checked_at=NULL WHERE id=$1', [
       study.id,
     ]);
@@ -1611,7 +1716,9 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
     const polling = learningView(principal, study.id);
     try {
       await ready;
-      const teaching = invoke(config, 'read_next_skill');
+      const teaching = invoke(config, 'request_skill_review', {
+        question: 'Explain the greeting.',
+      });
       const outcome = expect(teaching).resolves.toMatchObject({
         content: expect.any(Array),
       });

@@ -133,7 +133,9 @@ function AgentTurn({ entry }: { entry: LearningConversationEntry }) {
           entry.status === 'cancelled' ||
           entry.status === 'interrupted') && (
           <p role="status" className="text-xs text-muted-foreground">
-            {t(`pblV3.run.${entry.status === 'cancelled' ? 'cancelled' : 'unavailable'}`)}
+            {t(
+              `pblV3.run.${entry.status === 'cancelled' ? 'cancelled' : (entry.failure ?? 'unavailable')}`,
+            )}
           </p>
         )}
       </div>
