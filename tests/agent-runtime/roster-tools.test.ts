@@ -734,3 +734,40 @@ describe('roster tool registry', () => {
     expect(names).not.toContain('generate_roster');
   });
 });
+
+it.each(['openai-tts', 'qwen-tts'])(
+  'uses a replacement catalogue in list_voices and set_roster for %s',
+  async (providerId) => {
+    const ttsConnection = {
+      providerId,
+      apiKey: 'test-key',
+      managed: true,
+      userEndpoint: false,
+      origin: 'configuration',
+      voices: [{ id: 'vivian', name: 'Vivian' }],
+    };
+    const store = makeStore(makeDoc());
+    const listed = await runTool(store, 'list_voices', {}, { ttsConnection });
+    expect(
+      (listed.details?.voices as Array<{ binding: string }>).map((voice) => voice.binding),
+    ).toEqual([`${providerId}::vivian`]);
+    const result = await runTool(
+      store,
+      'set_roster',
+      {
+        stageId: 'stage-test',
+        agents: [
+          {
+            name: 'Teacher',
+            role: 'teacher',
+            persona: 'Patient teacher.',
+            voice: `${providerId}::vivian`,
+          },
+          { name: 'Student', role: 'student', persona: 'Curious learner.' },
+        ],
+      },
+      { ttsConnection },
+    );
+    expect(result.isError).toBeUndefined();
+  },
+);
