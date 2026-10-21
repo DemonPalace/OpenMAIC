@@ -2360,6 +2360,14 @@
   },
   "sandbox": {
     "errors": {
+      "environmentBusy": "Outra operação está alterando este ambiente. Tente novamente quando ela terminar.",
+      "environmentChanged": "O ambiente de aprendizagem mudou. Atualize a página antes de continuar.",
+      "progressChanged": "O progresso da aprendizagem mudou. Atualize a página e tente a operação novamente.",
+      "workbenchAccessDenied": "Esta operação não está disponível na etapa atual da aprendizagem. Use os controles do projeto que estiverem habilitados.",
+      "fileConflict": "O arquivo mudou ou o destino já existe. Recarregue o espaço de trabalho antes de tentar novamente.",
+      "stopped": "O espaço de trabalho foi interrompido. Tente a operação novamente para reiniciá-lo.",
+      "invalidRequest": "A solicitação é inválida. Verifique os valores e tente novamente.",
+      "unsupported": "O provedor de sandbox configurado não oferece suporte a esta operação.",
       "learningManaged": "Este espaço de trabalho pertence a um projeto de aprendizagem. Use os controles do espaço de aprendizagem.",
       "sourcePath": "Este arquivo não faz parte dos arquivos-fonte do projeto.",
       "sourceCount": "Os projetos de aprendizagem aceitam no máximo 256 arquivos-fonte.",
@@ -2571,6 +2579,36 @@
       "unavailable": "The teaching response could not finish. Please retry shortly.",
       "cancelled": "This teaching turn was cancelled. Retry it or send a new message.",
       "missing": "The teaching session is unavailable. Send a message to restart this review step; your learning progress is preserved."
+    },
+    "workbench": {
+      "unsaved": "Unsaved changes. Save or discard before switching files or running commands.",
+      "staleBuffer": "The environment or file changed. Your unsaved text is preserved; copy it before reloading.",
+      "discard": "Discard changes and reload",
+      "manageFiles": "Manage source files",
+      "newPath": "Project-relative file path",
+      "create": "Create file",
+      "rename": "Rename / move file",
+      "delete": "Delete file",
+      "confirmDelete": "Delete {{path}}? This cannot be undone without a saved checkpoint.",
+      "execution": "Run and preview",
+      "executionNotice": "Commands and terminals can change project files. Stop them before review, tests or checkpoints. New execution is disabled while waiting for a teaching review.",
+      "command": "Project command",
+      "run": "Run command",
+      "openTerminal": "Open terminal",
+      "stop": "Stop commands and close terminals",
+      "preview": "Preview port {{port}}",
+      "application": "Project application",
+      "savedAt": "Last checkpoint: {{time}}",
+      "notSaved": "No durable checkpoint yet.",
+      "commandStates": {
+        "starting": "Starting",
+        "running": "Running",
+        "exited": "Exited",
+        "cancelled": "Cancelled",
+        "timed_out": "Timed out",
+        "failed": "Execution failed",
+        "unknown": "Execution status unknown"
+      }
     }
   }
 }

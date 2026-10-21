@@ -2360,6 +2360,14 @@
   },
   "sandbox": {
     "errors": {
+      "environmentBusy": "Một thao tác khác đang thay đổi môi trường này. Hãy thử lại sau khi thao tác đó hoàn tất.",
+      "environmentChanged": "Môi trường học tập đã thay đổi. Hãy làm mới trang trước khi tiếp tục.",
+      "progressChanged": "Tiến độ học tập đã thay đổi. Hãy làm mới trang rồi thử lại thao tác.",
+      "workbenchAccessDenied": "Không thể thực hiện thao tác này ở giai đoạn học tập hiện tại. Hãy sử dụng các chức năng dự án được cho phép.",
+      "fileConflict": "Tệp đã thay đổi hoặc đường dẫn đích đã tồn tại. Hãy tải lại không gian làm việc trước khi thử lại.",
+      "stopped": "Không gian làm việc đã dừng. Hãy thử lại thao tác để khởi động lại.",
+      "invalidRequest": "Yêu cầu không hợp lệ. Hãy kiểm tra các giá trị rồi thử lại.",
+      "unsupported": "Nhà cung cấp sandbox đã cấu hình không hỗ trợ thao tác này.",
       "learningManaged": "Không gian làm việc này thuộc một dự án học tập. Hãy sử dụng các chức năng điều khiển trong không gian học tập.",
       "sourcePath": "Tệp này nằm ngoài phạm vi mã nguồn của dự án.",
       "sourceCount": "Dự án học tập hỗ trợ tối đa 256 tệp mã nguồn.",
@@ -2571,6 +2579,36 @@
       "unavailable": "The teaching response could not finish. Please retry shortly.",
       "cancelled": "This teaching turn was cancelled. Retry it or send a new message.",
       "missing": "The teaching session is unavailable. Send a message to restart this review step; your learning progress is preserved."
+    },
+    "workbench": {
+      "unsaved": "Unsaved changes. Save or discard before switching files or running commands.",
+      "staleBuffer": "The environment or file changed. Your unsaved text is preserved; copy it before reloading.",
+      "discard": "Discard changes and reload",
+      "manageFiles": "Manage source files",
+      "newPath": "Project-relative file path",
+      "create": "Create file",
+      "rename": "Rename / move file",
+      "delete": "Delete file",
+      "confirmDelete": "Delete {{path}}? This cannot be undone without a saved checkpoint.",
+      "execution": "Run and preview",
+      "executionNotice": "Commands and terminals can change project files. Stop them before review, tests or checkpoints. New execution is disabled while waiting for a teaching review.",
+      "command": "Project command",
+      "run": "Run command",
+      "openTerminal": "Open terminal",
+      "stop": "Stop commands and close terminals",
+      "preview": "Preview port {{port}}",
+      "application": "Project application",
+      "savedAt": "Last checkpoint: {{time}}",
+      "notSaved": "No durable checkpoint yet.",
+      "commandStates": {
+        "starting": "Starting",
+        "running": "Running",
+        "exited": "Exited",
+        "cancelled": "Cancelled",
+        "timed_out": "Timed out",
+        "failed": "Execution failed",
+        "unknown": "Execution status unknown"
+      }
     }
   }
 }
