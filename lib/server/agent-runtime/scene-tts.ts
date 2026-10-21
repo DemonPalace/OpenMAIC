@@ -1,3 +1,4 @@
+import { configuredDefaultVoice } from '@/lib/audio/provider-default-voice';
 import { authorizeMediaModel } from '@/lib/server/model-config/media';
 import { DEFAULT_TTS_MODELS, DEFAULT_TTS_VOICES, TTS_PROVIDERS } from '@/lib/audio/constants';
 import { generateTTS, TTSRequestTimeoutError } from '@/lib/audio/tts-providers';
@@ -57,7 +58,9 @@ export async function synthesizeSceneNarration(input: SceneTtsInput): Promise<Sc
   const voice =
     bound?.providerId === providerId && bound.voiceId
       ? bound.voiceId
-      : DEFAULT_TTS_VOICES[providerId as keyof typeof DEFAULT_TTS_VOICES] || '';
+      : configuredDefaultVoice(connection.options) ||
+        DEFAULT_TTS_VOICES[providerId as keyof typeof DEFAULT_TTS_VOICES] ||
+        '';
   const model =
     connection.modelId ?? (DEFAULT_TTS_MODELS[providerId as keyof typeof DEFAULT_TTS_MODELS] || '');
   // A configured slot's own model; the legacy server pins apply only to a default.

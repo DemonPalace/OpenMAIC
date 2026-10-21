@@ -57,6 +57,21 @@ providers:
   #   preset: openai-image
   #   apiKey: ${OPENAI_API_KEY}
 
+  # An OpenAI-compatible TTS service can override its displayed voice list.
+  # Without voices/options.defaultVoice the built-in behavior is unchanged.
+  # custom-tts:
+  #   preset: openai-tts
+  #   baseUrl: https://your-provider.example/v1
+  #   apiKey: ${CUSTOM_TTS_API_KEY}
+  #   models: [your-tts-model]
+  #   options:
+  #     defaultVoice: vivian
+  #   voices:
+  #     - id: vivian
+  #       name: Vivian
+  #     - id: serena
+  #       name: Serena
+
   # Zhipu GLM CogView image generation:
   # glm-image:
   #   preset: glm-image

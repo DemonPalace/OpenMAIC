@@ -1,3 +1,4 @@
+import { configuredDefaultVoice } from '@/lib/audio/provider-default-voice';
 /**
  * Narration: synthesize one speech line through the tts slot's provider.
  * Moved from POST /api/generate/tts, which keeps resolving the slot (with the
@@ -63,7 +64,9 @@ export async function synthesizeNarration(
   const ttsVoice =
     requestedVoice && (!requestedProviderId || requestedProviderId === ttsProviderId)
       ? requestedVoice
-      : DEFAULT_TTS_VOICES[ttsProviderId as keyof typeof DEFAULT_TTS_VOICES] || requestedVoice;
+      : configuredDefaultVoice(connection.options) ||
+        DEFAULT_TTS_VOICES[ttsProviderId as keyof typeof DEFAULT_TTS_VOICES] ||
+        requestedVoice;
   trace.voice = ttsVoice;
   if (!ttsVoice) {
     throw new StepRefusal<NarrationRefusal>('voice-missing', 'Missing required field: ttsVoice');

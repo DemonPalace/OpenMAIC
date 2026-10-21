@@ -1,4 +1,4 @@
-import type { TTSProviderId } from '@/lib/audio/types';
+import type { TTSProviderId, ConfiguredTTSVoice } from '@/lib/audio/types';
 import { isCustomTTSProvider } from '@/lib/audio/types';
 import type { AgentConfig } from '@/lib/orchestration/registry/types';
 import {
@@ -143,12 +143,19 @@ export function resolveAgentVoice(
       : true;
     // Without compatibility metadata, legacy providers are assumed to accept
     // their known voices on the configured default model, preserving prior behavior.
+    const configuredLegacyVoice =
+      fromEnabled.configuredVoiceList &&
+      !!declaredVoice &&
+      voiceServesModel(choice.providerId, choice.voiceId, fromEnabled.modelGroups[0]?.modelId);
     const modelCompatible =
-      matchingModelGroup?.voices.some((voice) => voice.id === choice.voiceId) ??
-      staleModelCanUseDefault;
+      configuredLegacyVoice ||
+      (matchingModelGroup?.voices.some((voice) => voice.id === choice.voiceId) ??
+        staleModelCanUseDefault);
     // The provider's list holds only the voices its model in use can speak.
     const offered =
-      !declaredVoice || fromEnabled.voices.some((voice) => voice.id === choice.voiceId);
+      configuredLegacyVoice ||
+      !declaredVoice ||
+      fromEnabled.voices.some((voice) => voice.id === choice.voiceId);
     if (allVoiceIds.has(choice.voiceId) && modelCompatible && offered) {
       return {
         providerId: choice.providerId,
@@ -320,6 +327,8 @@ export interface ProviderWithVoices {
     /** Catalogue gender, when the provider lists one. `neutral` is explicit. */
     gender?: 'male' | 'female' | 'neutral';
   }>;
+  /** A display-only replacement; existing compatible built-in bindings remain valid. */
+  configuredVoiceList?: true;
   modelGroups: ModelVoiceGroup[]; // voices grouped by model
 }
 
@@ -348,6 +357,7 @@ export function getEnabledProvidersWithVoices(
       modelId?: string;
       providerOptions?: Record<string, unknown>;
       customName?: string;
+      voices?: ConfiguredTTSVoice[];
     }
   >,
   voiceProfiles: UserVoiceProfile[] = [],
@@ -362,6 +372,22 @@ export function getEnabledProvidersWithVoices(
 
     const providerConfig = ttsProvidersConfig[providerId];
     if (!isTTSProviderEnabled(providerId, providerConfig)) continue;
+    // Only an explicit provider-local list replaces the built-in catalogue.
+    if (providerConfig?.voices?.length) {
+      const voices = providerConfig.voices.map((voice) => ({
+        ...voice,
+        language: voice.language ?? 'auto',
+      }));
+      const modelId = providerConfig.modelId ?? config.defaultModelId ?? '';
+      result.push({
+        providerId,
+        providerName: config.name,
+        configuredVoiceList: true,
+        voices,
+        modelGroups: [{ modelId, modelName: modelId || config.name, voices }],
+      });
+      continue;
+    }
 
     const providerProfiles = voiceProfiles.filter(
       (profile) =>

@@ -1,3 +1,4 @@
+import { configuredDefaultVoice } from '@/lib/audio/provider-default-voice';
 /**
  * Speech synthesis as the workspace's model settings define it: the `tts`
  * slot names one provider (and model); the browser only keeps which voice and
@@ -8,7 +9,7 @@
  */
 import { DEFAULT_TTS_VOICES, TTS_PROVIDERS, voiceServesModel } from '@/lib/audio/constants';
 import { normalizeVoxCPMBackend } from '@/lib/audio/voxcpm';
-import type { BuiltInTTSProviderId, TTSProviderId } from '@/lib/audio/types';
+import type { BuiltInTTSProviderId, TTSProviderId, ConfiguredTTSVoice } from '@/lib/audio/types';
 import {
   currentModelCapabilities,
   type EffectiveTarget,
@@ -27,6 +28,7 @@ export interface SlotTTSProviderConfig {
   modelId?: string;
   /** The provider's non-secret options (a VoxCPM `backend`, say), as the server configures them. */
   providerOptions?: Record<string, string | number | boolean>;
+  voices?: ConfiguredTTSVoice[];
 }
 
 export type SlotTTSProvidersConfig = Record<string, SlotTTSProviderConfig>;
@@ -57,6 +59,7 @@ export function slotTTSProvidersConfig(target: EffectiveTarget | null): SlotTTSP
       enabled: true,
       isServerConfigured: target.registryId !== BROWSER_NATIVE_TTS_PROVIDER_ID,
       ...(modelId ? { modelId } : {}),
+      ...(target.voices ? { voices: target.voices } : {}),
       ...(target.options ? { providerOptions: { ...target.options } } : {}),
     };
   }
@@ -67,7 +70,13 @@ export function slotTTSProvidersConfig(target: EffectiveTarget | null): SlotTTSP
  * A provider's own default voice, or, when its model cannot speak that one,
  * the first catalogue voice it can.
  */
-export function defaultVoiceFor(providerId: string, modelId?: string): string {
+export function defaultVoiceFor(
+  providerId: string,
+  modelId?: string,
+  options?: Record<string, unknown>,
+): string {
+  const configured = configuredDefaultVoice(options);
+  if (configured) return configured;
   const preferred = DEFAULT_TTS_VOICES[providerId as BuiltInTTSProviderId] || 'default';
   if (voiceServesModel(providerId, preferred, modelId)) return preferred;
   const voices = TTS_PROVIDERS[providerId as BuiltInTTSProviderId]?.voices ?? [];
@@ -108,7 +117,7 @@ export function ttsSelection(
   return {
     providerId,
     ...(target.modelId ? { modelId: target.modelId } : {}),
-    voice: usable ? preference.voice : defaultVoiceFor(providerId, model),
+    voice: usable ? preference.voice : defaultVoiceFor(providerId, model, target.options),
     speed: preference.speed,
     providersConfig: slotTTSProvidersConfig(target),
   };

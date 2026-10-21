@@ -1,3 +1,4 @@
+import { configuredDefaultVoice } from '@/lib/audio/provider-default-voice';
 /**
  * Which voice a run narrates with, decided as the browser decides it for the
  * `tts` slot (`lib/audio/tts-selection.ts`, `generateAndStoreTTS`): the slot
@@ -12,7 +13,7 @@ import {
   resolveTTSModelForVoice,
   voiceServesModel,
 } from '@/lib/audio/constants';
-import type { BuiltInTTSProviderId, TTSProviderId } from '@/lib/audio/types';
+import type { BuiltInTTSProviderId, TTSProviderId, ConfiguredTTSVoice } from '@/lib/audio/types';
 import { isTTSProviderEnabled } from '@/lib/audio/provider-enablement';
 import { voiceBindingKey } from '@/lib/audio/unavailable-voice-bindings';
 import {
@@ -46,6 +47,7 @@ function providersConfig(target: RunNarrationTarget): Record<
     enabled: boolean;
     isServerConfigured: boolean;
     modelId?: string;
+    voices?: ConfiguredTTSVoice[];
     providerOptions?: Record<string, string | number | boolean>;
   }
 > {
@@ -55,6 +57,7 @@ function providersConfig(target: RunNarrationTarget): Record<
       baseUrl: '',
       enabled: true,
       isServerConfigured: true,
+      ...(target.connection.voices ? { voices: target.connection.voices } : {}),
       ...(target.modelId ? { modelId: target.modelId } : {}),
       ...(target.connection.options ? { providerOptions: { ...target.connection.options } } : {}),
     },
@@ -62,7 +65,13 @@ function providersConfig(target: RunNarrationTarget): Record<
 }
 
 /** A provider's default voice, or the first catalogue voice its model can speak. */
-function defaultVoiceFor(providerId: string, modelId?: string): string {
+function defaultVoiceFor(
+  providerId: string,
+  modelId?: string,
+  options?: Record<string, unknown>,
+): string {
+  const configured = configuredDefaultVoice(options);
+  if (configured) return configured;
   const preferred = DEFAULT_TTS_VOICES[providerId as BuiltInTTSProviderId] || 'default';
   if (voiceServesModel(providerId, preferred, modelId)) return preferred;
   const voices = TTS_PROVIDERS[providerId as BuiltInTTSProviderId]?.voices ?? [];
@@ -79,7 +88,9 @@ export function slotVoice(
     !!preference.voiceId &&
     voiceServesModel(target.providerId, preference.voiceId, target.modelId);
   return {
-    voice: usable ? preference!.voiceId : defaultVoiceFor(target.providerId, target.modelId),
+    voice: usable
+      ? preference!.voiceId
+      : defaultVoiceFor(target.providerId, target.modelId, target.connection.options),
     speed: preference?.speed ?? 1,
   };
 }
@@ -108,7 +119,7 @@ export function advertisedVoices(target: RunNarrationTarget) {
       const modelId = cloneModelGroup
         ? resolveTTSModelForVoice(provider.providerId, voice.id, cloneModelGroup.modelId)
         : undefined;
-      const gender = catalogVoiceGender(provider.providerId, voice.id);
+      const gender = voice.gender ?? catalogVoiceGender(provider.providerId, voice.id);
       return {
         providerId: provider.providerId,
         ...(modelId ? { modelId } : {}),

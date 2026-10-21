@@ -117,6 +117,24 @@ export const providerOptionsSchema = z.record(
 
 export type ProviderOptions = z.infer<typeof providerOptionsSchema>;
 
+const providerVoicesSchema = z
+  .array(
+    z
+      .object({
+        id: z.string().trim().min(1).max(256),
+        name: z.string().trim().min(1).max(256),
+        language: z.string().trim().min(1).max(64).optional(),
+        gender: z.enum(['male', 'female', 'neutral']).optional(),
+      })
+      .strict(),
+  )
+  .min(1)
+  .max(1000)
+  .refine(
+    (voices) => new Set(voices.map((voice) => voice.id)).size === voices.length,
+    'voice ids must be unique',
+  );
+
 export const providerSchema = z
   .object({
     preset: z.string().min(1),
@@ -133,6 +151,7 @@ export const providerSchema = z
      * settings view, so never a place for a key.
      */
     options: providerOptionsSchema.optional(),
+    voices: providerVoicesSchema.optional(),
   })
   .strict();
 
