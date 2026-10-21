@@ -88,6 +88,8 @@ export interface ProviderView {
   source: 'deployment' | 'workspace';
   baseUrl?: string;
   models?: string[];
+  /** Non-secret adapter options, also available when previewing an inactive provider. */
+  options?: Record<string, string | number | boolean>;
   /** What it offers, with the models to pick from per capability. */
   capabilities: CapabilityModels;
   /** Workspace providers only. */
@@ -487,6 +489,7 @@ export function modelSettingsView(stored: StoredWorkspaceConfig | null): ModelSe
       ...presetLabel(provider.preset),
       source: 'deployment' as const,
       ...(provider.models ? { models: [...provider.models] } : {}),
+      ...(provider.options ? { options: { ...provider.options } } : {}),
       capabilities: capabilityModels(getProviderPreset(provider.preset), provider.models, {
         strictModels: usesServerCredentials(provider),
         deployment: deployment?.config,
@@ -500,6 +503,7 @@ export function modelSettingsView(stored: StoredWorkspaceConfig | null): ModelSe
       source: 'workspace' as const,
       ...(provider.baseUrl ? { baseUrl: viewEndpoint(provider.baseUrl) } : {}),
       ...(provider.models ? { models: [...provider.models] } : {}),
+      ...(provider.options ? { options: { ...provider.options } } : {}),
       capabilities: capabilityModels(getProviderPreset(provider.preset), provider.models, {
         // An official regional endpoint is the service's own, not a custom one.
         chatOnly: provider.baseUrl !== undefined && !officialEndpointOf(provider),

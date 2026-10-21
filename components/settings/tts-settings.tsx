@@ -153,7 +153,9 @@ export function TTSSettings({ view, apply, entry }: ServicePanelProps) {
     [capabilities, ttsVoice, ttsVoiceProviderId, ttsSpeed],
   );
   const effectiveVoice =
-    use.inUse && selection ? selection.voice : defaultVoiceFor(providerId, use.modelId);
+    use.inUse && selection
+      ? selection.voice
+      : defaultVoiceFor(providerId, use.modelId, entry.provider?.options);
   const cloneSpeedDisabled = providerId === 'qwen-tts' && isQwenCloneVoice(effectiveVoice);
   const configured = entry.state === 'deployment' || entry.state === 'workspace' || isBrowser;
   // A service that needs no key (the browser's own speech) can be made the
