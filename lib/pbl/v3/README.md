@@ -69,6 +69,10 @@ File switches preserve unsaved buffers. Unsaved files block execution and teachi
 handoffs until saved or explicitly discarded; changing environments preserves drafts
 but disables stale writes. Scene navigation/reload still requires saving work first.
 All controls use the existing workspace routes, permissions and version checks.
+When teaching input is blocked, the composer explains the pending request, active
+reply, unavailable environment, unsaved files or unfinished opening. Environment
+restoration and failed-opening retries are available beside the draft. These
+actions preserve the message and never submit it automatically.
 
 A compact status strip above the composer shows the milestone and current step (1/7
 for a seven-step milestone). Teaching and reflection have no expandable task drawer.

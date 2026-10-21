@@ -1562,6 +1562,27 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
     expect(mocked.renewals.slice(count)).toEqual([before.environment_id]);
     expect((await store.get(study.id, principal.ownerId)).revision).toBe(before.revision);
   });
+  it('rejects teaching submissions to an expired environment without posting or allocating', async () => {
+    const study = await freshStudy();
+    const original = await store.get(study.id, principal.ownerId);
+    const created = mocked.creates.length;
+    mocked.missing.add(original.environment_id!);
+    await pool.query('UPDATE pbl_v3_studies SET environment_checked_at=NULL WHERE id=$1', [
+      study.id,
+    ]);
+    try {
+      for (const type of ['chat', 'retry', 'begin'])
+        await expect(study.send(type)).rejects.toMatchObject({ reason: 'ENVIRONMENT_UNAVAILABLE' });
+      expect(await store.roles(study.id)).toHaveLength(0);
+      expect(mocked.creates).toHaveLength(created);
+      const current = await store.get(study.id, principal.ownerId);
+      expect(current.state).toEqual(original.state);
+      expect(current.revision).toBe(original.revision);
+    } finally {
+      mocked.missing.delete(original.environment_id!);
+    }
+  });
+
   it('opens and rereads local protocol without cloud calls, while review still checks live evidence', async () => {
     const study = await freshStudy();
     const queued = (await study.send('chat')) as { sessionId: string };

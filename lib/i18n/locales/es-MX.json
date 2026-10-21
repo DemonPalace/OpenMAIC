@@ -2373,7 +2373,9 @@
       "fileConflict": "El archivo cambió o la ruta de destino ya existe. Vuelve a cargar el espacio de trabajo antes de intentarlo de nuevo.",
       "stopped": "El espacio de trabajo se detuvo. Vuelve a intentar la operación para iniciarlo de nuevo.",
       "invalidRequest": "La solicitud no es válida. Revisa los valores e inténtalo de nuevo.",
-      "unsupported": "El proveedor de sandbox configurado no admite esta operación."
+      "unsupported": "El proveedor de sandbox configurado no admite esta operación.",
+      "environmentUnavailable": "The learning environment is not ready. Restore it before continuing.",
+      "unavailable": "The environment service is temporarily unavailable. Refresh its state and retry."
     },
     "settings": {
       "title": "Sandbox",
@@ -2742,6 +2744,15 @@
       "toggleWorkspace": "Toggle code workspace",
       "toggleAssistant": "Toggle learning assistant",
       "environmentDetails": "Environment details"
-    }
+    },
+    "inputBlocked": {
+      "pending": "Submitting your request. Your draft is kept.",
+      "busy": "The assistant is replying. Stop the reply before sending another message.",
+      "environment": "The learning environment is unavailable. Restore it to send; your draft is kept.",
+      "unsaved": "Save or discard unsaved project files before sending. Your message is kept.",
+      "opening": "The assistant has not opened this step yet. Retry the opening; your draft is kept."
+    },
+    "recoverEnvironment": "Restore learning environment",
+    "retryOpening": "Retry step opening"
   }
 }

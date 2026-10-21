@@ -63,7 +63,10 @@ export async function touchEnvironment(store: LearningStore, row: Study, service
 }
 export function assertEnvironmentReady(env: SandboxEnvironment | null) {
   if (!env || env.state !== 'running' || !env.workspaceReady)
-    throw sandboxConflict('Prepare or recover the project environment before continuing.');
+    throw sandboxConflict(
+      'Prepare or recover the project environment before continuing.',
+      'ENVIRONMENT_UNAVAILABLE',
+    );
 }
 
 /** Revalidate artifact evidence and rewind across milestones if the restored checkpoint predates current work. */

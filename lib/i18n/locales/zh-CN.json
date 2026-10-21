@@ -2373,7 +2373,9 @@
       "fileConflict": "文件已改变或目标路径已存在，请重新加载工作区后重试。",
       "stopped": "工作区已停止，请重试此操作以重新启动。",
       "invalidRequest": "请求无效，请检查输入内容后重试。",
-      "unsupported": "当前配置的沙盒服务商不支持此操作。"
+      "unsupported": "当前配置的沙盒服务商不支持此操作。",
+      "environmentUnavailable": "学习环境未就绪，请先恢复环境再继续。",
+      "unavailable": "环境服务暂时不可用，请刷新状态后重试。"
     },
     "settings": {
       "title": "沙盒",
@@ -2742,6 +2744,15 @@
       "toggleWorkspace": "显示或隐藏代码工作区",
       "toggleAssistant": "显示或隐藏学习助手",
       "environmentDetails": "学习环境详情"
-    }
+    },
+    "inputBlocked": {
+      "pending": "正在提交请求，请稍候；输入的内容会保留。",
+      "busy": "助手正在回复，可停止回复后再发送。",
+      "environment": "学习环境暂不可用。请先恢复环境再发送，输入的内容会保留。",
+      "unsaved": "请先保存或放弃未保存的项目文件，再发送；输入的内容会保留。",
+      "opening": "助手尚未完成本环节开场，请重试开场；输入的内容会保留。"
+    },
+    "recoverEnvironment": "恢复学习环境",
+    "retryOpening": "重试本环节开场"
   }
 }

@@ -147,15 +147,29 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
   );
   const opening = useRef('');
   useEffect(() => {
-    if (!view?.needsOpening || !view.environment?.ready || view.busy || pending) return;
-    const key = `${view.id}:${view.state.position.milestoneId}:${view.state.position.stageIndex}:${view.role}`;
+    if (!view?.needsOpening || !view.environment?.ready || view.busy || pending || dirtyFiles)
+      return;
+    const key = `${view.id}:${view.environmentId}:${view.state.position.milestoneId}:${view.state.position.stageIndex}:${view.role}`;
     if (opening.current === key) return;
     opening.current = key;
     void command('begin');
-  }, [view, pending, command]);
+  }, [view, pending, dirtyFiles, command]);
   const quiz = view?.state.collected[view.state.position.milestoneId ?? '']?.quiz;
-  const disabled =
-    pending || view?.busy || view?.needsOpening || !view?.environment?.ready || dirtyFiles;
+  // All teaching actions share their prerequisites, with an explicit path out
+  // of each blocked state. Draft input stays editable during recovery.
+  const blockedReason = pending
+    ? 'pending'
+    : view?.busy
+      ? 'busy'
+      : !view?.environment?.ready
+        ? 'environment'
+        : dirtyFiles
+          ? 'unsaved'
+          : view?.needsOpening
+            ? 'opening'
+            : null;
+  const disabled = blockedReason !== null;
+  const blockedId = `pbl-input-blocked-${sceneId}`;
   const button =
     'rounded-md border px-2 py-1 text-xs disabled:opacity-40 hover:bg-muted aria-pressed:bg-primary aria-pressed:text-primary-foreground';
   return (
@@ -345,6 +359,9 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
                         <button
                           className={button}
                           disabled={disabled}
+                          title={
+                            blockedReason ? t(`pblV3.inputBlocked.${blockedReason}`) : undefined
+                          }
                           onClick={() => void command('retry')}
                         >
                           {t('pblV3.retryResponse')}
@@ -499,6 +516,34 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
                       if (!disabled && text.trim()) void command('chat', { text });
                     }}
                   >
+                    {blockedReason && (
+                      <div
+                        id={blockedId}
+                        role="status"
+                        data-testid="pbl-input-blocked"
+                        className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground"
+                      >
+                        <p className="min-w-0 flex-1">{t(`pblV3.inputBlocked.${blockedReason}`)}</p>
+                        {blockedReason === 'environment' && (
+                          <button
+                            type="button"
+                            className={button}
+                            onClick={() => void command('prepare')}
+                          >
+                            {t('pblV3.recoverEnvironment')}
+                          </button>
+                        )}
+                        {blockedReason === 'opening' && (
+                          <button
+                            type="button"
+                            className={button}
+                            onClick={() => void command('begin')}
+                          >
+                            {t('pblV3.retryOpening')}
+                          </button>
+                        )}
+                      </div>
+                    )}
                     <label className="sr-only" htmlFor={`pbl-chat-${sceneId}`}>
                       {t('pblV3.message')}
                     </label>
@@ -508,6 +553,7 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
                         className="h-20 w-full resize-none bg-transparent p-1 text-sm outline-none"
                         placeholder={t('pblV3.ide.messagePlaceholder')}
                         value={text}
+                        aria-describedby={blockedReason ? blockedId : undefined}
                         onChange={(e) => setText(e.target.value)}
                         onKeyDown={(e) => {
                           if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -525,6 +571,7 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
                             type="button"
                             className="rounded-full bg-primary p-2 text-primary-foreground"
                             aria-label={t('pblV3.cancel')}
+                            disabled={pending}
                             onClick={() => void command('cancel')}
                           >
                             <Square size={15} />
@@ -534,6 +581,10 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
                             className="rounded-full bg-primary p-2 text-primary-foreground disabled:opacity-40"
                             aria-label={t('pblV3.send')}
                             disabled={disabled || !text.trim()}
+                            title={
+                              blockedReason ? t(`pblV3.inputBlocked.${blockedReason}`) : undefined
+                            }
+                            aria-describedby={blockedReason ? blockedId : undefined}
                           >
                             <ArrowUp size={16} />
                           </button>

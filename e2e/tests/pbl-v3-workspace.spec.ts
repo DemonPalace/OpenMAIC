@@ -52,6 +52,7 @@ test('installed sample opens in the normal classroom and preserves progress afte
     questions: [] as LearningView['questions'],
     evaluation: null,
   };
+  let failPreparation = false;
   let file = 'Write your plan here.';
   const workCalls: { action: string; path?: string }[] = [];
   let previewOpen = false;
@@ -143,8 +144,15 @@ test('installed sample opens in the normal classroom and preserves progress afte
     if (body?.command) {
       expect(body.command.revision).toBe(view.revision);
       calls.push(body.command);
-      view.revision++;
       const command = body.command;
+      if (command.type === 'prepare' && failPreparation) {
+        failPreparation = false;
+        return route.fulfill({
+          status: 503,
+          json: { error: { code: 'SANDBOX_UNAVAILABLE', message: 'Private provider diagnostic' } },
+        });
+      }
+      view.revision++;
       if (command.type === 'prepare') {
         if (view.environmentId) view.recovery = { checkpointRevision: 1, progressReset: true };
         view.environmentId = '12345678-1234-1234-1234-123456789012';
@@ -248,8 +256,30 @@ test('installed sample opens in the normal classroom and preserves progress afte
   view.environment = { state: 'destroyed', ready: false };
   await page.getByRole('button', { name: 'Refresh progress' }).click();
   await expect(page.getByText('The environment is unavailable.', { exact: false })).toBeVisible();
+  const blocked = page.getByTestId('pbl-input-blocked');
+  await expect(blocked).toContainText('Restore it to send; your draft is kept.');
   await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeDisabled();
-  await page.getByRole('button', { name: 'Prepare project environment' }).click();
+  const submitted = calls.filter((c) => c.type === 'chat').length;
+  await page.getByLabel('Your message').press('Enter');
+  expect(calls.filter((c) => c.type === 'chat')).toHaveLength(submitted);
+  failPreparation = true;
+  await blocked.getByRole('button', { name: 'Restore learning environment', exact: true }).click();
+  await expect(
+    page
+      .getByRole('alert')
+      .filter({ hasText: 'The environment service is temporarily unavailable.' }),
+  ).toBeVisible();
+  await expect(page.getByLabel('Your message')).toHaveValue(
+    'Continue after restoring my environment.',
+  );
+  await expect(
+    blocked.getByRole('button', { name: 'Restore learning environment', exact: true }),
+  ).toBeEnabled();
+  await blocked.getByRole('button', { name: 'Restore learning environment', exact: true }).click();
+  await expect(blocked).toHaveCount(0);
+  await expect(page.getByLabel('Your message')).toHaveValue(
+    'Continue after restoring my environment.',
+  );
   await page.getByLabel('Environment details', { exact: true }).click();
   await expect(page.getByText('The workspace was restored', { exact: false })).toBeVisible();
   await page.getByLabel('Environment details', { exact: true }).click();

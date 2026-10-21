@@ -133,6 +133,7 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
     ],
   } as unknown as LearningView;
   let openings = 0;
+  let failOpening = true;
   let advances = 0;
   await page.route('**/api/pbl/v3**', async (route) => {
     const command =
@@ -168,6 +169,13 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
       route.request().postDataJSON()?.command?.type === 'begin'
     ) {
       openings++;
+      if (failOpening) {
+        failOpening = false;
+        return route.fulfill({
+          status: 503,
+          json: { error: { code: 'SANDBOX_UNAVAILABLE', message: 'Private provider diagnostic' } },
+        });
+      }
       view.needsOpening = false;
       return route.fulfill({ json: { view } });
     }
@@ -226,8 +234,18 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
   view.revision++;
   await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
   await expect.poll(() => openings).toBe(1);
+  const openingRetry = page.getByRole('button', { name: 'Retry step opening', exact: true });
+  await expect(openingRetry).toBeVisible();
+  await page.getByLabel('Your message', { exact: true }).fill('My unsent answer');
+  await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeDisabled();
   await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
   expect(openings).toBe(1);
+  await openingRetry.click();
+  await expect.poll(() => openings).toBe(2);
+  await expect(openingRetry).toHaveCount(0);
+  await expect(page.getByLabel('Your message', { exact: true })).toHaveValue('My unsent answer');
+  await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeEnabled();
+  await page.getByLabel('Your message', { exact: true }).fill('');
   // Teaching has no drawer; decisions expose only the actual current task.
   await expect(task.getByRole('button', { name: /Current task details/ })).toHaveCount(0);
   await expect(details).toHaveCount(0);
@@ -255,7 +273,7 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
   await expect(enterDecisions).toBeVisible();
   await enterDecisions.click();
   await expect.poll(() => advances).toBe(1);
-  await expect.poll(() => openings).toBe(2);
+  await expect.poll(() => openings).toBe(3);
   await expect(task.getByText('2/7', { exact: true })).toBeVisible();
   await expect(enterDecisions).toHaveCount(0);
   const composerBefore = await page.getByLabel('Your message', { exact: true }).boundingBox();

@@ -2373,7 +2373,9 @@
       "fileConflict": "파일이 변경되었거나 대상 경로가 이미 존재합니다. 작업 공간을 다시 불러온 후 시도하세요.",
       "stopped": "작업 공간이 중지되었습니다. 작업을 다시 시도하면 다시 시작됩니다.",
       "invalidRequest": "요청이 올바르지 않습니다. 입력값을 확인한 후 다시 시도하세요.",
-      "unsupported": "설정된 샌드박스 제공업체는 이 작업을 지원하지 않습니다."
+      "unsupported": "설정된 샌드박스 제공업체는 이 작업을 지원하지 않습니다.",
+      "environmentUnavailable": "The learning environment is not ready. Restore it before continuing.",
+      "unavailable": "The environment service is temporarily unavailable. Refresh its state and retry."
     },
     "settings": {
       "title": "Sandbox",
@@ -2742,6 +2744,15 @@
       "toggleWorkspace": "Toggle code workspace",
       "toggleAssistant": "Toggle learning assistant",
       "environmentDetails": "Environment details"
-    }
+    },
+    "inputBlocked": {
+      "pending": "Submitting your request. Your draft is kept.",
+      "busy": "The assistant is replying. Stop the reply before sending another message.",
+      "environment": "The learning environment is unavailable. Restore it to send; your draft is kept.",
+      "unsaved": "Save or discard unsaved project files before sending. Your message is kept.",
+      "opening": "The assistant has not opened this step yet. Retry the opening; your draft is kept."
+    },
+    "recoverEnvironment": "Restore learning environment",
+    "retryOpening": "Retry step opening"
   }
 }
