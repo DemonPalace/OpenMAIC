@@ -161,9 +161,11 @@ boundaries. Retries and assistant messages do not create student feedback.
 
 The source set, stage locks, writer-idle checks and ordinary sandbox restrictions
 remain the shared contract above. The dedicated workbench separately supplies file
-management, shell, terminal, preview and checkpoint UI. Both feature branches can
-be reviewed on the workspace-contract branch; after that parent merges, retarget
-them to `integration/shared-sandbox`, update their baselines and repeat combined checks.
+management, shell, terminal, preview and checkpoint UI. The shared workspace
+contract has merged into `integration/shared-sandbox`, which is now the base for
+this learning work. The companion workbench remains a separate PR. Neither feature
+PR requires the other to merge first; repeat combined checks against both final
+heads before accepting the complete classroom journey.
 
 ### Installed public samples
 
