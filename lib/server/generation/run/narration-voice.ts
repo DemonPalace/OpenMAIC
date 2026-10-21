@@ -124,7 +124,9 @@ export function advertisedVoices(target: RunNarrationTarget) {
       const modelId = cloneModelGroup
         ? resolveTTSModelForVoice(provider.providerId, voice.id, cloneModelGroup.modelId)
         : undefined;
-      const gender = voice.gender ?? catalogVoiceGender(provider.providerId, voice.id);
+      const gender = provider.configuredVoiceList
+        ? voice.gender
+        : (voice.gender ?? catalogVoiceGender(provider.providerId, voice.id));
       return {
         providerId: provider.providerId,
         ...(modelId ? { modelId } : {}),

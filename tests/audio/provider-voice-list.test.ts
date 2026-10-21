@@ -146,3 +146,18 @@ it('retains a configured restricted id through user selection and generated narr
     })?.voice.voiceId,
   ).toBe('marin');
 });
+
+it('does not inherit built-in gender when a replacement catalogue omits it', () => {
+  const result = advertisedVoices({
+    providerId: 'openai-tts',
+    modelId: 'custom-tts',
+    connection: {
+      providerId: 'openai-tts',
+      managed: true,
+      userEndpoint: false,
+      origin: 'configuration',
+      voices: [{ id: 'onyx', name: 'Custom Onyx' }],
+    },
+  });
+  expect(result[0]).not.toHaveProperty('gender');
+});
