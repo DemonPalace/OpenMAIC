@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
-import { ChevronUp, X } from 'lucide-react';
+import { ChevronUp, Settings, X } from 'lucide-react';
 import { useI18n } from '@/lib/hooks/use-i18n';
 import { learningProgress, learningStep } from '@/lib/pbl/v3/presentation';
 import type { LearningView } from '@/lib/pbl/v3/types';
@@ -25,6 +25,7 @@ export function TaskDock({
   const open = hasDrawer && openKey === key;
   const progress = learningProgress(view);
   const step = learningStep(view);
+  const ready = view.actions.includes('next') && !view.busy;
   const hint = t(
     view.state.status === 'completed'
       ? 'pblV3.completed'
@@ -52,7 +53,7 @@ export function TaskDock({
   const copy = (
     <>
       <span
-        className={`h-1.5 w-1.5 shrink-0 rounded-full ${view.busy ? 'animate-pulse bg-primary' : 'bg-muted-foreground'}`}
+        className={`h-1.5 w-1.5 shrink-0 rounded-full ${view.busy ? 'animate-pulse bg-primary' : ready ? 'bg-primary' : 'bg-muted-foreground'}`}
       />
       <span className="shrink-0 text-muted-foreground">
         M{view.state.position.milestoneIndex + 1} ·{' '}
@@ -83,15 +84,14 @@ export function TaskDock({
           hidden={!open}
           role="region"
           aria-label={t('pblV3.journey.taskDetails')}
-          className="pbl-task-drawer absolute inset-x-0 bottom-full z-20 overflow-auto border-b bg-popover p-4 shadow-xl"
+          className="pbl-task-drawer absolute inset-x-2 bottom-[calc(100%+8px)] z-20 flex flex-col overflow-hidden rounded-lg border bg-popover text-sm shadow-xl"
         >
-          <header className="mb-3 flex items-start gap-2">
-            <div className="min-w-0 flex-1">
-              <h4 className="font-semibold">{view.task?.title ?? view.title}</h4>
-              <p className="mt-1 text-xs text-muted-foreground">
-                {t(`pblV3.journey.hints.${step}`)}
-              </p>
-            </div>
+          <header className="flex h-[42px] shrink-0 items-center gap-2 border-b px-3">
+            <Settings size={16} className="text-muted-foreground" />
+            <h4 className="font-semibold">{t('pblV3.journey.taskTitle')}</h4>
+            <span className="min-w-0 flex-1 text-xs text-muted-foreground">
+              M{view.state.position.milestoneIndex + 1} · {progress.current}/{progress.total}
+            </span>
             <button
               type="button"
               className="rounded p-1 hover:bg-muted"
@@ -101,8 +101,13 @@ export function TaskDock({
               <X size={16} />
             </button>
           </header>
-          {view.task?.goal && <p className="mb-3 text-sm">{view.task.goal}</p>}
-          <div className="space-y-3 text-sm">{children}</div>
+          <div className="grid min-h-0 content-start gap-3 overflow-y-auto p-3 leading-[1.5]">
+            <div className="grid gap-0.5">
+              <strong className="font-semibold">{t(`pblV3.journey.steps.${step}`)}</strong>
+              <p className="text-xs text-muted-foreground">{t(`pblV3.journey.hints.${step}`)}</p>
+            </div>
+            {children}
+          </div>
         </div>
       )}
       <div className="flex h-10 items-center gap-2 px-3 py-2">

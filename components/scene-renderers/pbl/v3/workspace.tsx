@@ -21,6 +21,7 @@ import { LearningPanels } from './learning-panels';
 import { LearningConversation } from './conversation';
 import { WorkspaceFrame } from './workspace-frame';
 import { TaskDock } from './task-dock';
+import { ProductionContext } from './production-context';
 import { sandboxErrorMessage } from '@/lib/sandbox/error-message';
 import { SandboxRequestError } from '@/components/sandbox/client';
 
@@ -367,7 +368,8 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
                   action={
                     view.actions.includes('next') && (
                       <button
-                        className={button}
+                        className="pbl-stage-action inline-flex h-7 min-w-0 max-w-[220px] shrink-0 items-center justify-center truncate rounded-md border px-3 text-xs font-semibold transition-colors disabled:cursor-not-allowed"
+                        data-state={disabled ? 'disabled' : 'ready'}
                         disabled={disabled}
                         onClick={() => void command('next')}
                       >
@@ -384,28 +386,7 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
                     )
                   }
                 >
-                  <p role="status" className="text-xs text-muted-foreground">
-                    {t(
-                      view.state.status === 'completed'
-                        ? 'pblV3.completed'
-                        : view.busy
-                          ? 'pblV3.thinking'
-                          : view.evaluation
-                            ? 'pblV3.journey.collectResult'
-                            : view.actions.includes('next')
-                              ? 'pblV3.journey.ready'
-                              : 'pblV3.journey.followStep',
-                    )}
-                  </p>
-                  {view.stage.kind === 'produce' && (
-                    <p className="rounded border p-2">
-                      {t(
-                        view.stage.writes === 'plan'
-                          ? 'pblV3.journey.planArtifact'
-                          : 'pblV3.journey.codeArtifact',
-                      )}
-                    </p>
-                  )}
+                  {view.stage.kind === 'produce' && <ProductionContext view={view} />}
                   {view.stage.kind === 'produce' && view.stage.exploration && (
                     <p className="mb-2 rounded border p-2">{view.stage.exploration.introduction}</p>
                   )}

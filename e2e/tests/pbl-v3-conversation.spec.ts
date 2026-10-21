@@ -241,6 +241,15 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
   view.revision++;
   await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
   await expect(enterDecisions).toBeVisible();
+  await expect(enterDecisions).toHaveAttribute('data-state', 'ready');
+  const readyColor = () => enterDecisions.evaluate((el) => getComputedStyle(el).backgroundColor);
+  const greens = ['rgb(11, 122, 82)', 'rgb(59, 240, 164)'];
+  expect(greens).toContain(await readyColor());
+  const initialColor = await readyColor();
+  await page.getByRole('button', { name: 'Switch color theme', exact: true }).click();
+  await expect.poll(readyColor).toBe(greens.find((color) => color !== initialColor));
+  await page.getByRole('button', { name: 'Switch color theme', exact: true }).click();
+  await expect.poll(readyColor).toBe(initialColor);
   await page.getByLabel('Your message', { exact: true }).fill('What should I do next?');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(enterDecisions).toBeVisible();
@@ -259,7 +268,39 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
   await details.getByRole('button', { name: 'Close task details' }).press('Escape');
   await expect(details).toHaveCount(0);
   await expect(task.getByRole('button', { name: /Current task details/ })).toBeFocused();
+  // Production uses OpenPBL's current-task header and contextual sections, not repeated goals.
+  const originalTask = view.task;
+  view.stage = {
+    kind: 'produce',
+    agent: 'planner',
+    writes: 'plan',
+    reviewRequired: true,
+    studentActions: ['chat', 'edit', 'next'],
+  } as LearningView['stage'];
+  view.role = 'planner';
+  view.state.position.stageIndex = 2;
+  view.task = { title: 'Add the first task', goal: 'Add the first task' };
+  view.decisions = [];
+  view.decisionSummary = [{ id: 'storage', prompt: 'Task storage', choice: 'A Python list' }];
+  view.revision++;
+  await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
+  await task.getByRole('button', { name: /Current task details/ }).click();
+  await expect(details.getByRole('heading', { name: 'Current task', exact: true })).toBeVisible();
+  await expect(details.getByText('Add the first task', { exact: true })).toHaveCount(0);
+  await expect(
+    details.getByRole('heading', { name: 'Confirmed decisions', exact: true }),
+  ).toBeVisible();
+  await expect(details.getByText('A Python list', { exact: true })).toBeVisible();
+  await expect(details.getByRole('heading', { name: 'Plan output', exact: true })).toBeVisible();
+  await expect(
+    details.getByText('Plan review and approval · Awaiting review', { exact: true }),
+  ).toBeVisible();
+  await details.getByRole('button', { name: 'Close task details' }).click();
+  await expect(details).toHaveCount(0);
   view.stage = originalStage;
+  view.role = 'discussion';
+  view.task = originalTask;
+  view.decisionSummary = [];
   view.actions = ['chat'];
   view.decisions = [];
   view.state.introCompleted = true;

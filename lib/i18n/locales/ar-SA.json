@@ -2657,7 +2657,18 @@
       "milestoneSteps": "Milestone learning steps",
       "enterStep": "Continue to {{step}}",
       "planArtifact": "Open PLAN.md in the IDE to read the current plan. Discuss, review and approve it in the conversation.",
-      "codeArtifact": "Inspect the current project files in the IDE. Review the implementation and save edits before continuing."
+      "codeArtifact": "Inspect the current project files in the IDE. Review the implementation and save edits before continuing.",
+      "taskTitle": "Current task",
+      "confirmedDecisions": "Confirmed decisions",
+      "noDecisions": "No decisions required for this step.",
+      "approvedPlan": "Implementation plan",
+      "planOutput": "Plan output",
+      "codeOutput": "Implementation progress",
+      "savedVersion": "Version {{version}} · saved",
+      "planReview": "Plan review and approval",
+      "codeReview": "Implementation review and confirmation",
+      "reviewApproved": "Confirmed",
+      "reviewPending": "Awaiting review"
     },
     "activity": {
       "read": "Reading project files",

@@ -2657,7 +2657,18 @@
       "milestoneSteps": "当前阶段的学习步骤",
       "enterStep": "进入{{step}}",
       "planArtifact": "计划保存在左侧 PLAN.md。阅读当前版本，并在对话中完成理解、审阅和确认。",
-      "codeArtifact": "在左侧查看当前项目文件。结合实际实现完成审阅，保存修改后再继续。"
+      "codeArtifact": "在左侧查看当前项目文件。结合实际实现完成审阅，保存修改后再继续。",
+      "taskTitle": "当前任务",
+      "confirmedDecisions": "已确认决策",
+      "noDecisions": "本环节没有需要提交的决策。",
+      "approvedPlan": "实现计划",
+      "planOutput": "计划产出",
+      "codeOutput": "编码进度",
+      "savedVersion": "第 {{version}} 版 · 已落盘",
+      "planReview": "计划审查与批准",
+      "codeReview": "实现审查与确认",
+      "reviewApproved": "已确认",
+      "reviewPending": "等待审阅确认"
     },
     "activity": {
       "read": "读取项目文件",

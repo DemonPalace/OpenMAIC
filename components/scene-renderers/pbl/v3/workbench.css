@@ -46,7 +46,26 @@
   background: var(--pbl-assistant-bubble);
 }
 .pbl-workbench .pbl-task-drawer {
-  max-height: min(320px, 55cqh);
+  /* Reserve the scene toolbar, task strip and composer in embedded classrooms. */
+  max-height: min(560px, 58cqh, max(84px, calc(100cqh - 240px)));
+}
+/* OpenPBL's filled ready action, with a neutral unavailable state. */
+.pbl-workbench .pbl-stage-action {
+  cursor: pointer;
+  border-color: var(--primary);
+  background: var(--primary);
+  color: var(--primary-foreground);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.08);
+}
+.pbl-workbench .pbl-stage-action:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--primary) 85%, transparent);
+}
+.pbl-workbench .pbl-stage-action:disabled {
+  cursor: not-allowed;
+  border-color: var(--border);
+  background: transparent;
+  color: var(--muted-foreground);
+  box-shadow: none;
 }
 .pbl-workbench button:focus-visible {
   outline: 2px solid var(--ring);

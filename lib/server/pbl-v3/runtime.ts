@@ -871,6 +871,19 @@ export async function learningView(principal: OwnerPrincipal, id: string): Promi
     roleRun,
     needsOpening: !!role && !binding && row.state.status !== 'completed',
     evaluation,
+    decisionSummary:
+      stage.kind === 'produce'
+        ? (row.state.collected[milestone.id]?.decisions ?? []).map((selected) => {
+            const definition = project.definition.decisions.find((d) => d.id === selected.id);
+            return {
+              id: selected.id,
+              prompt: definition?.desc ?? selected.id,
+              choice:
+                definition?.options.find((option) => option.id === selected.chosen)?.label ??
+                selected.chosen,
+            };
+          })
+        : [],
     decisions:
       stage.kind === 'dialogue'
         ? project.definition.decisions

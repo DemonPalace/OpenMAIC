@@ -995,6 +995,14 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
     await expect(command('next')).rejects.toThrow('not available');
     await command('decide', { decisionId: 'format', chosen: 'format' });
     await command('next');
+    expect((await learningView(principal, studyId)).decisionSummary).toEqual([
+      {
+        id: 'format',
+        prompt: project.definition.decisions[0]!.desc,
+        choice: project.definition.decisions[0]!.options.find((option) => option.id === 'format')!
+          .label,
+      },
+    ]);
     await guided('plan');
     await guided('code');
     const service = await SandboxService.forOwner(principal);
