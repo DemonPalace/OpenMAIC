@@ -107,13 +107,6 @@ export function agentVoiceCatalog(
   for (const id of slot ? [slot.providerId] : []) {
     const config = TTS_PROVIDERS[id as keyof typeof TTS_PROVIDERS];
     if (!config) continue;
-    // An explicit deployment catalogue replaces presets for both listing and binding.
-    if (slot?.voices?.length) {
-      if (config.requiresApiKey && !hasKey()) continue;
-      providers.push({ ...config, voices: slot.voices.map((voice) => ({ ...voice })) });
-      continue;
-    }
-
     if (config.excludeFromAgentVoiceCatalog === true) {
       // Paid showcase presets never reach the agent, but a clone registered
       // this session through the provider's registration adapter must stay
@@ -124,6 +117,12 @@ export function agentVoiceCatalog(
       continue;
     }
     if (config.requiresApiKey && !hasKey()) continue;
+    // An explicit deployment catalogue replaces presets for both listing and binding.
+    if (slot?.voices?.length) {
+      providers.push({ ...config, voices: slot.voices.map((voice) => ({ ...voice })) });
+      continue;
+    }
+
     providers.push(config);
   }
   // A registration backend means clone-kind registered voices are

@@ -735,7 +735,7 @@ describe('roster tool registry', () => {
   });
 });
 
-it.each(['openai-tts', 'qwen-tts'])(
+it.each(['openai-tts'])(
   'uses a replacement catalogue in list_voices and set_roster for %s',
   async (providerId) => {
     const ttsConnection = {
@@ -771,3 +771,39 @@ it.each(['openai-tts', 'qwen-tts'])(
     expect(result.isError).toBeUndefined();
   },
 );
+
+it('keeps excluded configured Qwen voices out of roster tools while allowing registered clones', async () => {
+  const ttsConnection = {
+    providerId: 'qwen-tts',
+    apiKey: 'test-key',
+    managed: true,
+    userEndpoint: false,
+    origin: 'configuration',
+    voices: [{ id: 'vivian', name: 'Vivian' }],
+  };
+  const registeredVoices = [
+    { providerId: 'qwen-tts', voiceId: 'my-clone', name: 'My clone', kind: 'clone' },
+  ];
+  const store = makeStore(makeDoc());
+  const listed = await runTool(store, 'list_voices', {}, { ttsConnection, registeredVoices });
+  expect(
+    (listed.details?.voices as Array<{ binding: string }>).map((voice) => voice.binding),
+  ).toEqual(['qwen-tts::my-clone']);
+  const roster = (voice: string) => ({
+    stageId: 'stage-test',
+    agents: [
+      { name: 'Teacher', role: 'teacher', persona: 'Patient teacher.', voice },
+      { name: 'Student', role: 'student', persona: 'Curious learner.' },
+    ],
+  });
+  const rejected = await runTool(store, 'set_roster', roster('qwen-tts::vivian'), {
+    ttsConnection,
+    registeredVoices,
+  });
+  expect(rejected.isError).toBe(true);
+  const accepted = await runTool(store, 'set_roster', roster('qwen-tts::my-clone'), {
+    ttsConnection,
+    registeredVoices,
+  });
+  expect(accepted.isError).toBeUndefined();
+});
