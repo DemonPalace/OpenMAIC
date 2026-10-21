@@ -72,10 +72,9 @@ export function startOrchestration(
       events: [{ type: 'session.completed' }],
     };
   const stage = milestone.stages[0];
-  const courseFirst = project.entry.mode === 'course-first';
   const events: OrchestrationEvent[] = [
     { type: 'session.started', projectId: project.id },
-    ...(courseFirst ? [{ type: 'intro.completed' } as const] : []),
+    { type: 'intro.completed' },
     {
       type: 'milestone.entered',
       milestoneId: milestone.id,
@@ -95,7 +94,9 @@ export function startOrchestration(
   ];
   let state: PblSessionState = {
     ...initial,
-    introCompleted: courseFirst,
+    // Introduction is delivered inside the first teaching step; retain this legacy flag
+    // for persisted-session compatibility, without a separate confirmation gate.
+    introCompleted: true,
     status:
       stage?.kind === 'dialogue' || stage?.kind === 'produce' ? 'waiting_for_student' : 'running',
     position: { milestoneIndex: 0, milestoneId: milestone.id, stageIndex: stage ? 0 : -1 },

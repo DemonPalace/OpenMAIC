@@ -5,6 +5,14 @@ export interface LearningConversationEntry {
   id: string;
   at?: number;
   speaker: 'user' | AgentRole;
+  boundary?: {
+    milestoneId: string;
+    milestoneTitle: string;
+    milestoneIndex: number;
+    stageIndex: number;
+    step: string;
+    total: number;
+  };
   parts: (
     | { kind: 'text'; id: string; text: string; streaming?: boolean }
     | {

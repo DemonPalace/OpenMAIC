@@ -15,6 +15,7 @@ import { SandboxService } from '@/lib/server/sandbox/service';
 import { sandboxConflict, sandboxInvalid } from '@/lib/sandbox/errors';
 import { buildSystemPrompt } from '@/lib/pbl/v3/domain/orchestration/prompts';
 import { projectArtifacts } from '@/lib/pbl/v3/domain/orchestration/artifacts';
+import { stageStep } from '@/lib/pbl/v3/presentation';
 import { currentMilestone } from '@/lib/pbl/v3/domain/orchestration/state';
 import * as transitions from '@/lib/pbl/v3/domain/orchestration/transition';
 import type { EngineTransition } from '@/lib/pbl/v3/domain/orchestration/events';
@@ -66,7 +67,12 @@ export async function teachingRunnerConfig(input: {
   };
   const review = new GuidedSkillReview(protocol, bound.guided ?? undefined);
   const runId = `${bound.stage_key}:${latest?.seq ?? 0}`;
-  review.beginRun(bound.stage_key, userMessages, bound.feedback_seq > 1);
+  review.beginRun(
+    bound.stage_key,
+    userMessages.filter((message) => !message.pblOpening),
+    bound.feedback_seq > 1 && !latest?.pblOpening,
+    latest?.seq ?? 0,
+  );
   const exploring = isExplorationStage(stage);
   const guided = (stage.kind === 'produce' && !exploring) || stage.kind === 'mentor_say';
   let turnComplete =
@@ -320,6 +326,8 @@ export async function teachingRunnerConfig(input: {
             value: {
               section: next,
               instruction,
+              delivery:
+                'After delivering this section, put its single open question in request_skill_review. The tool displays the question and records the wait for a real learner reply. Do not end with only a question in ordinary text: that does not create a review receipt. Do not proceed to another section in this turn.',
               goal: milestone.goal ?? milestone.title,
               stage: stage.kind === 'mentor_say' ? stage.say : stage.writes,
             },
@@ -440,6 +448,17 @@ export async function teachingRunnerConfig(input: {
       seed: {
         ...seed,
         projectContext: { title: project.definition.title, language: project.definition.language },
+        stageEntry: {
+          automatic: latest?.pblOpening === true,
+          firstMilestone: row.state.position.milestoneIndex === 0,
+          step: row.state.position.stageIndex + 1,
+          totalSteps: milestone.stages.length,
+          steps: milestone.stages.map(stageStep),
+          introduction:
+            row.state.position.milestoneIndex === 0 && row.state.position.stageIndex === 0
+              ? project.definition.intro.say
+              : undefined,
+        },
         milestone: { id: milestone.id, title: milestone.title },
         goal: milestone.goal ?? milestone.title,
         ...(guided
@@ -515,7 +534,9 @@ export async function teachingRunnerConfig(input: {
         ? '\nThis is optional, ongoing exploration. Discuss the learner’s goal, inspect current files, make focused changes and explain how to verify them. There is no fixed review sequence or completion signal. Preserve existing work; viewing the report never ends exploration.'
         : repairing
           ? '\nHelp the learner diagnose the observed test failure. Read the current code before making a focused repair. Explain the change and ask the learner to run tests again using the project controls. Never claim the repair passed without a new test result.'
-          : '\nDiscuss only the current decisions. The learner records choices using the project controls.');
+          : stage.kind === 'check'
+            ? '\nBriefly introduce the current test or quiz and point to its task drawer above the composer. Do not give answers, run checks, or claim results. Wait for the learner to use the controls.'
+            : '\nDiscuss only the current decisions. The learner records choices using the project controls.');
   return {
     tools,
     systemPrompt,

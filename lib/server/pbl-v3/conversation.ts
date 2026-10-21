@@ -44,6 +44,23 @@ export function projectConversation(
       isError?: boolean;
       message?: { role?: string; content?: { type?: string; text?: string }[] };
     };
+    if (event.type === 'pbl_stage_entered') {
+      settle();
+      assistant = undefined;
+      entries.push({
+        id: `stage-${event.id}`,
+        at: event.ts,
+        speaker: role,
+        parts: [],
+        boundary: event.data as LearningConversationEntry['boundary'],
+      });
+      continue;
+    }
+    if (event.type === 'user_message' && (event.data as { pblOpening?: boolean }).pblOpening) {
+      settle();
+      assistant = undefined;
+      continue;
+    }
     if (event.type === 'user_message' && typeof data.text === 'string') {
       settle();
       assistant = undefined;
@@ -107,5 +124,5 @@ export function projectConversation(
     }
   }
   if (!running) settle();
-  return entries.filter((e) => e.parts.length).slice(-60);
+  return entries.filter((e) => e.boundary || e.parts.length).slice(-60);
 }

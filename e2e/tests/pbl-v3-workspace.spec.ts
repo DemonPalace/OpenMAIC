@@ -250,7 +250,9 @@ test('installed sample opens in the normal classroom and preserves progress afte
   await expect(page.getByText('The environment is unavailable.', { exact: false })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeDisabled();
   await page.getByRole('button', { name: 'Prepare project environment' }).click();
+  await page.getByLabel('Environment details', { exact: true }).click();
   await expect(page.getByText('The workspace was restored', { exact: false })).toBeVisible();
+  await page.getByLabel('Environment details', { exact: true }).click();
   await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeEnabled();
   // A late read from PLAN.md must not populate or become savable as greeting.py.
   view.actions = ['chat', 'edit'];
@@ -405,15 +407,22 @@ test('installed sample opens in the normal classroom and preserves progress afte
   await expect.poll(() => calls.some((c) => c.type === 'checkpoint')).toBe(true);
   view.questions = [{ q: 'What does return do?', options: ['Returns a value', 'Prints a value'] }];
   view.actions = ['quiz'];
+  view.stage = {
+    kind: 'check',
+    checker: 'quiz',
+    studentActions: ['quiz', 'next'],
+  } as LearningView['stage'];
   view.state.position.stageIndex = 5;
   await page.getByRole('button', { name: 'Refresh progress' }).click();
+  await page.getByRole('button', { name: /Current task details/ }).click();
   await page.getByRole('radio', { name: 'Prints a value' }).check();
   await page.getByRole('button', { name: 'Submit answers' }).click();
   await expect(
     page.getByText('0/1 correct. Review your answers and try again.', { exact: true }),
   ).toBeVisible();
   await page.reload();
-  // Reload reconstructs the study asynchronously; wait for that view before checking its receipt.
+  // The drawer closes on reload; its recorded quiz result remains available on reopening.
+  await page.getByRole('button', { name: /Current task details/ }).click();
   await expect(page.getByRole('region', { name: 'Current task details', exact: true })).toBeVisible(
     { timeout: 15000 },
   );

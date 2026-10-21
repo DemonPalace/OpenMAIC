@@ -52,10 +52,15 @@ export class GuidedSkillReview {
       : { protocolDigest: protocol.digest!, activeFile: '', reviewedFiles: [] };
   }
 
-  beginRun(stageKey: string, messages: readonly StudentMessage[], eligible: boolean): void {
+  beginRun(
+    stageKey: string,
+    messages: readonly StudentMessage[],
+    eligible: boolean,
+    turnSequence = messages.at(-1)?.seq ?? 0,
+  ): void {
     this.stageKey = stageKey;
     this.messages = messages;
-    this.runId = `${stageKey}:${messages.at(-1)?.seq ?? 0}`;
+    this.runId = `${stageKey}:${turnSequence}`;
     this.eligible = eligible;
     this.advanced = false;
     // A retry is still the same student turn, not permission to revise their review.

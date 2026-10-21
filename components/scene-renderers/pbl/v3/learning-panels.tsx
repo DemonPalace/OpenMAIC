@@ -1,4 +1,5 @@
 'use client';
+import { FileText } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useI18n } from '@/lib/hooks/use-i18n';
 import type { LearningView } from '@/lib/pbl/v3/types';
@@ -37,12 +38,27 @@ export function LearningPanels({ view }: { view: LearningView }) {
       });
     return () => controller.abort();
   }, [open, view.id, key]);
-  const button = 'rounded border px-3 py-2 text-sm disabled:opacity-40';
+  const button = 'rounded border px-2 py-1 text-xs disabled:opacity-40';
+  const progress = learningProgress(view);
   return (
     <div className="contents">
       <details className="text-xs">
-        <summary className="cursor-pointer rounded border px-2 py-2">
-          {t('pblV3.learningPath')}
+        <summary
+          className="flex cursor-pointer list-none items-center gap-2 rounded bg-muted px-2 py-1"
+          aria-label={t('pblV3.learningPath')}
+        >
+          <strong>M{view.state.position.milestoneIndex + 1}</strong>
+          <span className="flex gap-0.5" aria-hidden="true">
+            {progress.steps.map((step, index) => (
+              <span
+                key={index}
+                className={`h-1 w-2 rounded-sm ${step.complete || step.active ? 'bg-primary' : 'bg-muted-foreground/25'}`}
+              />
+            ))}
+          </span>
+          <span className="text-muted-foreground">
+            {progress.current}/{progress.total}
+          </span>
         </summary>
         <nav
           aria-label={t('pblV3.learningPath')}
@@ -83,12 +99,14 @@ export function LearningPanels({ view }: { view: LearningView }) {
       </details>
       <button
         className={button}
+        aria-label={t('pblV3.report')}
+        title={t('pblV3.report')}
         onClick={() => {
           if (!open) setAttempt((n) => n + 1);
           setOpen((v) => !v);
         }}
       >
-        {t('pblV3.report')}
+        <FileText size={14} />
       </button>
       {open && (
         <section

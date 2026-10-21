@@ -635,7 +635,6 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
       };
       await send('prepare');
       const initialEnv = (await store.get(id, principal.ownerId)).environment_id!;
-      await guidedStage();
       for (let milestone = 0; milestone < 2; milestone++) {
         await guidedStage();
         if (milestone === 0) {
@@ -758,7 +757,7 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
   });
   it('rejects student advancement before teaching, and gates new feedback', async () => {
     await command('prepare');
-    await expect(command('next')).rejects.toThrow('teaching interaction');
+    await expect(command('next')).rejects.toThrow('not available');
     await runTools('Please start.', async (config) => {
       expect(config.systemPrompt).toContain(
         JSON.stringify({ title: project.definition.title, language: project.definition.language }),
@@ -861,13 +860,87 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
       expectedAttempt: meta!.attempt,
     });
   });
+  it('opens each stage once without fabricating student feedback, including legacy intro rows', async () => {
+    const study = await freshStudy();
+    const original = await store.get(study.id, principal.ownerId);
+    expect(original.state.introCompleted).toBe(true);
+    expect(original.state.position.stageIndex).toBe(0);
+    // Old sessions keep their content and position while dropping the separate intro gate.
+    await pool.query(
+      "UPDATE pbl_v3_studies SET state=jsonb_set(state,'{introCompleted}','false') WHERE id=$1",
+      [study.id],
+    );
+    const started = (await study.send('begin')) as { sessionId: string };
+    const state = await store.get(study.id, principal.ownerId);
+    expect(state.state.introCompleted).toBe(true);
+    expect(state.state.position).toEqual(original.state.position);
+    const initial = await agents.readEventsAfter(started.sessionId, 0, 100);
+    expect(initial.filter((event) => event.type === 'pbl_stage_entered')).toHaveLength(1);
+    expect(
+      initial.filter((event) => event.type === 'user_message').map((event) => event.data),
+    ).toMatchObject([{ pblOpening: true }]);
+    expect(await study.send('begin')).toEqual({ alreadyStarted: true });
+    expect(
+      await commandStudy(principal, study.id, {
+        id: randomUUID(),
+        revision: original.revision,
+        type: 'begin',
+      }),
+    ).toEqual({ alreadyStarted: true });
+    expect(
+      (await learningView(principal, study.id)).conversation?.some(
+        (entry) => entry.speaker === 'user',
+      ),
+    ).toBe(false);
+    const meta = await agents.claimNextSession('opening-worker', process.pid, {
+      sessionId: started.sessionId,
+      leaseTtlMs: 10000,
+      maxAttempts: 5,
+    });
+    const config = await teachingRunnerConfig({
+      sessionId: started.sessionId,
+      ownerId: principal.ownerId,
+      workerId: 'opening-worker',
+      attempt: meta!.attempt,
+      signal: new AbortController().signal,
+    });
+    expect(config.systemPrompt).toContain('"automatic":true');
+    await invoke(config, 'read_next_skill');
+    await invoke(config, 'request_skill_review', { question: 'What will the project do?' });
+    await expect(
+      invoke(config, 'complete_stage', { studentFeedback: 'System entry is approval' }),
+    ).rejects.toThrow();
+    await agents.finishSession(started.sessionId, 'opening-worker', {
+      status: 'succeeded',
+      expectedAttempt: meta!.attempt,
+    });
+    expect(await study.send('begin')).toEqual({ alreadyStarted: true });
+    expect((await learningView(principal, study.id)).actions).not.toContain('next');
+    // A real answer after automatic delivery is eligible, and preserves the question on replay.
+    await study.send('chat');
+    const reply = await agents.claimNextSession('reply-worker', process.pid, {
+      sessionId: started.sessionId,
+      leaseTtlMs: 10000,
+      maxAttempts: 5,
+    });
+    const replyConfig = await teachingRunnerConfig({
+      sessionId: started.sessionId,
+      ownerId: principal.ownerId,
+      workerId: 'reply-worker',
+      attempt: reply!.attempt,
+      signal: new AbortController().signal,
+    });
+    expect(replyConfig.systemPrompt).toContain('"automatic":false');
+    expect(replyConfig.systemPrompt).toContain('"studentResponses":[{');
+    expect(replyConfig.systemPrompt).not.toContain('"studentResponses":[{"seq":0');
+    await agents.finishSession(started.sessionId, 'reply-worker', {
+      status: 'succeeded',
+      expectedAttempt: reply!.attempt,
+    });
+  });
   it('prepares once and runs the complete learning flow with actual Python tests', async () => {
     await command('prepare');
-    await guided('teaching'); // project intro
-    const mentorSessionId = (await store.roles(studyId)).find(
-      (binding) => binding.role === 'mentor',
-    )!.session_id;
-    await guided('teaching'); // concepts
+    await guided('teaching'); // project opening and concepts share the first step
     await expect(command('next')).rejects.toThrow('all milestone decisions');
     await command('decide', { decisionId: 'format', chosen: 'format' });
     await command('next');
@@ -944,9 +1017,8 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
     await command('next');
     await runTools('Please reflect on my results.', async (config) => {
       const tested = (await store.get(studyId, principal.ownerId)).state.collected.greeting!;
-      // Mentor history spans the project; an intro receipt cannot close the later recap.
+      // Reflection has its own disclosure and completion receipt.
       const mentor = (await store.roles(studyId)).find((binding) => binding.role === 'mentor')!;
-      expect(mentor.session_id).toBe(mentorSessionId);
       expect(mentor.stage_key).toBe('greeting:6');
       expect(config.systemPrompt).toContain(
         '"teachingContext":{"stageKey":"greeting:6","completionRecorded":false,"activeSection":null}',

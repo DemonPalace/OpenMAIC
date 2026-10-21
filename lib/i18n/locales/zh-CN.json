@@ -2547,7 +2547,7 @@
     "environmentNotice": "为此项目准备独立执行环境。教学助手将能够读取和修改项目文件，此操作使用已配置的沙盒服务。",
     "prepare": "准备项目环境",
     "completed": "项目已完成，学习进度已保存。",
-    "learning": "学习对话",
+    "learning": "学习助手",
     "thinking": "教学助手正在处理…",
     "message": "你的消息",
     "send": "发送",
@@ -2614,7 +2614,7 @@
       "artifact_review_completed": "完成审阅"
     },
     "journey": {
-      "startConversation": "请教学助手开始，或告诉它你需要哪方面的帮助。",
+      "startConversation": "学习环境就绪后，助手会主动开始当前环节。",
       "latest": "回到最新消息",
       "expand": "展开项目工作台",
       "returnClassroom": "返回课堂布局",
@@ -2625,7 +2625,7 @@
       "followStep": "按下方要求完成当前环节；助手可能正在等待你的回答或确认。",
       "steps": {
         "intro": "项目介绍",
-        "teaching": "决策前学习",
+        "teaching": "决策前教学",
         "dialogue": "讨论并提交决策",
         "plan": "理解与审阅计划",
         "code": "理解与审阅实现",
@@ -2654,7 +2654,10 @@
       "notReflected": "尚未记录复盘",
       "taskDetails": "当前任务详情",
       "closeDetails": "收起任务详情",
-      "milestoneSteps": "当前阶段的学习步骤"
+      "milestoneSteps": "当前阶段的学习步骤",
+      "enterStep": "进入{{step}}",
+      "planArtifact": "计划保存在左侧 PLAN.md。阅读当前版本，并在对话中完成理解、审阅和确认。",
+      "codeArtifact": "在左侧查看当前项目文件。结合实际实现完成审阅，保存修改后再继续。"
     },
     "activity": {
       "read": "读取项目文件",
@@ -2722,7 +2725,12 @@
       "sendHint": "Enter 发送 · Shift+Enter 换行",
       "previewNotStarted": "先在终端或运行面板启动项目的网页服务，再连接下方已配置的端口。",
       "previewUnavailable": "当前环节暂不能连接应用预览。可以先查看代码并继续与学习助手交流。",
-      "connectPreview": "连接预览"
+      "connectPreview": "连接预览",
+      "theme": "切换明暗主题",
+      "hideFiles": "收起文件树",
+      "toggleWorkspace": "显示或隐藏代码工作区",
+      "toggleAssistant": "显示或隐藏学习助手",
+      "environmentDetails": "学习环境详情"
     }
   }
 }

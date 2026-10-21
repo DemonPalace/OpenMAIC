@@ -17,11 +17,7 @@ import { stageStep } from '@/lib/pbl/v3/presentation';
 import { isPBLV3Reference, type LearningView } from '@/lib/pbl/v3/types';
 import { isExplorationStage } from '@/lib/pbl/v3/domain/project/project-schema';
 import type { AgentRole } from '@/lib/pbl/v3/domain/project/project-schema';
-import {
-  currentStage,
-  currentMilestone,
-  projectIntroForSession,
-} from '@/lib/pbl/v3/domain/orchestration/state';
+import { currentStage, currentMilestone } from '@/lib/pbl/v3/domain/orchestration/state';
 import * as transitions from '@/lib/pbl/v3/domain/orchestration/transition';
 import { judgeQuiz } from '@/lib/pbl/v3/domain/orchestration/quiz';
 import type { EngineTransition } from '@/lib/pbl/v3/domain/orchestration/events';
@@ -47,16 +43,14 @@ export function digest(value: string): string {
   return createHash('sha256').update(value).digest('hex');
 }
 export function stageKey(row: Study) {
-  return `${row.state.introCompleted ? row.state.position.milestoneId : 'intro'}:${row.state.introCompleted ? row.state.position.stageIndex : -1}`;
+  return `${row.state.position.milestoneId}:${row.state.position.stageIndex}`;
 }
 export function projectFor(row: Study) {
   return installedProject({ id: row.project_id, version: row.project_version });
 }
 export function stageFor(row: Study) {
   const project = projectFor(row).definition;
-  return row.state.introCompleted
-    ? currentStage(project, row.state)!
-    : projectIntroForSession(project, row.state);
+  return currentStage(project, row.state)!;
 }
 export function roleFor(row: Study): AgentRole | null {
   const stage = stageFor(row);
@@ -67,7 +61,7 @@ export function roleFor(row: Study): AgentRole | null {
     row.state.collected[row.state.position.milestoneId!]?.remediation
   )
     return 'coder';
-  return null;
+  return stage.kind === 'check' ? 'mentor' : null;
 }
 export async function busy(store: LearningStore, row: Study) {
   const agents = await getAgentSessionStore();
@@ -154,7 +148,13 @@ export async function openStudy(principal: OwnerPrincipal, stageId: string, scen
     transitions.startOrchestration(project.definition),
   );
 }
-export async function queueRole(store: LearningStore, db: PoolClient, row: Study, text: string) {
+export async function queueRole(
+  store: LearningStore,
+  db: PoolClient,
+  row: Study,
+  text: string,
+  opening = false,
+) {
   await fenceOwnerWrite(db, row.owner_id);
   const role = roleFor(row);
   if (!role) throw sandboxConflict('This stage does not accept a teaching message.');
@@ -202,7 +202,32 @@ export async function queueRole(store: LearningStore, db: PoolClient, row: Study
       role === 'planner' || role === 'coder',
       false,
     );
-  await agents.postUserMessage(binding.session_id, { text }, { expectedOwnerId: row.owner_id });
+  if (binding.stage_key !== stageKey(row) || binding.feedback_seq === 0) {
+    const milestone = currentMilestone(projectFor(row).definition, row.state)!;
+    await agents.appendControlEvent(binding.session_id, {
+      ts: Date.now(),
+      type: 'pbl_stage_entered',
+      data: {
+        milestoneId: milestone.id,
+        milestoneTitle: milestone.title,
+        milestoneIndex: row.state.position.milestoneIndex,
+        stageIndex: row.state.position.stageIndex,
+        step: stageStep(stageFor(row)),
+        total: milestone.stages.length,
+      },
+    });
+  }
+  if (opening) {
+    // A transport wakeup explicitly marked as system-originated. PBL never treats it as feedback.
+    await agents.appendControlEvent(binding.session_id, {
+      ts: Date.now(),
+      type: 'user_message',
+      data: { text, delivery: 'queued', pblOpening: true },
+    });
+    await agents.requeueSession(binding.session_id);
+  } else {
+    await agents.postUserMessage(binding.session_id, { text }, { expectedOwnerId: row.owner_id });
+  }
   return binding.session_id;
 }
 export interface LearningCommand {
@@ -261,6 +286,14 @@ export async function commandStudy(
     row = await store.get(id, principal.ownerId);
     const project = projectFor(row),
       definition = project.definition;
+    const agents = await getAgentSessionStore();
+    let alreadyStarted = false;
+    if (command.type === 'begin') {
+      const bound = (await store.roles(id)).find(
+        (b) => b.role === roleFor(row) && b.stage_key === stageKey(row),
+      );
+      alreadyStarted = !!bound && !!(await agents.getSession(bound.session_id));
+    }
     const hash = digest(JSON.stringify(command));
     const receipt = (
       await store.pool.query<{ hash: string; result: unknown; stage_key: string }>(
@@ -276,10 +309,10 @@ export async function commandStudy(
         throw sandboxConflict('This unfinished request belongs to an earlier learning stage.');
       // Remote operation retries below reuse the original environment / command ID.
     } else {
-      if (row.revision !== command.revision)
+      if (row.revision !== command.revision && !alreadyStarted)
         throw sandboxConflict('Progress changed. Refresh before submitting.');
     }
-    const agents = await getAgentSessionStore();
+    if (alreadyStarted) return { alreadyStarted: true };
     if (await busy(store, row))
       throw sandboxConflict('Wait for the teaching response, or cancel it first.');
     const service = await SandboxService.forOwner(principal);
@@ -301,14 +334,14 @@ export async function commandStudy(
         JSON.stringify(result),
       ]);
     };
-    if (command.type === 'chat' || command.type === 'retry') {
+    if (command.type === 'chat' || command.type === 'retry' || command.type === 'begin') {
       if (!isAgentRuntimeConfigured())
         throw new SandboxError(
           'PBL_RUNNER_DISABLED',
           503,
           'Enable the existing Agent runtime to use project teaching.',
         );
-      check('chat');
+      if (command.type === 'chat') check('chat');
       requireEnvironment(row);
       if (command.type === 'chat' && !command.text?.trim())
         throw sandboxInvalid('A learning message is required.');
@@ -341,7 +374,22 @@ export async function commandStudy(
           // Reuse the actual student turn: retrying is not new feedback or approval.
           result = { sessionId: binding.session_id };
         } else {
-          result = { sessionId: await queueRole(store, db, row, command.text!) };
+          if (!row.state.introCompleted) {
+            transition = transitions.completeIntro(row.state);
+            row = await store.commit(db, row, transition);
+            transition = { state: row.state, events: [] };
+          }
+          result = {
+            sessionId: await queueRole(
+              store,
+              db,
+              row,
+              command.type === 'begin'
+                ? 'System stage entry: open the current learning step using its teaching protocol. This is not learner feedback. Introduce the project when entering its first step, and wait for the learner.'
+                : command.text!,
+              command.type === 'begin',
+            ),
+          };
         }
         await persist(db);
         return result;
@@ -570,7 +618,7 @@ export async function commandStudy(
         throw sandboxConflict('Collect the pending test result before continuing.');
       check('next');
       const role = roleFor(row);
-      if (role && stage.kind !== 'dialogue') {
+      if (role && (stage.kind === 'mentor_say' || stage.kind === 'produce')) {
         const bindings = await store.roles(id);
         const binding = bindings.find((b) => b.role === role && b.stage_key === stageKey(row));
         const meta = binding ? await agents.getSession(binding.session_id) : null;
@@ -683,7 +731,11 @@ export async function learningView(principal: OwnerPrincipal, id: string): Promi
         if (event.id > (latestUserSeq ?? 0) && question === binding.guided?.pending?.question)
           currentQuestionShown = true;
       }
-      if (event.type === 'user_message' && typeof data.text === 'string') {
+      if (
+        event.type === 'user_message' &&
+        !(event.data as { pblOpening?: boolean }).pblOpening &&
+        typeof data.text === 'string'
+      ) {
         messages.push({ role: 'user', text: data.text });
       }
       if (
@@ -829,6 +881,7 @@ export async function learningView(principal: OwnerPrincipal, id: string): Promi
     activitySequence,
     task: { title: milestone.title, goal: milestone.goal ?? milestone.title },
     roleRun,
+    needsOpening: !!role && !binding && row.state.status !== 'completed',
     evaluation,
     decisions:
       stage.kind === 'dialogue'

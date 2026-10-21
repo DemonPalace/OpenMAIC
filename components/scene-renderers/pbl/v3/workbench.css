@@ -52,3 +52,19 @@
   outline: 2px solid var(--ring);
   outline-offset: 2px;
 }
+
+@container (max-width: 850px) {
+  .pbl-workbench .pbl-environment-label {
+    display: none;
+  }
+}
+
+@container (max-width: 560px) {
+  .pbl-workbench .pbl-topbar {
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  .pbl-workbench .pbl-topbar h2 {
+    flex-basis: 100%;
+  }
+}

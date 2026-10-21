@@ -1,5 +1,16 @@
 'use client';
-import { ArrowUp, Square, MessageSquareText } from 'lucide-react';
+import {
+  ArrowUp,
+  Square,
+  MessageSquareText,
+  RefreshCw,
+  ChevronDown,
+  Moon,
+  Sun,
+  PanelLeft,
+  PanelRight,
+} from 'lucide-react';
+import { useTheme } from '@/lib/hooks/use-theme';
 import { WorkbenchSplit } from './workbench-split';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useI18n } from '@/lib/hooks/use-i18n';
@@ -10,7 +21,6 @@ import { LearningPanels } from './learning-panels';
 import { LearningConversation } from './conversation';
 import { WorkspaceFrame } from './workspace-frame';
 import { TaskDock } from './task-dock';
-import { learningStep, learningProgress } from '@/lib/pbl/v3/presentation';
 import { sandboxErrorMessage } from '@/lib/sandbox/error-message';
 import { SandboxRequestError } from '@/components/sandbox/client';
 
@@ -30,11 +40,14 @@ export async function pblRequest<T>(url: string, body?: unknown): Promise<T> {
   return data as T;
 }
 function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
+  const { resolvedTheme, setTheme } = useTheme();
   const { t } = useI18n(),
     stageId = useStageStore((state) => state.stage?.id);
   const [view, setView] = useState<LearningView | null>(null),
     [error, setError] = useState(''),
     [pending, setPending] = useState(false);
+  const [showWorkspace, setShowWorkspace] = useState(true),
+    [showAssistant, setShowAssistant] = useState(true);
   const [sent, setSent] = useState(0);
   const [text, setText] = useState('');
   const [dirtyFiles, setDirtyFiles] = useState(false);
@@ -95,44 +108,55 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
     }, 15_000);
     return () => clearInterval(timer);
   }, [view?.environmentId, view?.state.status, refresh]);
-  const command = async (type: string, payload: Record<string, unknown> = {}, repeat = false) => {
-    if (!view) return false;
-    setPending(true);
-    setError('');
-    const request =
-      repeat && retry.current
-        ? retry.current
-        : { type, payload, id: crypto.randomUUID(), revision: view.revision };
-    retry.current = request;
-    if (type === 'chat' && !repeat) setSent((n) => n + 1);
-    try {
-      const result = await pblRequest<{ view: LearningView }>('/api/pbl/v3', {
-        studyId: view.id,
-        command: {
-          id: request.id,
-          revision: request.revision,
-          type: request.type,
-          ...request.payload,
-        },
-      });
-      updateView(result.view);
-      retry.current = null;
-      if (request.type === 'chat')
-        setText((current) => (current === request.payload.text ? '' : current));
-      return true;
-    } catch (e) {
-      setError((e as Error).message);
-      await refresh().catch(() => {});
-      return false;
-    } finally {
-      setPending(false);
-    }
-  };
+  const command = useCallback(
+    async (type: string, payload: Record<string, unknown> = {}, repeat = false) => {
+      if (!view) return false;
+      setPending(true);
+      setError('');
+      const request =
+        repeat && retry.current
+          ? retry.current
+          : { type, payload, id: crypto.randomUUID(), revision: view.revision };
+      retry.current = request;
+      if (type === 'chat' && !repeat) setSent((n) => n + 1);
+      try {
+        const result = await pblRequest<{ view: LearningView }>('/api/pbl/v3', {
+          studyId: view.id,
+          command: {
+            id: request.id,
+            revision: request.revision,
+            type: request.type,
+            ...request.payload,
+          },
+        });
+        updateView(result.view);
+        retry.current = null;
+        if (request.type === 'chat')
+          setText((current) => (current === request.payload.text ? '' : current));
+        return true;
+      } catch (e) {
+        setError((e as Error).message);
+        await refresh().catch(() => {});
+        return false;
+      } finally {
+        setPending(false);
+      }
+    },
+    [view, updateView, refresh],
+  );
+  const opening = useRef('');
+  useEffect(() => {
+    if (!view?.needsOpening || !view.environment?.ready || view.busy || pending) return;
+    const key = `${view.id}:${view.state.position.milestoneId}:${view.state.position.stageIndex}:${view.role}`;
+    if (opening.current === key) return;
+    opening.current = key;
+    void command('begin');
+  }, [view, pending, command]);
   const quiz = view?.state.collected[view.state.position.milestoneId ?? '']?.quiz;
-  const disabled = pending || view?.busy || !view?.environment?.ready || dirtyFiles;
-  const progress = view ? learningProgress(view) : null;
+  const disabled =
+    pending || view?.busy || view?.needsOpening || !view?.environment?.ready || dirtyFiles;
   const button =
-    'rounded-md border px-3 py-2 text-sm disabled:opacity-40 hover:bg-muted aria-pressed:bg-primary aria-pressed:text-primary-foreground';
+    'rounded-md border px-2 py-1 text-xs disabled:opacity-40 hover:bg-muted aria-pressed:bg-primary aria-pressed:text-primary-foreground';
   return (
     <section
       className="relative flex h-full min-h-0 flex-col overflow-hidden bg-background text-foreground"
@@ -140,32 +164,82 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
       // Editor, terminal and teaching inputs own their keys, not the host's slide/chat shortcuts.
       onKeyDown={(event) => event.stopPropagation()}
     >
-      <header className="flex shrink-0 flex-wrap items-center gap-2 border-b pbl-chrome py-2 pl-3 pr-12">
-        <h2 className="mr-auto min-w-0 truncate text-sm font-semibold">
+      <header className="pbl-topbar flex shrink-0 items-center gap-2 border-b pbl-chrome py-2 pl-3 pr-12">
+        <h2 className="min-w-0 flex-1 truncate text-sm font-semibold">
           {view?.title ?? t('pblV3.title')}
         </h2>
         {view && (
           <>
-            <span className="rounded bg-muted px-2 py-1 text-xs">
-              M{view.state.position.milestoneIndex + 1} ·{' '}
-              {progress?.total ? `${progress.current}/${progress.total} · ` : ''}
-              {t(`pblV3.journey.steps.${learningStep(view)}`)}
-            </span>
-            <span className="flex items-center gap-1 text-xs text-muted-foreground">
-              <span
-                className={`h-2 w-2 rounded-full ${view.environment?.ready ? 'bg-emerald-500' : 'bg-amber-500'}`}
-              />
-              {t(view.environment?.ready ? 'pblV3.ide.connected' : 'pblV3.ide.disconnected')}
-            </span>
             <LearningPanels key={view.id} view={view} />
+            <details className="relative text-xs">
+              <summary
+                aria-label={t('pblV3.ide.environmentDetails')}
+                className="flex cursor-pointer list-none items-center gap-2 rounded bg-muted px-2 py-1"
+              >
+                <span
+                  className={`h-1.5 w-1.5 rounded-full ${view.environment?.ready ? 'bg-primary' : 'bg-amber-500'}`}
+                />
+                <span className="pbl-environment-label">
+                  {t(view.environment?.ready ? 'pblV3.ide.connected' : 'pblV3.ide.disconnected')}
+                </span>
+                <ChevronDown size={12} />
+              </summary>
+              <div className="absolute right-0 top-8 z-30 w-72 space-y-3 rounded border bg-popover p-3 shadow-lg">
+                <p>
+                  {t(view.environment?.ready ? 'pblV3.ide.connected' : 'pblV3.environmentNotice')}
+                </p>
+                {view.recovery && (
+                  <p>
+                    {t(
+                      view.recovery.checkpointRevision
+                        ? 'pblV3.restoredCheckpoint'
+                        : 'pblV3.restartedWorkspace',
+                    )}
+                    {view.recovery.progressReset && ` ${t('pblV3.restoredProgress')}`}
+                  </p>
+                )}
+              </div>
+            </details>
           </>
         )}
         <button
           className={button}
           disabled={pending}
+          aria-label={t('pblV3.refresh')}
+          title={t('pblV3.refresh')}
           onClick={() => void (view ? refresh() : open()).catch((e) => setError(e.message))}
         >
-          {t('pblV3.refresh')}
+          <RefreshCw size={14} />
+        </button>
+        <button
+          className="rounded border p-1.5 aria-pressed:bg-primary aria-pressed:text-primary-foreground"
+          aria-label={t('pblV3.ide.toggleWorkspace')}
+          aria-pressed={showWorkspace}
+          onClick={() => {
+            if (showWorkspace) setShowAssistant(true);
+            setShowWorkspace(!showWorkspace);
+          }}
+        >
+          <PanelLeft size={14} />
+        </button>
+        <button
+          className="rounded border p-1.5 aria-pressed:bg-primary aria-pressed:text-primary-foreground"
+          aria-label={t('pblV3.ide.toggleAssistant')}
+          aria-pressed={showAssistant}
+          onClick={() => {
+            if (showAssistant) setShowWorkspace(true);
+            setShowAssistant(!showAssistant);
+          }}
+        >
+          <PanelRight size={14} />
+        </button>
+        <button
+          type="button"
+          className="rounded border p-1.5 hover:bg-muted"
+          aria-label={t('pblV3.ide.theme')}
+          onClick={() => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')}
+        >
+          {resolvedTheme === 'dark' ? <Moon size={14} /> : <Sun size={14} />}
         </button>
       </header>
       {error && (
@@ -202,17 +276,17 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
               </button>
             </div>
           )}
-          {view.recovery && (
-            <p role="status" className="shrink-0 border-b px-3 py-1 text-xs">
-              {t(
-                view.recovery.checkpointRevision
-                  ? 'pblV3.restoredCheckpoint'
-                  : 'pblV3.restartedWorkspace',
-              )}
-              {view.recovery.progressReset && ` ${t('pblV3.restoredProgress')}`}
+          {view.recovery?.progressReset && (
+            <p
+              role="alert"
+              className="border-b px-3 py-2 text-xs text-amber-700 dark:text-amber-300"
+            >
+              {t('pblV3.restoredProgress')}
             </p>
           )}
           <WorkbenchSplit
+            showWorkspace={showWorkspace}
+            showAssistant={showAssistant}
             workspace={
               <LearningWorkbenchPanel
                 key={view.id}
@@ -232,16 +306,7 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
                     {t('pblV3.build')}
                   </button>
                 )}
-                {view.actions.includes('evaluate') && (
-                  <button
-                    className={button}
-                    disabled={disabled || !!view.evaluation}
-                    onClick={() => void command('evaluate')}
-                  >
-                    {t('pblV3.runTests')}
-                  </button>
-                )}
-                {view.evaluation && (
+                {view.evaluation && view.stage.kind !== 'check' && (
                   <>
                     <button
                       className={button}
@@ -250,8 +315,7 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
                     >
                       {t('pblV3.collect')}
                     </button>
-                    <pre>
-                      {view.evaluation.state}
+                    <pre className="whitespace-pre-wrap text-xs">
                       {view.evaluation.stdout}
                       {view.evaluation.stderr}
                     </pre>
@@ -307,7 +371,15 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
                         disabled={disabled}
                         onClick={() => void command('next')}
                       >
-                        {t('pblV3.next')}
+                        {view.milestones?.[view.state.position.milestoneIndex]?.stages[
+                          view.state.position.stageIndex + 1
+                        ]
+                          ? t('pblV3.journey.enterStep', {
+                              step: t(
+                                `pblV3.journey.steps.${view.milestones[view.state.position.milestoneIndex]!.stages[view.state.position.stageIndex + 1]}`,
+                              ),
+                            })
+                          : t('pblV3.next')}
                       </button>
                     )
                   }
@@ -325,8 +397,54 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
                               : 'pblV3.journey.followStep',
                     )}
                   </p>
+                  {view.stage.kind === 'produce' && (
+                    <p className="rounded border p-2">
+                      {t(
+                        view.stage.writes === 'plan'
+                          ? 'pblV3.journey.planArtifact'
+                          : 'pblV3.journey.codeArtifact',
+                      )}
+                    </p>
+                  )}
                   {view.stage.kind === 'produce' && view.stage.exploration && (
                     <p className="mb-2 rounded border p-2">{view.stage.exploration.introduction}</p>
+                  )}
+                  {view.stage.kind === 'check' && view.stage.checker === 'tests' && (
+                    <>
+                      {view.actions.includes('evaluate') && (
+                        <button
+                          className={button}
+                          disabled={disabled || !!view.evaluation}
+                          onClick={() => void command('evaluate')}
+                        >
+                          {t('pblV3.runTests')}
+                        </button>
+                      )}
+                      {view.evaluation && (
+                        <>
+                          <button
+                            className={button}
+                            disabled={disabled}
+                            onClick={() => void command('collect')}
+                          >
+                            {t('pblV3.collect')}
+                          </button>
+                          <pre>
+                            {view.evaluation.state}
+                            {view.evaluation.stdout}
+                            {view.evaluation.stderr}
+                          </pre>
+                        </>
+                      )}
+                      {view.state.collected[view.state.position.milestoneId ?? '']?.tests && (
+                        <pre className="whitespace-pre-wrap text-xs">
+                          {
+                            view.state.collected[view.state.position.milestoneId ?? '']?.tests
+                              ?.publicFeedback
+                          }
+                        </pre>
+                      )}
+                    </>
                   )}
                   {view.decisions.map((decision) => (
                     <fieldset key={decision.id}>

@@ -2,17 +2,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import dynamic from 'next/dynamic';
 import { Group, Panel, Separator, usePanelRef } from 'react-resizable-panels';
-import {
-  Files,
-  PanelBottom,
-  Play,
-  Save,
-  Square,
-  Terminal,
-  X,
-  LockKeyhole,
-  Globe,
-} from 'lucide-react';
+import { RefreshCw, FolderCog, Files, Play, Save, Square, Terminal, X, Globe } from 'lucide-react';
 import { FileExplorer } from './file-explorer';
 import { useProjectEditor } from './use-project-editor';
 const CodeEditor = dynamic(() => import('./code-editor').then((m) => m.CodeEditor), { ssr: false });
@@ -66,7 +56,7 @@ export function LearningWorkbenchPanel({
     [consoleTab, setConsoleTab] = useState<'output' | 'terminal'>('output'),
     [editorTab, setEditorTab] = useState<'code' | 'preview'>('code');
   const showEvaluation =
-    view.actions.includes('compile') || view.actions.includes('evaluate') || !!view.evaluation;
+    view.stage.kind !== 'check' && (view.actions.includes('compile') || !!view.evaluation);
   useEffect(() => {
     if (showEvaluation) {
       setConsoleOpen(true);
@@ -229,35 +219,6 @@ export function LearningWorkbenchPanel({
       data-testid="pbl-ide"
       className="flex h-full min-h-0 min-w-0 flex-col bg-background"
     >
-      <header className="flex shrink-0 flex-wrap items-center gap-1 border-b px-2 py-1">
-        <button
-          className={button}
-          aria-label={t('pblV3.ide.toggleFiles')}
-          title={t('pblV3.ide.toggleFiles')}
-          onClick={() => {
-            if (explorer.current?.isCollapsed()) explorer.current.expand();
-            else explorer.current?.collapse();
-          }}
-        >
-          <Files size={15} />
-        </button>
-        <span className="mr-auto text-xs font-semibold">
-          {t('pblV3.files')}{' '}
-          <span className="font-normal text-muted-foreground">{view.files.length}</span>
-        </span>
-        <button className={button} disabled={!canSave} onClick={save}>
-          <Save size={14} />
-          {t('pblV3.saveFile')}
-        </button>
-        <button className={button} disabled={disabled} onClick={reload}>
-          {t(editor.dirty(path) ? 'pblV3.workbench.discard' : 'pblV3.reloadFile')}
-        </button>
-        {work?.canManageFiles && (
-          <button className={button} aria-expanded={manage} onClick={() => setManage((v) => !v)}>
-            {t('pblV3.workbench.manageFiles')}
-          </button>
-        )}
-      </header>
       {error && (
         <p
           role="alert"
@@ -319,6 +280,23 @@ export function LearningWorkbenchPanel({
             collapsible
             className="h-full bg-muted/20"
           >
+            <header className="flex shrink-0 flex-wrap items-center gap-1 border-b pbl-chrome px-2 py-1">
+              <button
+                className={button}
+                aria-label={t('pblV3.ide.hideFiles')}
+                title={t('pblV3.ide.toggleFiles')}
+                onClick={() => {
+                  if (explorer.current?.isCollapsed()) explorer.current.expand();
+                  else explorer.current?.collapse();
+                }}
+              >
+                <Files size={15} />
+              </button>
+              <span className="mr-auto text-xs font-semibold">
+                {t('pblV3.files')}{' '}
+                <span className="font-normal text-muted-foreground">{view.files.length}</span>
+              </span>
+            </header>
             <FileExplorer
               files={view.files}
               active={path}
@@ -335,47 +313,88 @@ export function LearningWorkbenchPanel({
             className="w-px bg-border hover:bg-primary"
           />
           <Panel id="editor" minSize="45%" className="flex h-full min-w-0 flex-col">
-            <div
-              role="tablist"
-              aria-label={t('pblV3.ide.openFiles')}
-              className="flex shrink-0 overflow-x-auto border-b bg-muted/20"
-            >
-              {editor.tabs.map((p) => (
-                <div key={p} className="flex shrink-0 items-center border-r">
+            <div className="pbl-chrome flex h-9 shrink-0 items-center border-b">
+              <button
+                className={button}
+                aria-label={t('pblV3.ide.toggleFiles')}
+                onClick={() =>
+                  explorer.current?.isCollapsed()
+                    ? explorer.current.expand()
+                    : explorer.current?.collapse()
+                }
+              >
+                <Files size={14} />
+              </button>
+              <div
+                role="tablist"
+                aria-label={t('pblV3.ide.openFiles')}
+                className="flex min-w-0 flex-1 overflow-x-auto"
+              >
+                {editor.tabs.map((p) => (
+                  <div key={p} className="flex shrink-0 items-center border-r">
+                    <button
+                      role="tab"
+                      aria-selected={p === path && editorTab === 'code'}
+                      className="border-t-2 border-transparent px-3 py-2 text-xs aria-selected:border-primary aria-selected:bg-background"
+                      title={p}
+                      onClick={() => {
+                        editor.select(p);
+                        setEditorTab('code');
+                      }}
+                    >
+                      {p.split('/').at(-1)}
+                      {editor.dirty(p) ? ' ●' : ''}
+                    </button>
+                    <button
+                      className="p-1 hover:bg-muted"
+                      aria-label={t('pblV3.ide.closeFile', { path: p })}
+                      onClick={() => {
+                        if (!editor.dirty(p) || window.confirm(t('pblV3.ide.discard', { path: p })))
+                          editor.close(p);
+                      }}
+                    >
+                      <X size={12} />
+                    </button>
+                  </div>
+                ))}
+                {!!work?.ports.length && (
                   <button
                     role="tab"
-                    aria-selected={p === path && editorTab === 'code'}
-                    className="border-t-2 border-transparent px-3 py-2 text-xs aria-selected:border-primary aria-selected:bg-background"
-                    title={p}
-                    onClick={() => {
-                      editor.select(p);
-                      setEditorTab('code');
-                    }}
+                    aria-selected={editorTab === 'preview'}
+                    className="px-3 py-2 text-xs aria-selected:bg-accent"
+                    onClick={() => setEditorTab('preview')}
                   >
-                    {p.split('/').at(-1)}
-                    {editor.dirty(p) ? ' ●' : ''}
+                    <Globe size={13} className="mr-1 inline" />
+                    {t('pblV3.workbench.application')}
                   </button>
-                  <button
-                    className="p-1 hover:bg-muted"
-                    aria-label={t('pblV3.ide.closeFile', { path: p })}
-                    onClick={() => {
-                      if (!editor.dirty(p) || window.confirm(t('pblV3.ide.discard', { path: p })))
-                        editor.close(p);
-                    }}
-                  >
-                    <X size={12} />
-                  </button>
-                </div>
-              ))}
-              {!!work?.ports.length && (
+                )}
+              </div>
+              <button
+                className={button}
+                disabled={!canSave}
+                onClick={save}
+                aria-label={t('pblV3.saveFile')}
+                title={t('pblV3.saveFile')}
+              >
+                <Save size={14} />
+              </button>
+              <button
+                className={button}
+                disabled={disabled}
+                onClick={reload}
+                aria-label={t(editor.dirty(path) ? 'pblV3.workbench.discard' : 'pblV3.reloadFile')}
+                title={t('pblV3.reloadFile')}
+              >
+                <RefreshCw size={14} />
+              </button>
+              {work?.canManageFiles && (
                 <button
-                  role="tab"
-                  aria-selected={editorTab === 'preview'}
-                  className="px-3 py-2 text-xs aria-selected:bg-accent"
-                  onClick={() => setEditorTab('preview')}
+                  className={button}
+                  aria-label={t('pblV3.workbench.manageFiles')}
+                  aria-expanded={manage}
+                  onClick={() => setManage((v) => !v)}
                 >
-                  <Globe size={13} className="mr-1 inline" />
-                  {t('pblV3.workbench.application')}
+                  <FolderCog size={14} />
                 </button>
               )}
             </div>
@@ -428,21 +447,6 @@ export function LearningWorkbenchPanel({
                 />
               )}
             </div>
-            <footer className="flex shrink-0 items-center gap-2 border-t px-2 py-1 text-xs text-muted-foreground">
-              {!canSave && <LockKeyhole size={12} />}
-              <span className="min-w-0 flex-1 truncate" title={path}>
-                {path}
-              </span>
-              {editor.dirty(path) && <span>{t('pblV3.workbench.unsaved')}</span>}
-              <button
-                className={button}
-                aria-expanded={consoleOpen}
-                onClick={() => setConsoleOpen((v) => !v)}
-              >
-                <PanelBottom size={13} />
-                {t('pblV3.ide.console')}
-              </button>
-            </footer>
           </Panel>
         </Group>
       </div>

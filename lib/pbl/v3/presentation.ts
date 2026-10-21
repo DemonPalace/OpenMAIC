@@ -2,7 +2,6 @@ import type { LearningView } from './types';
 
 /** Labels follow authoritative progress; they never authorize a transition. */
 export function learningStep(view: Pick<LearningView, 'state' | 'stage'>): string {
-  if (!view.state.introCompleted) return 'intro';
   return stageStep(view.stage);
 }
 
@@ -13,14 +12,12 @@ export function stageStep(stage: LearningView['stage']): string {
   return stage.kind;
 }
 
-/** Display the installed milestone's actual steps; introductions are outside that sequence. */
+/** Introduction is part of the first installed teaching step. */
 export function learningProgress(view: Pick<LearningView, 'state' | 'stage' | 'milestones'>) {
   const milestone = view.milestones?.[view.state.position.milestoneIndex];
   const stages = milestone?.stages ?? [];
   const total = stages.length;
-  const current = !view.state.introCompleted
-    ? 0
-    : Math.min(total, Math.max(0, view.state.position.stageIndex + 1));
+  const current = Math.min(total, Math.max(1, view.state.position.stageIndex + 1));
   const completed = view.state.milestones[view.state.position.milestoneIndex];
   return {
     current,
@@ -29,10 +26,7 @@ export function learningProgress(view: Pick<LearningView, 'state' | 'stage' | 'm
       label: stage,
       complete:
         completed?.status === 'completed' || !!completed?.completedStageIndexes?.includes(index),
-      active:
-        view.state.introCompleted &&
-        index === view.state.position.stageIndex &&
-        completed?.status !== 'completed',
+      active: index === view.state.position.stageIndex && completed?.status !== 'completed',
     })),
   };
 }

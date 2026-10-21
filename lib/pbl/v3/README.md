@@ -65,11 +65,17 @@ handoffs until saved or explicitly discarded; changing environments preserves dr
 but disables stale writes. Scene navigation/reload still requires saving work first.
 All controls use the existing workspace routes, permissions and version checks.
 
-A compact status strip above the composer shows the current step and opens an upward
-scrollable task drawer. Decisions and quizzes open their task details on entry;
-closing details preserves answer drafts. The drawer does not displace the composer.
-Step counts come from the installed milestone (the project introduction is step zero),
-and the path and task drawer show completed/current steps without authorizing navigation.
+A compact status strip above the composer shows the milestone and current step (1/7
+for a seven-step milestone). Teaching and reflection have no expandable task drawer.
+Decision, artifact, test and quiz stages expose only their current task details in an
+upward drawer; closing it preserves answer drafts and never displaces the composer.
+The project introduction belongs to the first teaching step, not an extra step.
+After environment preparation and each confirmed stage transition, the active role
+opens the stage once through the existing runner. Durable stage-entry events supply
+conversation dividers on replay. Opening wakeups are explicitly system-originated:
+they are not shown as learner messages and cannot count as review feedback. Reloads
+reuse the current role; a failed opening uses the normal retry path. Existing sessions
+retain their history and position when the old separate intro gate is folded away.
 The scene uses OpenPBL's blue-gray/green palette in dark mode and its light counterpart,
 scoped to the workbench and following the host theme. Configured application previews
 keep a tab before connection, with guidance for unavailable/not-started states; project

@@ -34,6 +34,7 @@ export interface LearningView {
   activitySequence?: number;
   task?: { title: string; goal: string };
   messages: { role: 'user' | 'assistant'; text: string }[];
+  needsOpening?: boolean;
   roleRun: {
     status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'missing';
     failure: 'authentication' | 'timeout' | 'unavailable' | null;

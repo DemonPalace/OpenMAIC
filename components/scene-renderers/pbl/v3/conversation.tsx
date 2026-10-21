@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useRef } from 'react';
-import { Code2, GraduationCap, ListChecks, MessageSquareText } from 'lucide-react';
+import { Route, Code2, GraduationCap, ListChecks, MessageSquareText } from 'lucide-react';
 import { useStickToBottomContext } from 'use-stick-to-bottom';
 import {
   Conversation,
@@ -54,6 +54,23 @@ export function LearningConversation({ view, sent }: { view: LearningView; sent:
           <p className="text-sm text-muted-foreground">{t('pblV3.journey.startConversation')}</p>
         )}
         {entries.map((entry) => {
+          if (entry.boundary)
+            return (
+              <div
+                key={entry.id}
+                role="separator"
+                className="flex items-center gap-3 py-2 text-[11px] text-muted-foreground"
+              >
+                <span className="h-px flex-1 bg-border" />
+                <Route size={13} />
+                <span>
+                  M{entry.boundary.milestoneIndex + 1} · {entry.boundary.milestoneTitle} ·{' '}
+                  {entry.boundary.stageIndex + 1}/{entry.boundary.total}{' '}
+                  {t(`pblV3.journey.steps.${entry.boundary.step}`)}
+                </span>
+                <span className="h-px flex-1 bg-border" />
+              </div>
+            );
           const user = entry.speaker === 'user';
           const Icon = icons[user ? 'mentor' : (entry.speaker as keyof typeof icons)];
           return (

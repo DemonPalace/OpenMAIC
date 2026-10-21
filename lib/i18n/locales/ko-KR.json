@@ -2614,7 +2614,7 @@
       "artifact_review_completed": "Review completed"
     },
     "journey": {
-      "startConversation": "Ask your teaching assistant to begin, or tell them where you need help.",
+      "startConversation": "Your assistant will open this step when the learning environment is ready.",
       "latest": "Go to the latest message",
       "expand": "Expand project workspace",
       "returnClassroom": "Return to classroom layout",
@@ -2654,7 +2654,10 @@
       "notReflected": "Reflection not yet recorded",
       "taskDetails": "Current task details",
       "closeDetails": "Close task details",
-      "milestoneSteps": "Milestone learning steps"
+      "milestoneSteps": "Milestone learning steps",
+      "enterStep": "Continue to {{step}}",
+      "planArtifact": "Open PLAN.md in the IDE to read the current plan. Discuss, review and approve it in the conversation.",
+      "codeArtifact": "Inspect the current project files in the IDE. Review the implementation and save edits before continuing."
     },
     "activity": {
       "read": "Reading project files",
@@ -2722,7 +2725,12 @@
       "sendHint": "Enter to send · Shift+Enter for a new line",
       "previewNotStarted": "Start the project web server in the terminal or Run panel, then connect to a configured port below.",
       "previewUnavailable": "Application preview is unavailable in this step. You can read the code and continue with the learning assistant.",
-      "connectPreview": "Connect preview"
+      "connectPreview": "Connect preview",
+      "theme": "Switch color theme",
+      "hideFiles": "Hide file tree",
+      "toggleWorkspace": "Toggle code workspace",
+      "toggleAssistant": "Toggle learning assistant",
+      "environmentDetails": "Environment details"
     }
   }
 }

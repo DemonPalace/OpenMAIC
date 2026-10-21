@@ -132,7 +132,16 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
       },
     ],
   } as unknown as LearningView;
+  let openings = 0;
   await page.route('**/api/pbl/v3**', async (route) => {
+    if (
+      route.request().method() === 'POST' &&
+      route.request().postDataJSON()?.command?.type === 'begin'
+    ) {
+      openings++;
+      view.needsOpening = false;
+      return route.fulfill({ json: { view } });
+    }
     if (new URL(route.request().url()).searchParams.has('file'))
       return route.fulfill({
         json: {
@@ -184,21 +193,43 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
   const task = page.getByRole('region', { name: 'Current learning step', exact: true });
   const details = page.getByRole('region', { name: 'Current task details', exact: true });
   await expect(task.getByText('1/7', { exact: true })).toBeVisible();
-  const composerBefore = await page.getByLabel('Your message', { exact: true }).boundingBox();
-  await task.getByRole('button', { name: /Current task details/ }).click();
-  await expect(details).toBeVisible();
-  await expect(details.getByRole('listitem')).toHaveCount(7);
-  const composerAfter = await page.getByLabel('Your message', { exact: true }).boundingBox();
-  expect(composerAfter?.y).toBe(composerBefore?.y);
-  await details.getByRole('button', { name: 'Close task details' }).press('Escape');
-  await expect(details).toBeHidden();
-  await expect(task.getByRole('button', { name: /Current task details/ })).toBeFocused();
-  // Opening task details must not submit an answer or advance the learning state.
-  expect(view.revision).toBe(8);
-  view.state.introCompleted = false;
+  view.needsOpening = true;
   view.revision++;
   await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
-  await expect(task.getByText('0/7', { exact: true })).toBeVisible();
+  await expect.poll(() => openings).toBe(1);
+  await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
+  expect(openings).toBe(1);
+  // Teaching has no drawer; decisions expose only the actual current task.
+  await expect(task.getByRole('button', { name: /Current task details/ })).toHaveCount(0);
+  await expect(details).toHaveCount(0);
+  const originalStage = view.stage;
+  view.stage = {
+    kind: 'dialogue',
+    agent: 'discussion',
+    studentActions: ['chat', 'decide', 'next'],
+  } as LearningView['stage'];
+  view.state.position.stageIndex = 1;
+  view.decisions = [
+    {
+      id: 'storage',
+      prompt: 'Where will tasks live?',
+      options: [{ id: 'list', label: 'A Python list' }],
+    },
+  ];
+  view.revision++;
+  await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
+  const composerBefore = await page.getByLabel('Your message', { exact: true }).boundingBox();
+  await task.getByRole('button', { name: /Current task details/ }).click();
+  await expect(details.getByText('Where will tasks live?')).toBeVisible();
+  await expect(details.getByRole('listitem')).toHaveCount(0);
+  expect((await page.getByLabel('Your message', { exact: true }).boundingBox())?.y).toBe(
+    composerBefore?.y,
+  );
+  await details.getByRole('button', { name: 'Close task details' }).press('Escape');
+  await expect(details).toHaveCount(0);
+  await expect(task.getByRole('button', { name: /Current task details/ })).toBeFocused();
+  view.stage = originalStage;
+  view.decisions = [];
   view.state.introCompleted = true;
   view.state.position = { milestoneIndex: 1, milestoneId: 'normalize', stageIndex: 2 };
   view.revision++;

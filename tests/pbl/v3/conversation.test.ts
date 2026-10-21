@@ -21,6 +21,31 @@ const message = (text: string) => ({
   },
 });
 describe('student conversation projection', () => {
+  it('replays durable stage dividers and hides system opening requests', () => {
+    const boundary = {
+      milestoneId: 'one',
+      milestoneTitle: 'First outcome',
+      milestoneIndex: 0,
+      stageIndex: 0,
+      step: 'teaching',
+      total: 7,
+    };
+    const output = projectConversation(
+      [
+        event(1, 'pbl_stage_entered', boundary),
+        event(2, 'user_message', { text: 'System stage entry', pblOpening: true }),
+        event(3, 'message_end', message('Welcome to your project')),
+        event(4, 'user_message', { text: 'My first answer' }),
+      ],
+      'discussion',
+      false,
+    );
+    expect(output).toHaveLength(3);
+    expect(output[0]?.boundary).toEqual(boundary);
+    expect(output[1]?.speaker).toBe('discussion');
+    expect(output[2]?.speaker).toBe('user');
+    expect(JSON.stringify(output)).not.toContain('System stage entry');
+  });
   it('updates a single text block and preserves tool order without revealing payloads', () => {
     const history = [
       event(1, 'user_message', { text: 'Please explain' }),
