@@ -278,16 +278,19 @@ test('installed sample opens in the normal classroom and preserves progress afte
   });
   await page.getByRole('button', { name: 'Reload file' }).click();
   await planSeen;
-  await page.getByRole('combobox', { name: 'Project files' }).selectOption('greeting.py');
-  const editor = page.getByRole('textbox', { name: 'File contents' });
-  await expect(editor).toHaveValue('print("Current code")');
+  await page.getByRole('button', { name: 'greeting.py', exact: true }).click();
+  await expect(page.locator('.monaco-editor .view-lines')).toHaveText('print("Current code")');
   const lateResponse = page.waitForResponse(
     (response) => new URL(response.url()).searchParams.get('file') === 'PLAN.md',
   );
   releasePlan();
   await lateResponse;
-  await expect(editor).toHaveValue('print("Current code")');
-  await editor.fill('print("Saved code")');
+  await expect(page.locator('.monaco-editor .view-lines')).toHaveText('print("Current code")');
+  await expect(page.getByRole('button', { name: 'Save file', exact: true })).toBeEnabled();
+  await page.locator('.monaco-editor .view-lines .view-line').first().click();
+  await page.keyboard.press('ControlOrMeta+A');
+  await page.keyboard.type('print("Saved code")');
+  await expect(page.locator('.monaco-editor .view-lines')).toHaveText('print("Saved code")');
   await page.getByRole('button', { name: 'Save file', exact: true }).click();
   expect(calls.at(-1)).toMatchObject({
     type: 'save',
@@ -295,22 +298,52 @@ test('installed sample opens in the normal classroom and preserves progress afte
     text: 'print("Saved code")',
     expectedHash: 'c'.repeat(64),
   });
+  await page.getByRole('button', { name: 'Manage source files' }).click();
   await page.getByLabel('Project-relative file path').fill('src/new.py');
   await page.getByRole('button', { name: 'Create file', exact: true }).click();
-  await expect(page.getByRole('combobox', { name: 'Project files' })).toHaveValue('src/new.py');
-  await expect(editor).toHaveValue('print("Current code")');
-  await editor.fill('Unsaved learner work');
+  await expect(page.getByRole('tab', { name: 'new.py', exact: true })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  );
+  await expect(page.locator('.monaco-editor .view-lines')).toHaveText('print("Current code")');
+  await expect(page.getByRole('button', { name: 'Save file', exact: true })).toBeEnabled();
+  await page.locator('.monaco-editor .view-lines .view-line').first().click();
+  await page.keyboard.press('ControlOrMeta+A');
+  await page.keyboard.type('Unsaved learner work');
+  await page.getByRole('button', { name: 'Run & output', exact: true }).click();
+  await page.getByLabel('Project command', { exact: true }).fill('python3 src/new.py');
   await expect(page.getByRole('button', { name: 'Run command', exact: true })).toBeDisabled();
+  await page.getByRole('tab', { name: 'greeting.py', exact: true }).click();
+  await expect(page.locator('.monaco-editor .view-lines')).toHaveText('print("Current code")');
+  await page.getByRole('tab', { name: 'new.py ●', exact: true }).click();
+  await expect(page.locator('.monaco-editor .view-lines')).toHaveText('Unsaved learner work');
+  await page.getByRole('button', { name: 'Expand project workspace' }).click();
+  await expect(page.locator('.monaco-editor .view-lines')).toHaveText('Unsaved learner work');
+  const ideBox = (await page.getByTestId('pbl-ide').boundingBox())!;
+  const agentBox = (await page.getByTestId('pbl-assistant').boundingBox())!;
+  expect(ideBox.x + ideBox.width).toBeLessThanOrEqual(agentBox.x + 1);
+  const divider = page.getByRole('separator', { name: 'Resize workspace and assistant' });
+  await divider.focus();
+  await divider.press('ArrowLeft');
+  await expect
+    .poll(async () => (await page.getByTestId('pbl-ide').boundingBox())!.width)
+    .toBeLessThan(ideBox.width);
+  await page.getByRole('button', { name: 'Return to classroom layout' }).click();
+  await expect(page.locator('.monaco-editor .view-lines')).toHaveText('Unsaved learner work');
   view.environmentId = '22345678-1234-1234-1234-123456789012';
   await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
-  await expect(editor).toHaveValue('Unsaved learner work');
+  await expect(page.locator('.monaco-editor .view-lines')).toHaveText('Unsaved learner work');
   await expect(page.getByRole('button', { name: 'Save file', exact: true })).toBeDisabled();
   await expect(page.getByText('The environment or file changed.', { exact: false })).toBeVisible();
+  page.once('dialog', (dialog) => dialog.accept());
   await page.getByRole('button', { name: 'Discard changes and reload' }).click();
-  await expect(editor).toHaveValue('print("Current code")');
+  await expect(page.locator('.monaco-editor .view-lines')).toHaveText('print("Current code")');
   await page.getByLabel('Project-relative file path').fill('src/moved.py');
   await page.getByRole('button', { name: 'Rename / move file' }).click();
-  await expect(page.getByRole('combobox', { name: 'Project files' })).toHaveValue('src/moved.py');
+  await expect(page.getByRole('tab', { name: 'moved.py', exact: true })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  );
   await page.getByLabel('Project command', { exact: true }).fill('python3 src/moved.py');
   await page.getByRole('button', { name: 'Run command', exact: true }).click();
   await expect.poll(() => workCalls.some((c) => c.action === 'run')).toBe(true);
@@ -326,9 +359,14 @@ test('installed sample opens in the normal classroom and preserves progress afte
   await frame.getByRole('button', { name: 'Try' }).click();
   await expect(frame.getByRole('button', { name: 'Clicked' })).toBeVisible();
   expect(previewOpen).toBe(true);
+  await page.getByRole('button', { name: 'Expand project workspace' }).click();
+  await page.getByTestId('pbl-workbench-split').evaluate((el) => {
+    el.scrollTop = 0;
+  });
   await page
     .getByTestId('pbl-v3-workspace')
     .screenshot({ path: 'test-results/pbl-v3-workbench.png' });
+  await page.getByRole('button', { name: 'Return to classroom layout' }).click();
   await page.getByRole('button', { name: 'Stop commands and close terminals' }).click();
   await expect(page.locator('iframe[title="Project application"]')).toHaveCount(0);
   expect(previewOpen).toBe(false);

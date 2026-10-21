@@ -2700,6 +2700,23 @@
         "failed": "执行失败",
         "unknown": "执行状态未知"
       }
+    },
+    "ide": {
+      "workspace": "代码工作区",
+      "resize": "调整工作区与助手宽度",
+      "resizeFiles": "调整文件目录宽度",
+      "toggleFiles": "展开或收起文件目录",
+      "openFiles": "已打开文件",
+      "closeFile": "关闭 {{path}}",
+      "discard": "放弃 {{path}} 中未保存的修改？",
+      "console": "控制台",
+      "terminal": "终端",
+      "output": "运行与输出",
+      "hideConsole": "收起控制台",
+      "connected": "学习环境已连接",
+      "disconnected": "学习环境未连接",
+      "messagePlaceholder": "提出问题，或说说你的理解…",
+      "sendHint": "Enter 发送 · Shift+Enter 换行"
     }
   }
 }

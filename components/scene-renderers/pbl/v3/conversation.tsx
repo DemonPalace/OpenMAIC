@@ -47,12 +47,9 @@ export function LearningConversation({ view, sent }: { view: LearningView; sent:
       parts: [{ kind: 'text', id: `${i}`, text: m.text }],
     }));
   return (
-    <Conversation
-      className="h-[min(48vh,32rem)] min-h-64 rounded-xl border bg-background"
-      aria-label={t('pblV3.learning')}
-    >
+    <Conversation className="min-h-0 flex-1 bg-background" aria-label={t('pblV3.learning')}>
       <FollowSend count={sent} />
-      <ConversationContent className="gap-5">
+      <ConversationContent className="gap-5 p-4">
         {!entries.length && (
           <p className="text-sm text-muted-foreground">{t('pblV3.journey.startConversation')}</p>
         )}

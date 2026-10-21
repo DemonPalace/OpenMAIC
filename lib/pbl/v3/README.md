@@ -50,9 +50,25 @@ server's progress/actions. Quiz answer drafts are scoped to their milestone/stag
 Reports summarize retained test/quiz/reflection results and link to historical
 evidence without claiming that old test results certify subsequently edited files.
 
-The merged classroom workbench supplies file management, terminal, preview and
-recovery controls. This teaching panel composes that workbench through its existing
-callbacks; it does not introduce a second editor or reproduce the old platform shell.
+The workbench places the IDE on the left and teaching assistant on the right,
+with adjustable panel widths. The IDE includes an authorized file tree, Monaco
+editor, per-file tabs and drafts, command output, terminal and application-preview
+panes. The assistant keeps its conversation scroll separate from stage controls and
+the message composer. Enter sends; Shift+Enter inserts a line. Workspace keystrokes
+do not trigger classroom shortcuts.
+
+The v3 scene fills the host canvas rather than inheriting a slide's 16:9 constraint.
+Short containers scroll a minimum usable workbench; narrow containers stack IDE and
+assistant. Expanding and returning preserves the mounted editor and chat drafts.
+File switches preserve unsaved buffers. Unsaved files block execution and teaching
+handoffs until saved or explicitly discarded; changing environments preserves drafts
+but disables stale writes. Scene navigation/reload still requires saving work first.
+All controls use the existing workspace routes, permissions and version checks.
+
+Monaco is loaded only in the browser. Install/dev/build copy its bundled assets to
+`public/code-editor/vs`; Docker copies these with the application's public directory.
+No third-party editor CDN is required. Source hashes, stage gates, file durability
+and recovery still come from the existing backend.
 
 ![Classroom teaching conversation — local API fixtures](screenshots/conversation.png)
 

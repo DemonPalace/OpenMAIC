@@ -18,9 +18,9 @@ export function WorkspaceFrame({ children }: { children: ReactNode }) {
     <div
       ref={ref}
       data-testid="pbl-v3-frame"
-      className="wbchat relative h-full overflow-auto bg-background text-foreground"
+      className="wbchat relative flex h-full min-h-0 flex-col overflow-hidden bg-background text-foreground"
     >
-      <div className="sticky top-0 z-10 flex justify-end border-b bg-background/95 px-4 py-2">
+      <div className="z-10 flex shrink-0 justify-end border-b bg-background/95 px-4 py-2">
         <button
           type="button"
           className="flex items-center gap-2 rounded px-3 py-1 text-sm hover:bg-muted"
@@ -43,7 +43,7 @@ export function WorkspaceFrame({ children }: { children: ReactNode }) {
           {t('pblV3.journey.fullscreenUnavailable')}
         </p>
       )}
-      {children}
+      <div className="min-h-0 flex-1">{children}</div>
     </div>
   );
 }

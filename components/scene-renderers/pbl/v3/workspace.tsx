@@ -1,4 +1,6 @@
 'use client';
+import { ArrowUp, Square, MessageSquareText } from 'lucide-react';
+import { WorkbenchSplit } from './workbench-split';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useI18n } from '@/lib/hooks/use-i18n';
 import { useStageStore } from '@/lib/store/stage';
@@ -34,6 +36,7 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
     [pending, setPending] = useState(false);
   const [sent, setSent] = useState(0);
   const [text, setText] = useState('');
+  const [dirtyFiles, setDirtyFiles] = useState(false);
   const [quizAnswers, setQuizAnswers] = useState<{ key: string; values: number[] }>({
     key: '',
     values: [],
@@ -113,7 +116,8 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
       });
       updateView(result.view);
       retry.current = null;
-      if (request.type === 'chat') setText('');
+      if (request.type === 'chat')
+        setText((current) => (current === request.payload.text ? '' : current));
       return true;
     } catch (e) {
       setError((e as Error).message);
@@ -124,42 +128,48 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
     }
   };
   const quiz = view?.state.collected[view.state.position.milestoneId ?? '']?.quiz;
-  const disabled = pending || view?.busy || !view?.environment?.ready;
+  const disabled = pending || view?.busy || !view?.environment?.ready || dirtyFiles;
   const button =
     'rounded-md border px-3 py-2 text-sm disabled:opacity-40 hover:bg-muted aria-pressed:bg-primary aria-pressed:text-primary-foreground';
   return (
     <section
-      className="min-h-full bg-background p-4 text-foreground"
+      className="relative flex h-full min-h-0 flex-col overflow-hidden bg-background text-foreground"
       data-testid="pbl-v3-workspace"
+      // Editor, terminal and teaching inputs own their keys, not the host's slide/chat shortcuts.
+      onKeyDown={(event) => event.stopPropagation()}
     >
-      <header className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 className="text-xl font-semibold">{view?.title ?? t('pblV3.title')}</h2>
-          {view && (
-            <p className="text-sm text-muted-foreground">
-              {view.state.position.milestoneId} ·{' '}
-              {view.role ? t(`pblV3.roles.${view.role}`) : t('pblV3.checks')}
-            </p>
-          )}
-        </div>
-        <div className="flex gap-2">
-          <button
-            className={button}
-            disabled={pending}
-            onClick={() => void (view ? refresh() : open()).catch((e) => setError(e.message))}
-          >
-            {t('pblV3.refresh')}
-          </button>
-          {view?.busy && (
-            <button className={button} onClick={() => void command('cancel')}>
-              {t('pblV3.cancel')}
-            </button>
-          )}
-        </div>
+      <header className="flex shrink-0 flex-wrap items-center gap-2 border-b bg-muted/20 px-3 py-2">
+        <h2 className="mr-auto min-w-0 truncate text-sm font-semibold">
+          {view?.title ?? t('pblV3.title')}
+        </h2>
+        {view && (
+          <>
+            <span className="rounded bg-muted px-2 py-1 text-xs">
+              {view.state.position.milestoneId} · {t(`pblV3.journey.steps.${learningStep(view)}`)}
+            </span>
+            <span className="flex items-center gap-1 text-xs text-muted-foreground">
+              <span
+                className={`h-2 w-2 rounded-full ${view.environment?.ready ? 'bg-emerald-500' : 'bg-amber-500'}`}
+              />
+              {t(view.environment?.ready ? 'pblV3.ide.connected' : 'pblV3.ide.disconnected')}
+            </span>
+            <LearningPanels key={view.id} view={view} />
+          </>
+        )}
+        <button
+          className={button}
+          disabled={pending}
+          onClick={() => void (view ? refresh() : open()).catch((e) => setError(e.message))}
+        >
+          {t('pblV3.refresh')}
+        </button>
       </header>
       {error && (
-        <div role="alert" className="mb-4 rounded border border-destructive p-3">
-          <p>{error}</p>
+        <div
+          role="alert"
+          className="flex shrink-0 items-center gap-2 border-b bg-destructive/10 p-2 text-xs"
+        >
+          <p className="flex-1">{error}</p>
           {retry.current && (
             <button
               className={button}
@@ -171,35 +181,12 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
           )}
         </div>
       )}
-      {!view && <p>{t('pblV3.loading')}</p>}
+      {!view && <p className="p-4">{t('pblV3.loading')}</p>}
       {view && (
         <>
-          <LearningPanels key={view.id} view={view} />
-          <section
-            aria-label={t('pblV3.journey.currentTask')}
-            className="mb-4 rounded-xl border bg-muted/30 p-4"
-          >
-            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              {t(`pblV3.journey.steps.${learningStep(view)}`)}
-            </p>
-            <h2 className="mt-1 text-lg font-semibold">{view.task?.title ?? view.title}</h2>
-            {view.task?.goal && view.task.goal !== view.task.title && <p>{view.task.goal}</p>}
-            <p className="mt-2 text-sm">{t(`pblV3.journey.hints.${learningStep(view)}`)}</p>
-            <p role="status" className="mt-2 text-sm font-medium">
-              {t(
-                view.busy
-                  ? 'pblV3.thinking'
-                  : view.evaluation
-                    ? 'pblV3.journey.collectResult'
-                    : view.actions.includes('next')
-                      ? 'pblV3.journey.ready'
-                      : 'pblV3.journey.followStep',
-              )}
-            </p>
-          </section>
           {!view.environment?.ready && (
-            <div className="mb-4 rounded-lg border p-4">
-              <p className="mb-3">
+            <div className="flex shrink-0 flex-wrap items-center gap-2 border-b bg-muted/30 px-3 py-2 text-xs">
+              <p className="flex-1">
                 {t(view.environmentId ? 'pblV3.environmentUnavailable' : 'pblV3.environmentNotice')}
               </p>
               <button
@@ -212,7 +199,7 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
             </div>
           )}
           {view.recovery && (
-            <p role="status" className="mb-4 rounded border p-3">
+            <p role="status" className="shrink-0 border-b px-3 py-1 text-xs">
               {t(
                 view.recovery.checkpointRevision
                   ? 'pblV3.restoredCheckpoint'
@@ -221,127 +208,13 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
               {view.recovery.progressReset && ` ${t('pblV3.restoredProgress')}`}
             </p>
           )}
-          {view.state.status === 'completed' ? (
-            <p role="status">{t('pblV3.completed')}</p>
-          ) : (
-            <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
-              <div className="min-w-0 space-y-3 rounded-xl border p-4">
-                <h3 className="font-semibold">{t('pblV3.learning')}</h3>
-                {view.roleRun &&
-                  ['failed', 'cancelled', 'missing'].includes(view.roleRun.status) && (
-                    <div role="alert" className="rounded border p-3">
-                      <p>{t(`pblV3.run.${view.roleRun.failure ?? view.roleRun.status}`)}</p>
-                      {view.roleRun.canRetry && (
-                        <button
-                          className={button}
-                          disabled={disabled}
-                          onClick={() => void command('retry')}
-                        >
-                          {t('pblV3.retryResponse')}
-                        </button>
-                      )}
-                    </div>
-                  )}
-                <LearningConversation view={view} sent={sent} />
-                {view.actions.includes('chat') && (
-                  <form
-                    onSubmit={(event) => {
-                      event.preventDefault();
-                      void command('chat', { text });
-                    }}
-                  >
-                    <label className="block text-sm" htmlFor={`pbl-chat-${sceneId}`}>
-                      {t('pblV3.message')}
-                    </label>
-                    <textarea
-                      id={`pbl-chat-${sceneId}`}
-                      className="my-2 min-h-20 w-full rounded border p-2"
-                      value={text}
-                      onChange={(e) => setText(e.target.value)}
-                    />
-                    <button
-                      className={button}
-                      disabled={disabled || !view.environmentId || !text.trim()}
-                    >
-                      {t('pblV3.send')}
-                    </button>
-                  </form>
-                )}
-                {view.decisions.map((decision) => (
-                  <fieldset key={decision.id}>
-                    <legend>{decision.prompt}</legend>
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {decision.options.map((option) => (
-                        <button
-                          key={option.id}
-                          className={button}
-                          aria-pressed={view.state.collected[
-                            view.state.position.milestoneId ?? ''
-                          ]?.decisions.some((d) => d.id === decision.id && d.chosen === option.id)}
-                          disabled={disabled}
-                          onClick={() =>
-                            void command('decide', { decisionId: decision.id, chosen: option.id })
-                          }
-                        >
-                          {option.label}
-                        </button>
-                      ))}
-                    </div>
-                  </fieldset>
-                ))}
-                {view.questions.map((question, index) => (
-                  <fieldset key={index}>
-                    <legend>{question.q}</legend>
-                    {question.options.map((option, i) => (
-                      <label className="block" key={i}>
-                        <input
-                          type="radio"
-                          name={`quiz-${index}`}
-                          checked={answers[index] === i}
-                          onChange={() =>
-                            setQuizAnswers((previous) => {
-                              const next = previous.key === answerKey ? [...previous.values] : [];
-                              next[index] = i;
-                              return { key: answerKey, values: next };
-                            })
-                          }
-                        />{' '}
-                        {option}
-                      </label>
-                    ))}
-                  </fieldset>
-                ))}
-                {view.questions.length > 0 && quiz && (
-                  <p role="status">
-                    {t(quiz.passed ? 'pblV3.quizPassed' : 'pblV3.quizRetry', {
-                      score: quiz.score,
-                      total: quiz.total,
-                    })}
-                  </p>
-                )}
-                {view.actions.includes('quiz') && (
-                  <button
-                    className={button}
-                    disabled={disabled || answers.length !== view.questions.length}
-                    onClick={() => void command('quiz', { answers })}
-                  >
-                    {t('pblV3.submitQuiz')}
-                  </button>
-                )}
-                {view.actions.includes('next') && (
-                  <button
-                    className={button}
-                    disabled={disabled}
-                    onClick={() => void command('next')}
-                  >
-                    {t('pblV3.next')}
-                  </button>
-                )}
-              </div>
+          <WorkbenchSplit
+            workspace={
               <LearningWorkbenchPanel
                 key={view.id}
                 view={view}
                 pending={pending}
+                onDirtyChange={setDirtyFiles}
                 onRefresh={refresh}
                 onSave={(path, text, hash) => command('save', { path, text, expectedHash: hash })}
                 onCheckpoint={() => command('checkpoint')}
@@ -381,8 +254,203 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
                   </>
                 )}
               </LearningWorkbenchPanel>
-            </div>
-          )}
+            }
+            assistant={
+              <section
+                aria-label={t('pblV3.learning')}
+                data-testid="pbl-assistant"
+                className="flex h-full min-h-0 flex-col bg-muted/10"
+              >
+                <header className="flex shrink-0 items-center gap-2 border-b px-3 py-2 text-xs">
+                  <MessageSquareText size={15} />
+                  <h3 className="font-semibold">{t('pblV3.learning')}</h3>
+                  <span className="ml-auto text-muted-foreground">
+                    {view.role ? t(`pblV3.roles.${view.role}`) : t('pblV3.checks')}
+                  </span>
+                </header>
+                {view.roleRun &&
+                  ['failed', 'cancelled', 'missing'].includes(view.roleRun.status) && (
+                    <div role="alert" className="rounded border p-3">
+                      <p>{t(`pblV3.run.${view.roleRun.failure ?? view.roleRun.status}`)}</p>
+                      {view.roleRun.canRetry && (
+                        <button
+                          className={button}
+                          disabled={disabled}
+                          onClick={() => void command('retry')}
+                        >
+                          {t('pblV3.retryResponse')}
+                        </button>
+                      )}
+                    </div>
+                  )}
+
+                <LearningConversation view={view} sent={sent} />
+                {dirtyFiles && (
+                  <p
+                    role="status"
+                    className="border-t px-3 py-2 text-xs text-amber-700 dark:text-amber-300"
+                  >
+                    {t('pblV3.workbench.unsaved')}
+                  </p>
+                )}
+                <div className="max-h-[40%] shrink-0 overflow-auto border-t bg-background px-3 py-2 text-sm">
+                  <section aria-label={t('pblV3.journey.currentTask')} className="mb-2 text-xs">
+                    <div className="flex items-center gap-2">
+                      <strong>{t(`pblV3.journey.steps.${learningStep(view)}`)}</strong>
+                      <span className="min-w-0 truncate text-muted-foreground">
+                        {view.task?.title ?? view.title}
+                      </span>
+                    </div>
+                    <details className="mt-1">
+                      <summary className="cursor-pointer text-muted-foreground">
+                        {t(`pblV3.journey.hints.${learningStep(view)}`)}
+                      </summary>
+                      {view.task?.goal && <p className="py-2">{view.task.goal}</p>}
+                    </details>
+                    <p role="status" className="mt-1 text-muted-foreground">
+                      {t(
+                        view.state.status === 'completed'
+                          ? 'pblV3.completed'
+                          : view.busy
+                            ? 'pblV3.thinking'
+                            : view.evaluation
+                              ? 'pblV3.journey.collectResult'
+                              : view.actions.includes('next')
+                                ? 'pblV3.journey.ready'
+                                : 'pblV3.journey.followStep',
+                      )}
+                    </p>
+                  </section>
+                  {view.stage.kind === 'produce' && view.stage.exploration && (
+                    <p className="mb-2 rounded border p-2">{view.stage.exploration.introduction}</p>
+                  )}
+                  {view.decisions.map((decision) => (
+                    <fieldset key={decision.id}>
+                      <legend>{decision.prompt}</legend>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {decision.options.map((option) => (
+                          <button
+                            key={option.id}
+                            className={button}
+                            aria-pressed={view.state.collected[
+                              view.state.position.milestoneId ?? ''
+                            ]?.decisions.some(
+                              (d) => d.id === decision.id && d.chosen === option.id,
+                            )}
+                            disabled={disabled}
+                            onClick={() =>
+                              void command('decide', { decisionId: decision.id, chosen: option.id })
+                            }
+                          >
+                            {option.label}
+                          </button>
+                        ))}
+                      </div>
+                    </fieldset>
+                  ))}
+                  {view.questions.map((question, index) => (
+                    <fieldset key={index}>
+                      <legend>{question.q}</legend>
+                      {question.options.map((option, i) => (
+                        <label className="block" key={i}>
+                          <input
+                            type="radio"
+                            name={`quiz-${index}`}
+                            checked={answers[index] === i}
+                            onChange={() =>
+                              setQuizAnswers((previous) => {
+                                const next = previous.key === answerKey ? [...previous.values] : [];
+                                next[index] = i;
+                                return { key: answerKey, values: next };
+                              })
+                            }
+                          />{' '}
+                          {option}
+                        </label>
+                      ))}
+                    </fieldset>
+                  ))}
+                  {view.questions.length > 0 && quiz && (
+                    <p role="status">
+                      {t(quiz.passed ? 'pblV3.quizPassed' : 'pblV3.quizRetry', {
+                        score: quiz.score,
+                        total: quiz.total,
+                      })}
+                    </p>
+                  )}
+                  {view.actions.includes('quiz') && (
+                    <button
+                      className={button}
+                      disabled={disabled || answers.length !== view.questions.length}
+                      onClick={() => void command('quiz', { answers })}
+                    >
+                      {t('pblV3.submitQuiz')}
+                    </button>
+                  )}
+                  {view.actions.includes('next') && (
+                    <button
+                      className={button}
+                      disabled={disabled}
+                      onClick={() => void command('next')}
+                    >
+                      {t('pblV3.next')}
+                    </button>
+                  )}
+                </div>
+                {view.actions.includes('chat') && (
+                  <form
+                    className="shrink-0 border-t bg-background p-3"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      if (!disabled && text.trim()) void command('chat', { text });
+                    }}
+                  >
+                    <label className="sr-only" htmlFor={`pbl-chat-${sceneId}`}>
+                      {t('pblV3.message')}
+                    </label>
+                    <div className="rounded-xl border bg-muted/20 p-2 focus-within:ring-1 focus-within:ring-primary">
+                      <textarea
+                        id={`pbl-chat-${sceneId}`}
+                        className="h-20 w-full resize-none bg-transparent p-1 text-sm outline-none"
+                        placeholder={t('pblV3.ide.messagePlaceholder')}
+                        value={text}
+                        onChange={(e) => setText(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                            e.preventDefault();
+                            if (!disabled && text.trim()) void command('chat', { text });
+                          }
+                        }}
+                      />
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[11px] text-muted-foreground">
+                          {t('pblV3.ide.sendHint')}
+                        </span>
+                        {view.busy ? (
+                          <button
+                            type="button"
+                            className="rounded-full bg-primary p-2 text-primary-foreground"
+                            aria-label={t('pblV3.cancel')}
+                            onClick={() => void command('cancel')}
+                          >
+                            <Square size={15} />
+                          </button>
+                        ) : (
+                          <button
+                            className="rounded-full bg-primary p-2 text-primary-foreground disabled:opacity-40"
+                            aria-label={t('pblV3.send')}
+                            disabled={disabled || !text.trim()}
+                          >
+                            <ArrowUp size={16} />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </form>
+                )}
+              </section>
+            }
+          />
         </>
       )}
     </section>

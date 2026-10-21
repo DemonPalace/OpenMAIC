@@ -39,31 +39,36 @@ export function LearningPanels({ view }: { view: LearningView }) {
   }, [open, view.id, key]);
   const button = 'rounded border px-3 py-2 text-sm disabled:opacity-40';
   return (
-    <div className="mb-4 space-y-3">
-      <nav aria-label={t('pblV3.learningPath')} className="rounded border p-3">
-        <h3 className="font-semibold">{t('pblV3.learningPath')}</h3>
-        <ol className="mt-2 flex flex-wrap gap-3">
-          {view.milestones?.map((m, i) => (
-            <li
-              key={m.id}
-              aria-current={i === view.state.position.milestoneIndex ? 'step' : undefined}
-              className={i === view.state.position.milestoneIndex ? 'font-semibold' : ''}
-            >
-              {view.state.milestones[i]?.status === 'completed' ? '✓ ' : `${i + 1}. `}
-              {m.title}
-              {m.optional ? ` (${t('pblV3.optional')})` : ''}
-              {i === view.state.position.milestoneIndex && (
-                <span className="block text-xs text-muted-foreground">
-                  {t(`pblV3.journey.steps.${learningStep(view)}`)}
-                </span>
-              )}
-            </li>
-          ))}
-        </ol>
-      </nav>
-      {view.stage.kind === 'produce' && view.stage.exploration && (
-        <p className="rounded border p-3">{view.stage.exploration.introduction}</p>
-      )}
+    <div className="contents">
+      <details className="text-xs">
+        <summary className="cursor-pointer rounded border px-2 py-2">
+          {t('pblV3.learningPath')}
+        </summary>
+        <nav
+          aria-label={t('pblV3.learningPath')}
+          className="absolute right-2 top-12 z-20 max-h-80 max-w-[90%] overflow-auto rounded border bg-background p-4 shadow-lg"
+        >
+          <h3 className="font-semibold">{t('pblV3.learningPath')}</h3>
+          <ol className="mt-2 flex flex-wrap gap-3">
+            {view.milestones?.map((m, i) => (
+              <li
+                key={m.id}
+                aria-current={i === view.state.position.milestoneIndex ? 'step' : undefined}
+                className={i === view.state.position.milestoneIndex ? 'font-semibold' : ''}
+              >
+                {view.state.milestones[i]?.status === 'completed' ? '✓ ' : `${i + 1}. `}
+                {m.title}
+                {m.optional ? ` (${t('pblV3.optional')})` : ''}
+                {i === view.state.position.milestoneIndex && (
+                  <span className="block text-xs text-muted-foreground">
+                    {t(`pblV3.journey.steps.${learningStep(view)}`)}
+                  </span>
+                )}
+              </li>
+            ))}
+          </ol>
+        </nav>
+      </details>
       <button
         className={button}
         onClick={() => {
@@ -71,10 +76,16 @@ export function LearningPanels({ view }: { view: LearningView }) {
           setOpen((v) => !v);
         }}
       >
-        {t(open ? 'pblV3.backLearning' : 'pblV3.report')}
+        {t('pblV3.report')}
       </button>
       {open && (
-        <section aria-label={t('pblV3.report')} className="space-y-3 rounded border p-4">
+        <section
+          aria-label={t('pblV3.report')}
+          className="absolute inset-2 z-30 space-y-3 overflow-auto rounded-xl border bg-background p-5 shadow-2xl"
+        >
+          <button className={button} onClick={() => setOpen(false)}>
+            {t('pblV3.backLearning')}
+          </button>
           <h3 className="font-semibold">{t('pblV3.report')}</h3>
           <p>{t('pblV3.evidenceReportNotice')}</p>
           {loading && <p role="status">{t('pblV3.loading')}</p>}

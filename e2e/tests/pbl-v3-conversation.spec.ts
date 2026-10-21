@@ -205,6 +205,7 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
   await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
   await expect(conversation.getByText('A completed explanation', { exact: true })).toHaveCount(1);
   await expect(conversation.getByText('A partial explanation', { exact: true })).toHaveCount(0);
+  await expect(page.locator('.monaco-editor .view-lines')).toContainText('Greeting plan');
   await page.getByLabel('Your message', { exact: true }).fill('My draft answer');
   await page.getByRole('button', { name: 'Expand project workspace' }).click();
   await expect(page.getByRole('button', { name: 'Return to classroom layout' })).toBeVisible();

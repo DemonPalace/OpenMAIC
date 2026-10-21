@@ -2700,6 +2700,23 @@
         "failed": "Execution failed",
         "unknown": "Execution status unknown"
       }
+    },
+    "ide": {
+      "workspace": "Code workspace",
+      "resize": "Resize workspace and assistant",
+      "resizeFiles": "Resize file explorer",
+      "toggleFiles": "Toggle file explorer",
+      "openFiles": "Open files",
+      "closeFile": "Close {{path}}",
+      "discard": "Discard unsaved changes in {{path}}?",
+      "console": "Console",
+      "terminal": "Terminal",
+      "output": "Run & output",
+      "hideConsole": "Hide console",
+      "connected": "Environment connected",
+      "disconnected": "Environment unavailable",
+      "messagePlaceholder": "Ask a question or explain your understanding…",
+      "sendHint": "Enter to send · Shift+Enter for a new line"
     }
   }
 }
