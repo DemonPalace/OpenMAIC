@@ -79,3 +79,19 @@ it('retains an explicit legacy voice binding without adding it to the picker', (
   expect(resolveAgentVoice(agent, 0, groups)?.voiceId).toBe('alloy');
   expect(groups[0].voices.map((v) => v.id)).not.toContain('alloy');
 });
+
+it('honors configured catalogue membership over conflicting built-in model metadata', () => {
+  const groups = getEnabledProvidersWithVoices({
+    'openai-tts': {
+      enabled: true,
+      isServerConfigured: true,
+      modelId: 'custom-tts',
+      voices: [...voices, { id: 'marin', name: 'Custom Marin' }],
+    },
+  });
+  const agent = {
+    id: 'teacher',
+    voiceConfig: { providerId: 'openai-tts', voiceId: 'marin' },
+  } as AgentConfig;
+  expect(resolveAgentVoice(agent, 0, groups)?.voiceId).toBe('marin');
+});

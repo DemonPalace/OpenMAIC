@@ -147,7 +147,15 @@ export function resolveAgentVoice(
       fromEnabled.configuredVoiceList &&
       !!declaredVoice &&
       voiceServesModel(choice.providerId, choice.voiceId, fromEnabled.modelGroups[0]?.modelId);
+    // Explicit provider-local membership is authoritative even when its id
+    // collides with a built-in voice restricted to a different vendor model.
+    const configuredCatalogueVoice =
+      fromEnabled.configuredVoiceList &&
+      fromEnabled.modelGroups.some((group) =>
+        group.voices.some((voice) => voice.id === choice.voiceId),
+      );
     const modelCompatible =
+      configuredCatalogueVoice ||
       configuredLegacyVoice ||
       (matchingModelGroup?.voices.some((voice) => voice.id === choice.voiceId) ??
         staleModelCanUseDefault);
