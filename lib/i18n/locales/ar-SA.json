@@ -2365,7 +2365,15 @@
       "sourceCount": "تدعم المشاريع التعليمية 256 ملف مصدر كحد أقصى.",
       "sourceSize": "يجب ألا يتجاوز إجمالي محتوى مصدر المشروع 1 MiB.",
       "commandActive": "أوقف الأوامر قيد التشغيل واحصل على نتائجها قبل قراءة لقطة لمساحة العمل أو حفظها.",
-      "terminalActive": "أغلق الطرفيات قبل قراءة لقطة لمساحة العمل أو حفظها."
+      "terminalActive": "أغلق الطرفيات قبل قراءة لقطة لمساحة العمل أو حفظها.",
+      "environmentBusy": "هناك عملية أخرى تغيّر هذه البيئة. أعد المحاولة بعد انتهائها.",
+      "environmentChanged": "تغيّرت بيئة التعلّم. حدّث الصفحة قبل المتابعة.",
+      "progressChanged": "تغيّر تقدّم التعلّم. حدّث الصفحة ثم أعد محاولة العملية.",
+      "workbenchAccessDenied": "هذه العملية غير متاحة في مرحلة التعلّم الحالية. استخدم أدوات التحكم المسموح بها في المشروع.",
+      "fileConflict": "تغيّر الملف أو أن المسار الوجهة موجود بالفعل. أعد تحميل مساحة العمل قبل المحاولة مجددًا.",
+      "stopped": "تم إيقاف مساحة العمل. أعد محاولة العملية لتشغيلها مجددًا.",
+      "invalidRequest": "الطلب غير صالح. تحقّق من القيم ثم حاول مجددًا.",
+      "unsupported": "موفّر بيئة الاختبار المعزولة الذي تم إعداده لا يدعم هذه العملية."
     },
     "settings": {
       "title": "Sandbox",
@@ -2662,6 +2670,36 @@
       "collectHint": "The result belongs to the source version that was built.",
       "reviewHint": "Read the question in the conversation and respond in your own words.",
       "completeHint": "The assistant signalled completion. Server checks and your Continue action still control progression."
+    },
+    "workbench": {
+      "unsaved": "Unsaved changes. Save or discard before switching files or running commands.",
+      "staleBuffer": "The environment or file changed. Your unsaved text is preserved; copy it before reloading.",
+      "discard": "Discard changes and reload",
+      "manageFiles": "Manage source files",
+      "newPath": "Project-relative file path",
+      "create": "Create file",
+      "rename": "Rename / move file",
+      "delete": "Delete file",
+      "confirmDelete": "Delete {{path}}? This cannot be undone without a saved checkpoint.",
+      "execution": "Run and preview",
+      "executionNotice": "Commands and terminals can change project files. Stop them before review, tests or checkpoints. New execution is disabled while waiting for a teaching review.",
+      "command": "Project command",
+      "run": "Run command",
+      "openTerminal": "Open terminal",
+      "stop": "Stop commands and close terminals",
+      "preview": "Preview port {{port}}",
+      "application": "Project application",
+      "savedAt": "Last checkpoint: {{time}}",
+      "notSaved": "No durable checkpoint yet.",
+      "commandStates": {
+        "starting": "Starting",
+        "running": "Running",
+        "exited": "Exited",
+        "cancelled": "Cancelled",
+        "timed_out": "Timed out",
+        "failed": "Execution failed",
+        "unknown": "Execution status unknown"
+      }
     }
   }
 }

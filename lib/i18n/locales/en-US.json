@@ -2365,7 +2365,15 @@
       "sourceCount": "Learning projects support at most 256 source files.",
       "sourceSize": "Project source content must not exceed 1 MiB.",
       "commandActive": "Stop running commands and collect their results before reading or saving a workspace snapshot.",
-      "terminalActive": "Close terminals before reading or saving a workspace snapshot."
+      "terminalActive": "Close terminals before reading or saving a workspace snapshot.",
+      "environmentBusy": "Another operation is changing this environment. Retry after it finishes.",
+      "environmentChanged": "The learning environment changed. Refresh before continuing.",
+      "progressChanged": "Learning progress changed. Refresh and retry the operation.",
+      "workbenchAccessDenied": "This operation is unavailable at the current learning stage. Use the permitted project controls.",
+      "fileConflict": "The file changed or the destination already exists. Reload the workspace before retrying.",
+      "stopped": "Workspace was stopped. Retry the operation to start it again.",
+      "invalidRequest": "The request is invalid. Check the values and try again.",
+      "unsupported": "This operation is not supported by the configured sandbox provider."
     },
     "settings": {
       "title": "Sandbox",
@@ -2662,6 +2670,36 @@
       "collectHint": "The result belongs to the source version that was built.",
       "reviewHint": "Read the question in the conversation and respond in your own words.",
       "completeHint": "The assistant signalled completion. Server checks and your Continue action still control progression."
+    },
+    "workbench": {
+      "unsaved": "Unsaved changes. Save or discard before switching files or running commands.",
+      "staleBuffer": "The environment or file changed. Your unsaved text is preserved; copy it before reloading.",
+      "discard": "Discard changes and reload",
+      "manageFiles": "Manage source files",
+      "newPath": "Project-relative file path",
+      "create": "Create file",
+      "rename": "Rename / move file",
+      "delete": "Delete file",
+      "confirmDelete": "Delete {{path}}? This cannot be undone without a saved checkpoint.",
+      "execution": "Run and preview",
+      "executionNotice": "Commands and terminals can change project files. Stop them before review, tests or checkpoints. New execution is disabled while waiting for a teaching review.",
+      "command": "Project command",
+      "run": "Run command",
+      "openTerminal": "Open terminal",
+      "stop": "Stop commands and close terminals",
+      "preview": "Preview port {{port}}",
+      "application": "Project application",
+      "savedAt": "Last checkpoint: {{time}}",
+      "notSaved": "No durable checkpoint yet.",
+      "commandStates": {
+        "starting": "Starting",
+        "running": "Running",
+        "exited": "Exited",
+        "cancelled": "Cancelled",
+        "timed_out": "Timed out",
+        "failed": "Execution failed",
+        "unknown": "Execution status unknown"
+      }
     }
   }
 }

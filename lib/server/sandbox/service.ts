@@ -12,7 +12,11 @@ import {
   type DesktopAction,
 } from '@/lib/sandbox/types';
 
-import { assertWorkspaceMutation, type WorkspaceMutation } from './managed-workspace';
+import {
+  assertWorkspaceMutation,
+  isLearningWorkspace,
+  type WorkspaceMutation,
+} from './managed-workspace';
 import { issuePreviewGrant, previewConfig, verifyPreviewGrant } from './preview';
 import { WORKSPACE_ROOT, workspacePath } from './workspace-archive';
 import { checkpointPolicy } from './checkpoint-policy';
@@ -413,12 +417,77 @@ export class SandboxService {
     await this.provider.writeText(row.resource_id, row.id, path, text);
   }
 
-  async startCommand(id: string, body: Record<string, unknown>) {
-    await this.mutation(id, 'command');
-    return this.store.exclusive(id, () => this.startCommandUnlocked(id, body));
+  async mutateFile(
+    id: string,
+    input: {
+      action: 'create' | 'delete' | 'rename';
+      path: string;
+      destination?: string;
+      expectedHash?: string;
+      text?: string;
+    },
+    beforeWrite: () => Promise<void>,
+  ) {
+    await this.mutation(id, 'write');
+    const path = workspacePath(input.path);
+    const destination =
+      input.destination === undefined ? undefined : workspacePath(input.destination);
+    if (
+      !['create', 'delete', 'rename'].includes(input.action) ||
+      (input.action === 'rename' && !destination)
+    )
+      throw sandboxInvalid('Choose a valid file operation.');
+    if (input.action !== 'create' && !/^[a-f0-9]{64}$/.test(input.expectedHash ?? ''))
+      throw sandboxInvalid('An observed file hash is required.');
+    if (
+      input.text !== undefined &&
+      (typeof input.text !== 'string' || Buffer.byteLength(input.text) > MAX_TEXT_FILE_BYTES)
+    )
+      throw sandboxInvalid('Text is too large.');
+    return this.store.exclusive(id, async () => {
+      const row = await this.running(id);
+      await this.assertWorkspaceIdleUnlocked(row);
+      if (!this.provider.mutateFile)
+        throw new SandboxError(
+          'SANDBOX_UNSUPPORTED',
+          422,
+          'File management is unavailable for this provider.',
+        );
+      const files = await this.provider.listWorkspace(row.resource_id!, row.id);
+      const existing = files.some((f) => f.path === path);
+      if (input.action === 'create' ? existing : !existing)
+        throw sandboxConflict(
+          'The file list changed. Reload the workspace.',
+          'WORKSPACE_FILE_CONFLICT',
+        );
+      if (destination && files.some((f) => f.path === destination))
+        throw sandboxConflict('The destination already exists.', 'WORKSPACE_FILE_CONFLICT');
+      if (
+        input.action !== 'create' &&
+        createHash('sha256')
+          .update(await this.readText(id, path))
+          .digest('hex') !== input.expectedHash
+      )
+        throw sandboxConflict(
+          'The file changed. Reload before continuing.',
+          'WORKSPACE_FILE_CONFLICT',
+        );
+      await beforeWrite();
+      await this.provider.mutateFile(row.resource_id!, row.id, { ...input, path, destination });
+      return { changed: true };
+    });
+  }
+  /** Observed Stop generation, also used for preview revocation; safe to expose to the owner. */
+  async workspaceEpoch(id: string) {
+    return (await this.binding(id)).preview_epoch;
   }
 
-  private async startCommandUnlocked(id: string, body: Record<string, unknown>) {
+  async startCommand(id: string, body: Record<string, unknown>, epoch?: number) {
+    await this.mutation(id, 'command');
+    return this.store.exclusive(id, () => this.startCommandUnlocked(id, body, epoch));
+  }
+
+  private async startCommandUnlocked(id: string, body: Record<string, unknown>, epoch?: number) {
     assertSandboxId(body.requestId);
     if (
       typeof body.command !== 'string' ||
@@ -446,7 +515,7 @@ export class SandboxService {
       timeoutMs,
     };
     const hash = createHash('sha256').update(JSON.stringify(input)).digest('hex');
-    const created = await this.store.reserveCommand(row, input.id, hash);
+    const created = await this.store.reserveCommand(row, input.id, hash, epoch);
     if (created) {
       try {
         await this.provider.startCommand(row.resource_id, row.id, input);
@@ -554,16 +623,16 @@ export class SandboxService {
     return { cols, rows };
   }
 
-  async createTerminal(id: string, body: Record<string, unknown>) {
+  async createTerminal(id: string, body: Record<string, unknown>, epoch?: number) {
     await this.mutation(id, 'terminal');
-    return this.store.exclusive(id, () => this.createTerminalUnlocked(id, body));
+    return this.store.exclusive(id, () => this.createTerminalUnlocked(id, body, epoch));
   }
 
-  private async createTerminalUnlocked(id: string, body: Record<string, unknown>) {
+  private async createTerminalUnlocked(id: string, body: Record<string, unknown>, epoch?: number) {
     assertSandboxId(body.requestId);
     const { cols, rows } = this.terminalSize(body.cols ?? 80, body.rows ?? 24);
     const env = await this.running(id);
-    const reserved = await this.store.reserveTerminal(env, body.requestId);
+    const reserved = await this.store.reserveTerminal(env, body.requestId, epoch);
     if (reserved.created) {
       try {
         const pid = await this.provider.createTerminal(
@@ -753,7 +822,7 @@ export class SandboxService {
     });
   }
 
-  async preview(id: string, port: unknown) {
+  async preview(id: string, port: unknown, epoch?: number) {
     await this.mutation(id, 'preview');
     if (
       !Number.isInteger(port) ||
@@ -764,11 +833,14 @@ export class SandboxService {
       throw sandboxInvalid('Preview port must be 1024–65535, excluding the runtime control port.');
     previewConfig();
     const row = await this.running(id);
+    if (epoch !== undefined && row.preview_epoch !== epoch)
+      throw sandboxConflict('Workspace was stopped. Retry the operation.', 'WORKSPACE_STOPPED');
     return issuePreviewGrant({
       ownerId: this.ownerId,
       environmentId: row.id,
       port: port as number,
       epoch: row.preview_epoch,
+      ...(isLearningWorkspace(row.workspace_id) ? { studyId: row.workspace_id.slice(4) } : {}),
     });
   }
 
@@ -784,7 +856,10 @@ export class SandboxService {
     const config = await resolvedSandboxConfig();
     const store = await SandboxStore.open();
     const row = await store.get(grant.ownerId, grant.environmentId);
-    assertWorkspaceMutation(grant.ownerId, row.workspace_id, row.id, 'preview');
+    if (grant.studyId && row.workspace_id === `pbl-${grant.studyId}`) {
+      const { authorizeLearningPreview } = await import('@/lib/server/pbl-v3/workbench');
+      await authorizeLearningPreview(grant.ownerId, grant.studyId, row.id, grant.port);
+    } else assertWorkspaceMutation(grant.ownerId, row.workspace_id, row.id, 'preview');
     if (
       row.state !== 'running' ||
       !row.workspace_ready ||

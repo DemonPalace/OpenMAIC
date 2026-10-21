@@ -1,5 +1,8 @@
 # PBL v3 learning runtime
 
+For the dedicated classroom file, execution and recovery controls, see
+[Learning workbench and recovery](WORKBENCH.md).
+
 This slice opens an installed programming project in the normal classroom, runs
 four teaching roles in the existing Agent runner, and persists learning progress
 in PostgreSQL. It does not enable generated v3 projects.
@@ -47,9 +50,9 @@ server's progress/actions. Quiz answer drafts are scoped to their milestone/stag
 Reports summarize retained test/quiz/reflection results and link to historical
 evidence without claiming that old test results certify subsequently edited files.
 
-The companion workbench owns file management, terminal, preview and recovery
-controls. This PR retains the basic file editor for standalone learning validation;
-it does not introduce a second editor or reproduce the old platform shell.
+The merged classroom workbench supplies file management, terminal, preview and
+recovery controls. This teaching panel composes that workbench through its existing
+callbacks; it does not introduce a second editor or reproduce the old platform shell.
 
 ![Classroom teaching conversation — local API fixtures](screenshots/conversation.png)
 
@@ -175,7 +178,7 @@ no tables, workers, provider, or configuration switches.
   generic controls until the dedicated teaching-aware workbench is implemented.
 - **Recovery handoff stays small.** Keep the existing durable allocation ID,
   checkpoint revision and `progressReset` result. Recovery compares the same source
-  fingerprints and clears stale active-milestone evidence. Cross-milestone recovery uses checkpoint position metadata and revalidates restored content; workspace stop/save/restart controls are delivered in the companion workbench change.
+  fingerprints and clears stale active-milestone evidence. Cross-milestone recovery uses checkpoint position metadata and revalidates restored content; workspace stop/save/restart controls are delivered by the merged workbench.
 
 ## Complete learning experience
 
@@ -203,12 +206,11 @@ question, while the server enforces fresh replies, artifact versions and stage
 boundaries. Retries and assistant messages do not create student feedback.
 
 The source set, stage locks, writer-idle checks and ordinary sandbox restrictions
-remain the shared contract above. The dedicated workbench separately supplies file
-management, shell, terminal, preview and checkpoint UI. The shared workspace
-contract has merged into `integration/shared-sandbox`, which is now the base for
-this learning work. The companion workbench remains a separate PR. Neither feature
-PR requires the other to merge first; repeat combined checks against both final
-heads before accepting the complete classroom journey.
+remain the shared contract above. The merged workbench supplies file management, shell, terminal, preview and
+checkpoint UI. Both the shared workspace contract and workbench are now in
+`integration/shared-sandbox`. This learning change retains their access, version and
+recovery boundaries while adding the teaching journey. Repeat combined real-provider
+checks before accepting the complete classroom journey.
 
 ### Installed public samples
 
@@ -265,6 +267,6 @@ adapter or browser-reported course-completion shortcut is added. Course content
 assembly remains separate from the seven-step project learning flow.
 
 The #1951 follow-ups for evaluator false passes and completion-before-validation are
-addressed here. Multi-learner execution pressure and dedicated workspace controls
-belong to the companion workbench change. Shared no-op saves, mutation scope and
-source policies remain supplied by the parent workspace contract.
+addressed here. Dedicated workspace controls are provided by the merged workbench;
+real-provider concurrency and capacity remain acceptance work. Shared no-op saves,
+mutation scope and source policies remain supplied by the parent workspace contract.

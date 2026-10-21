@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useI18n } from '@/lib/hooks/use-i18n';
 import { useStageStore } from '@/lib/store/stage';
 import type { LearningView } from '@/lib/pbl/v3/types';
+import { LearningWorkbenchPanel } from './workbench-panel';
 import { LearningPanels } from './learning-panels';
 import { LearningConversation } from './conversation';
 import { WorkspaceFrame } from './workspace-frame';
@@ -32,17 +33,13 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
     [error, setError] = useState(''),
     [pending, setPending] = useState(false);
   const [sent, setSent] = useState(0);
-  const [text, setText] = useState(''),
-    [file, setFile] = useState('PLAN.md'),
-    [editor, setEditor] = useState(''),
-    [fileHash, setFileHash] = useState('');
+  const [text, setText] = useState('');
   const [quizAnswers, setQuizAnswers] = useState<{ key: string; values: number[] }>({
     key: '',
     values: [],
   });
   const answerKey = `${view?.id}:${view?.state.position.milestoneId}:${view?.state.position.stageIndex}`;
   const answers = quizAnswers.key === answerKey ? quizAnswers.values : [];
-  const fileRequest = useRef(0);
   const retry = useRef<{
     type: string;
     payload: Record<string, unknown>;
@@ -95,7 +92,7 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
     return () => clearInterval(timer);
   }, [view?.environmentId, view?.state.status, refresh]);
   const command = async (type: string, payload: Record<string, unknown> = {}, repeat = false) => {
-    if (!view) return;
+    if (!view) return false;
     setPending(true);
     setError('');
     const request =
@@ -117,33 +114,15 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
       updateView(result.view);
       retry.current = null;
       if (request.type === 'chat') setText('');
-      if (request.type === 'save') await loadFile();
+      return true;
     } catch (e) {
       setError((e as Error).message);
       await refresh().catch(() => {});
+      return false;
     } finally {
       setPending(false);
     }
   };
-  const loadFile = async () => {
-    if (!view) return;
-    const request = ++fileRequest.current;
-    setFileHash('');
-    const data = await pblRequest<{ text: string; hash: string }>(
-      `/api/pbl/v3?id=${encodeURIComponent(view.id)}&file=${encodeURIComponent(file)}`,
-    );
-    if (request !== fileRequest.current) return;
-    setEditor(data.text);
-    setFileHash(data.hash);
-  };
-  useEffect(() => {
-    setFileHash('');
-    if (view?.environmentId && view.environment?.ready)
-      void loadFile().catch((e) => setError(e.message));
-    return () => {
-      fileRequest.current += 1;
-    };
-  }, [file, view?.environmentId, view?.environment?.ready]); // eslint-disable-line react-hooks/exhaustive-deps
   const quiz = view?.state.collected[view.state.position.milestoneId ?? '']?.quiz;
   const disabled = pending || view?.busy || !view?.environment?.ready;
   const button =
@@ -359,77 +338,34 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
                   </button>
                 )}
               </div>
-              <div className="min-w-0 space-y-3 rounded-xl border p-4">
-                <h3 className="font-semibold">{t('pblV3.files')}</h3>
-                <div className="flex flex-wrap gap-2">
-                  <select
-                    aria-label={t('pblV3.files')}
-                    className="rounded border p-2"
-                    value={file}
-                    disabled={pending}
-                    onChange={(e) => {
-                      fileRequest.current += 1;
-                      setFileHash('');
-                      setEditor('');
-                      setFile(e.target.value);
-                    }}
-                  >
-                    {view.files.map((path) => (
-                      <option key={path}>{path}</option>
-                    ))}
-                  </select>
+              <LearningWorkbenchPanel
+                key={view.id}
+                view={view}
+                pending={pending}
+                onRefresh={refresh}
+                onSave={(path, text, hash) => command('save', { path, text, expectedHash: hash })}
+                onCheckpoint={() => command('checkpoint')}
+              >
+                {view.actions.includes('compile') && (
                   <button
                     className={button}
-                    disabled={!view.environmentId || pending}
-                    onClick={() => void loadFile().catch((e) => setError(e.message))}
+                    disabled={disabled || !!view.evaluation}
+                    onClick={() => void command('compile')}
                   >
-                    {t('pblV3.reloadFile')}
+                    {t('pblV3.build')}
                   </button>
-                </div>
-                <textarea
-                  aria-label={t('pblV3.editor')}
-                  spellCheck={false}
-                  className="min-h-64 w-full rounded border bg-muted/30 p-3 font-mono text-sm"
-                  value={editor}
-                  readOnly={!fileHash || !view.actions.includes('edit') || disabled}
-                  onChange={(e) => setEditor(e.target.value)}
-                />
-                <div className="flex flex-wrap gap-2">
+                )}
+                {view.actions.includes('evaluate') && (
                   <button
                     className={button}
-                    disabled={disabled || !fileHash || !view.actions.includes('edit')}
-                    onClick={() =>
-                      void command('save', { path: file, text: editor, expectedHash: fileHash })
-                    }
+                    disabled={disabled || !!view.evaluation}
+                    onClick={() => void command('evaluate')}
                   >
-                    {t('pblV3.saveFile')}
+                    {t('pblV3.runTests')}
                   </button>
-                  <button
-                    className={button}
-                    disabled={disabled || !view.environmentId}
-                    onClick={() => void command('checkpoint')}
-                  >
-                    {t('pblV3.checkpoint')}
-                  </button>
-                  {view.actions.includes('compile') && (
-                    <button
-                      className={button}
-                      disabled={disabled || !!view.evaluation}
-                      onClick={() => void command('compile')}
-                    >
-                      {t('pblV3.build')}
-                    </button>
-                  )}
-                  {view.actions.includes('evaluate') && (
-                    <button
-                      className={button}
-                      disabled={disabled || !!view.evaluation}
-                      onClick={() => void command('evaluate')}
-                    >
-                      {t('pblV3.runTests')}
-                    </button>
-                  )}
-                  {view.evaluation && (
+                )}
+                {view.evaluation && (
+                  <>
                     <button
                       className={button}
                       disabled={disabled}
@@ -437,26 +373,14 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
                     >
                       {t('pblV3.collect')}
                     </button>
-                  )}
-                </div>
-                <p className="text-xs text-muted-foreground">{t('pblV3.saveNotice')}</p>
-                {view.evaluation && (
-                  <pre className="max-h-48 overflow-auto whitespace-pre-wrap text-sm">
-                    {view.evaluation.state}
-                    {'\n'}
-                    {view.evaluation.stdout}
-                    {'\n'}
-                    {view.evaluation.stderr}
-                  </pre>
+                    <pre>
+                      {view.evaluation.state}
+                      {view.evaluation.stdout}
+                      {view.evaluation.stderr}
+                    </pre>
+                  </>
                 )}
-                {view.state.collected[view.state.position.milestoneId ?? '']?.tests && (
-                  <pre className="max-h-48 overflow-auto whitespace-pre-wrap text-sm">
-                    {view.state.collected[view.state.position.milestoneId!]!.tests!.status}
-                    {'\n'}
-                    {view.state.collected[view.state.position.milestoneId!]!.tests!.publicFeedback}
-                  </pre>
-                )}
-              </div>
+              </LearningWorkbenchPanel>
             </div>
           )}
         </>

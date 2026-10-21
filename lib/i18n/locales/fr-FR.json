@@ -2365,7 +2365,15 @@
       "sourceCount": "Les projets pédagogiques acceptent au maximum 256 fichiers sources.",
       "sourceSize": "Le contenu source du projet ne doit pas dépasser 1 MiB au total.",
       "commandActive": "Arrêtez les commandes en cours et récupérez leurs résultats avant de lire ou d’enregistrer un instantané de l’espace de travail.",
-      "terminalActive": "Fermez les terminaux avant de lire ou d’enregistrer un instantané de l’espace de travail."
+      "terminalActive": "Fermez les terminaux avant de lire ou d’enregistrer un instantané de l’espace de travail.",
+      "environmentBusy": "Une autre opération modifie cet environnement. Réessayez une fois terminée.",
+      "environmentChanged": "L’environnement d’apprentissage a changé. Actualisez la page avant de continuer.",
+      "progressChanged": "La progression de l’apprentissage a changé. Actualisez la page et réessayez l’opération.",
+      "workbenchAccessDenied": "Cette opération n’est pas disponible à cette étape de l’apprentissage. Utilisez les commandes du projet autorisées.",
+      "fileConflict": "Le fichier a été modifié ou la destination existe déjà. Rechargez l’espace de travail avant de réessayer.",
+      "stopped": "L’espace de travail a été arrêté. Réessayez l’opération pour le redémarrer.",
+      "invalidRequest": "La requête n’est pas valide. Vérifiez les valeurs et réessayez.",
+      "unsupported": "Le fournisseur de sandbox configuré ne prend pas en charge cette opération."
     },
     "settings": {
       "title": "Sandbox",
@@ -2662,6 +2670,36 @@
       "collectHint": "The result belongs to the source version that was built.",
       "reviewHint": "Read the question in the conversation and respond in your own words.",
       "completeHint": "The assistant signalled completion. Server checks and your Continue action still control progression."
+    },
+    "workbench": {
+      "unsaved": "Unsaved changes. Save or discard before switching files or running commands.",
+      "staleBuffer": "The environment or file changed. Your unsaved text is preserved; copy it before reloading.",
+      "discard": "Discard changes and reload",
+      "manageFiles": "Manage source files",
+      "newPath": "Project-relative file path",
+      "create": "Create file",
+      "rename": "Rename / move file",
+      "delete": "Delete file",
+      "confirmDelete": "Delete {{path}}? This cannot be undone without a saved checkpoint.",
+      "execution": "Run and preview",
+      "executionNotice": "Commands and terminals can change project files. Stop them before review, tests or checkpoints. New execution is disabled while waiting for a teaching review.",
+      "command": "Project command",
+      "run": "Run command",
+      "openTerminal": "Open terminal",
+      "stop": "Stop commands and close terminals",
+      "preview": "Preview port {{port}}",
+      "application": "Project application",
+      "savedAt": "Last checkpoint: {{time}}",
+      "notSaved": "No durable checkpoint yet.",
+      "commandStates": {
+        "starting": "Starting",
+        "running": "Running",
+        "exited": "Exited",
+        "cancelled": "Cancelled",
+        "timed_out": "Timed out",
+        "failed": "Execution failed",
+        "unknown": "Execution status unknown"
+      }
     }
   }
 }

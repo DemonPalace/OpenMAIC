@@ -2365,7 +2365,15 @@
       "sourceCount": "Учебные проекты поддерживают не более 256 исходных файлов.",
       "sourceSize": "Общий объём исходного содержимого проекта не должен превышать 1 MiB.",
       "commandActive": "Остановите выполняющиеся команды и получите их результаты перед чтением или сохранением снимка рабочего пространства.",
-      "terminalActive": "Закройте терминалы перед чтением или сохранением снимка рабочего пространства."
+      "terminalActive": "Закройте терминалы перед чтением или сохранением снимка рабочего пространства.",
+      "environmentBusy": "Другая операция изменяет эту среду. Повторите попытку после её завершения.",
+      "environmentChanged": "Учебная среда изменилась. Обновите страницу, прежде чем продолжить.",
+      "progressChanged": "Учебный прогресс изменился. Обновите страницу и повторите операцию.",
+      "workbenchAccessDenied": "Эта операция недоступна на текущем этапе обучения. Используйте разрешённые средства управления проектом.",
+      "fileConflict": "Файл изменён или целевой путь уже существует. Перезагрузите рабочую область и повторите попытку.",
+      "stopped": "Рабочая область остановлена. Повторите операцию, чтобы запустить её снова.",
+      "invalidRequest": "Некорректный запрос. Проверьте введённые значения и повторите попытку.",
+      "unsupported": "Настроенный поставщик песочницы не поддерживает эту операцию."
     },
     "settings": {
       "title": "Sandbox",
@@ -2662,6 +2670,36 @@
       "collectHint": "The result belongs to the source version that was built.",
       "reviewHint": "Read the question in the conversation and respond in your own words.",
       "completeHint": "The assistant signalled completion. Server checks and your Continue action still control progression."
+    },
+    "workbench": {
+      "unsaved": "Unsaved changes. Save or discard before switching files or running commands.",
+      "staleBuffer": "The environment or file changed. Your unsaved text is preserved; copy it before reloading.",
+      "discard": "Discard changes and reload",
+      "manageFiles": "Manage source files",
+      "newPath": "Project-relative file path",
+      "create": "Create file",
+      "rename": "Rename / move file",
+      "delete": "Delete file",
+      "confirmDelete": "Delete {{path}}? This cannot be undone without a saved checkpoint.",
+      "execution": "Run and preview",
+      "executionNotice": "Commands and terminals can change project files. Stop them before review, tests or checkpoints. New execution is disabled while waiting for a teaching review.",
+      "command": "Project command",
+      "run": "Run command",
+      "openTerminal": "Open terminal",
+      "stop": "Stop commands and close terminals",
+      "preview": "Preview port {{port}}",
+      "application": "Project application",
+      "savedAt": "Last checkpoint: {{time}}",
+      "notSaved": "No durable checkpoint yet.",
+      "commandStates": {
+        "starting": "Starting",
+        "running": "Running",
+        "exited": "Exited",
+        "cancelled": "Cancelled",
+        "timed_out": "Timed out",
+        "failed": "Execution failed",
+        "unknown": "Execution status unknown"
+      }
     }
   }
 }

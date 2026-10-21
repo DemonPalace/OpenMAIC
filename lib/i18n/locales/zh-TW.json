@@ -2365,7 +2365,15 @@
       "sourceCount": "學習專案最多支援 256 個原始碼檔案。",
       "sourceSize": "專案原始碼內容總量不能超過 1 MiB。",
       "commandActive": "請先停止執行中的命令並取得結果，再讀取或儲存工作區快照。",
-      "terminalActive": "請先關閉終端機，再讀取或儲存工作區快照。"
+      "terminalActive": "請先關閉終端機，再讀取或儲存工作區快照。",
+      "environmentBusy": "另一個操作正在修改此環境，請在其完成後重試。",
+      "environmentChanged": "學習環境已更換，請重新整理後繼續。",
+      "progressChanged": "學習進度已變更，請重新整理後重試此操作。",
+      "workbenchAccessDenied": "目前的學習階段不允許此操作，請使用可用的專案操作功能。",
+      "fileConflict": "檔案已變更或目標路徑已存在，請重新載入工作區後再試。",
+      "stopped": "工作區已停止，請重試此操作以重新啟動。",
+      "invalidRequest": "請求無效，請檢查輸入內容後再試。",
+      "unsupported": "目前設定的沙盒服務供應商不支援此操作。"
     },
     "settings": {
       "title": "沙盒",
@@ -2662,6 +2670,36 @@
       "collectHint": "The result belongs to the source version that was built.",
       "reviewHint": "Read the question in the conversation and respond in your own words.",
       "completeHint": "The assistant signalled completion. Server checks and your Continue action still control progression."
+    },
+    "workbench": {
+      "unsaved": "Unsaved changes. Save or discard before switching files or running commands.",
+      "staleBuffer": "The environment or file changed. Your unsaved text is preserved; copy it before reloading.",
+      "discard": "Discard changes and reload",
+      "manageFiles": "Manage source files",
+      "newPath": "Project-relative file path",
+      "create": "Create file",
+      "rename": "Rename / move file",
+      "delete": "Delete file",
+      "confirmDelete": "Delete {{path}}? This cannot be undone without a saved checkpoint.",
+      "execution": "Run and preview",
+      "executionNotice": "Commands and terminals can change project files. Stop them before review, tests or checkpoints. New execution is disabled while waiting for a teaching review.",
+      "command": "Project command",
+      "run": "Run command",
+      "openTerminal": "Open terminal",
+      "stop": "Stop commands and close terminals",
+      "preview": "Preview port {{port}}",
+      "application": "Project application",
+      "savedAt": "Last checkpoint: {{time}}",
+      "notSaved": "No durable checkpoint yet.",
+      "commandStates": {
+        "starting": "Starting",
+        "running": "Running",
+        "exited": "Exited",
+        "cancelled": "Cancelled",
+        "timed_out": "Timed out",
+        "failed": "Execution failed",
+        "unknown": "Execution status unknown"
+      }
     }
   }
 }
