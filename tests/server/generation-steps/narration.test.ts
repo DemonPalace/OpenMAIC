@@ -77,6 +77,18 @@ describe('narration step', () => {
     }
   });
 
+  it('uses the configured catalogue fallback without an explicit default', async () => {
+    await synthesizeNarration(
+      {
+        text: 'Hello',
+        audioId: 'catalogue-default-test',
+        connection: { ...connection, voices: [{ id: 'vivian', name: 'Vivian' }] },
+      },
+      { log: testLogger() },
+    );
+    expect(mocks.generateTTS.mock.calls.at(-1)?.[0].voice).toBe('vivian');
+  });
+
   it('speaks with the requested voice through the slot provider and records the usage', async () => {
     const trace: { providerId?: string; voice?: string } = {};
     const result = await synthesizeNarration(

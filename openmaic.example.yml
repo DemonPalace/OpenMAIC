@@ -59,6 +59,7 @@ providers:
 
   # An OpenAI-compatible TTS service can override its displayed voice list.
   # Without voices/options.defaultVoice the built-in behavior is unchanged.
+  # With voices alone, the first entry becomes the default voice.
   # custom-tts:
   #   preset: openai-tts
   #   baseUrl: https://your-provider.example/v1

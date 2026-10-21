@@ -161,3 +161,27 @@ it('does not inherit built-in gender when a replacement catalogue omits it', () 
   });
   expect(result[0]).not.toHaveProperty('gender');
 });
+
+it('uses the first configured voice when no separate default is provided', async () => {
+  const { defaultVoiceFor } = await import('@/lib/audio/tts-selection');
+  const { configuredDefaultVoice } = await import('@/lib/audio/provider-default-voice');
+  const { slotVoice } = await import('@/lib/server/generation/run/narration-voice');
+  expect(defaultVoiceFor('openai-tts', 'custom-tts', undefined, voices)).toBe('vivian');
+  expect(configuredDefaultVoice(undefined, voices)).toBe('vivian');
+  const target = {
+    providerId: 'openai-tts' as const,
+    modelId: 'custom-tts',
+    connection: {
+      providerId: 'openai-tts',
+      managed: true,
+      userEndpoint: false,
+      origin: 'configuration' as const,
+      voices,
+    },
+  };
+  expect(slotVoice(target, undefined).voice).toBe('vivian');
+  expect(defaultVoiceFor('openai-tts', 'custom-tts', { defaultVoice: 'serena' }, voices)).toBe(
+    'serena',
+  );
+  expect(defaultVoiceFor('openai-tts', 'custom-tts')).toBe('alloy');
+});

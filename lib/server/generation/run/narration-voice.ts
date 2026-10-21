@@ -69,8 +69,9 @@ function defaultVoiceFor(
   providerId: string,
   modelId?: string,
   options?: Record<string, unknown>,
+  configuredVoices?: readonly { id: string }[],
 ): string {
-  const configured = configuredDefaultVoice(options);
+  const configured = configuredDefaultVoice(options, configuredVoices);
   if (configured) return configured;
   const preferred = DEFAULT_TTS_VOICES[providerId as BuiltInTTSProviderId] || 'default';
   if (voiceServesModel(providerId, preferred, modelId)) return preferred;
@@ -95,7 +96,12 @@ export function slotVoice(
   return {
     voice: usable
       ? preference!.voiceId
-      : defaultVoiceFor(target.providerId, target.modelId, target.connection.options),
+      : defaultVoiceFor(
+          target.providerId,
+          target.modelId,
+          target.connection.options,
+          target.connection.voices,
+        ),
     speed: preference?.speed ?? 1,
   };
 }

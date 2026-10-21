@@ -74,8 +74,9 @@ export function defaultVoiceFor(
   providerId: string,
   modelId?: string,
   options?: Record<string, unknown>,
+  configuredVoices?: readonly { id: string }[],
 ): string {
-  const configured = configuredDefaultVoice(options);
+  const configured = configuredDefaultVoice(options, configuredVoices);
   if (configured) return configured;
   const preferred = DEFAULT_TTS_VOICES[providerId as BuiltInTTSProviderId] || 'default';
   if (voiceServesModel(providerId, preferred, modelId)) return preferred;
@@ -117,7 +118,9 @@ export function ttsSelection(
   return {
     providerId,
     ...(target.modelId ? { modelId: target.modelId } : {}),
-    voice: usable ? preference.voice : defaultVoiceFor(providerId, model, target.options),
+    voice: usable
+      ? preference.voice
+      : defaultVoiceFor(providerId, model, target.options, target.voices),
     speed: preference.speed,
     providersConfig: slotTTSProvidersConfig(target),
   };

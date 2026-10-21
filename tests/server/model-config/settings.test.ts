@@ -871,3 +871,21 @@ it('also exposes imported workspace defaults for inactive provider previews', as
   expect(defaultVoiceFor('openai-tts', undefined, provider.options)).toBe('serena');
   expect(JSON.stringify(provider)).not.toContain('workspace-secret');
 });
+
+it('passes an inactive provider catalogue to previews when no default is configured', async () => {
+  deployment({
+    providers: {
+      inactive: {
+        preset: 'openai-tts',
+        apiKey: 'secret',
+        models: ['custom-tts'],
+        voices: [{ id: 'vivian', name: 'Vivian' }],
+      },
+    },
+  });
+  const provider = modelSettingsView(null).providers.find((p) => p.id === 'inactive')!;
+  const { defaultVoiceFor } = await import('@/lib/audio/tts-selection');
+  expect(defaultVoiceFor('openai-tts', 'custom-tts', provider.options, provider.voices)).toBe(
+    'vivian',
+  );
+});

@@ -64,7 +64,7 @@ export async function synthesizeNarration(
   const ttsVoice =
     requestedVoice && (!requestedProviderId || requestedProviderId === ttsProviderId)
       ? requestedVoice
-      : configuredDefaultVoice(connection.options) ||
+      : configuredDefaultVoice(connection.options, connection.voices) ||
         DEFAULT_TTS_VOICES[ttsProviderId as keyof typeof DEFAULT_TTS_VOICES] ||
         requestedVoice;
   trace.voice = ttsVoice;
