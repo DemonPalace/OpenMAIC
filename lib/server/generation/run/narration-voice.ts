@@ -12,6 +12,7 @@ import {
   isQwenCloneVoice,
   resolveTTSModelForVoice,
   voiceServesModel,
+  voiceAllowedByConfiguredCatalogue,
 } from '@/lib/audio/constants';
 import type { BuiltInTTSProviderId, TTSProviderId, ConfiguredTTSVoice } from '@/lib/audio/types';
 import { isTTSProviderEnabled } from '@/lib/audio/provider-enablement';
@@ -87,8 +88,11 @@ export function slotVoice(
   const usable =
     preference?.providerId === target.providerId &&
     !!preference.voiceId &&
-    (!target.connection.voices ||
-      target.connection.voices.some((voice) => voice.id === preference.voiceId)) &&
+    voiceAllowedByConfiguredCatalogue(
+      target.providerId,
+      preference.voiceId,
+      target.connection.voices,
+    ) &&
     voiceServesModel(
       target.providerId,
       preference.voiceId,

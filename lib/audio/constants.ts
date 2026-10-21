@@ -38,6 +38,7 @@ import type {
 } from './types';
 import { isCustomTTSProvider } from './types';
 import {
+  getVoxCPMProfileIdFromVoiceId,
   VOXCPM_AUTO_VOICE,
   VOXCPM_AUTO_VOICE_ID,
   VOXCPM_TTS_PROVIDER_ID,
@@ -127,6 +128,17 @@ export function resolveTTSModelForVoice(
   return requestedModelId && !isQwenVoiceCloneModel(requestedModelId)
     ? requestedModelId
     : TTS_PROVIDERS['qwen-tts'].defaultModelId;
+}
+
+/** Replacement catalogues restrict presets while retaining provider-specific user voices. */
+export function voiceAllowedByConfiguredCatalogue(
+  providerId: string,
+  voiceId: string,
+  configuredVoices?: readonly { id: string }[],
+): boolean {
+  if (!configuredVoices || configuredVoices.some((voice) => voice.id === voiceId)) return true;
+  if (providerId === 'qwen-tts') return isQwenCloneVoice(voiceId, configuredVoices);
+  return providerId === VOXCPM_TTS_PROVIDER_ID && !!getVoxCPMProfileIdFromVoiceId(voiceId);
 }
 
 /**

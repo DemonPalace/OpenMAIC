@@ -7,7 +7,12 @@ import { configuredDefaultVoice } from '@/lib/audio/provider-default-voice';
  * as that map: the one provider, available through the server, and every
  * other provider unavailable.
  */
-import { DEFAULT_TTS_VOICES, TTS_PROVIDERS, voiceServesModel } from '@/lib/audio/constants';
+import {
+  DEFAULT_TTS_VOICES,
+  TTS_PROVIDERS,
+  voiceAllowedByConfiguredCatalogue,
+  voiceServesModel,
+} from '@/lib/audio/constants';
 import { normalizeVoxCPMBackend } from '@/lib/audio/voxcpm';
 import type { BuiltInTTSProviderId, TTSProviderId, ConfiguredTTSVoice } from '@/lib/audio/types';
 import {
@@ -114,7 +119,7 @@ export function ttsSelection(
   const usable =
     preference.providerId === providerId &&
     !!preference.voice &&
-    (!target.voices || target.voices.some((voice) => voice.id === preference.voice)) &&
+    voiceAllowedByConfiguredCatalogue(providerId, preference.voice, target.voices) &&
     voiceServesModel(providerId, preference.voice, model, target.voices);
   return {
     providerId,

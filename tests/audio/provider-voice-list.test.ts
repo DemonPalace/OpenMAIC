@@ -12,13 +12,13 @@ const voices = [
 ];
 const config = (list?: unknown) => ({
   providers: {
-    cogevol: {
+    'custom-tts': {
       preset: 'openai-tts',
       models: ['qwen3-tts'],
       ...(list === undefined ? {} : { voices: list }),
     },
   },
-  slots: { tts: 'cogevol:qwen3-tts' },
+  slots: { tts: 'custom-tts:qwen3-tts' },
 });
 it('passes provider-local voices through YAML, slot resolution and the browser map', () => {
   const parsed = parseModelConfig(JSON.stringify(config(voices)));
@@ -289,4 +289,113 @@ it('drops stale global preferences outside a replacement catalogue but retains c
       unavailable: new Set(),
     })?.voice.voiceId,
   ).toBe('alloy');
+});
+
+it('rejects voice catalogues on non-TTS presets with a provider path', () => {
+  expect(() =>
+    parseModelConfig(
+      JSON.stringify({
+        providers: {
+          chat: { preset: 'openai', voices },
+        },
+      }),
+    ),
+  ).toThrow(/providers.chat.voices.*TTS/);
+});
+
+it('rejects a default outside the configured catalogue', () => {
+  const input = config(voices);
+  Object.assign(input.providers['custom-tts'], { options: { defaultVoice: 'alloy' } });
+  expect(() => parseModelConfig(JSON.stringify(input))).toThrow(
+    /providers.custom-tts.options.defaultVoice/,
+  );
+});
+
+it('keeps Qwen user clones in their clone model group with a replacement catalogue', () => {
+  const groups = getEnabledProvidersWithVoices(
+    {
+      'qwen-tts': { enabled: true, isServerConfigured: true, modelId: 'custom-qwen', voices },
+    },
+    [{ id: 'enrolled-clone', providerId: 'qwen-tts', name: 'My clone', kind: 'clone' }],
+  );
+  expect(groups[0].voices.map((v) => v.id)).toEqual(['vivian', 'serena', 'enrolled-clone']);
+  const cloneGroup = groups[0].modelGroups.find((g) =>
+    g.voices.some((v) => v.id === 'enrolled-clone'),
+  );
+  expect(cloneGroup?.modelId).toBe('qwen3-tts-vc-2026-01-22');
+  expect(groups[0].modelGroups[0].voices.map((v) => v.id)).toEqual(['vivian', 'serena']);
+  const agent = {
+    id: 'teacher',
+    voiceConfig: { providerId: 'qwen-tts', voiceId: 'enrolled-clone' },
+  } as AgentConfig;
+  expect(resolveAgentVoice(agent, 0, groups)?.modelId).toBe('qwen3-tts-vc-2026-01-22');
+});
+
+it.each(['vllm-omni', 'python-api', 'nano-vllm'])(
+  'keeps VoxCPM user voices with a replacement catalogue on %s',
+  async (backend) => {
+    const { getVoxCPMProfileVoiceId } = await import('@/lib/audio/voxcpm');
+    const profiles = [
+      { id: 'designed', name: 'Designed', kind: 'design' },
+      { id: 'cloned', name: 'Cloned', kind: 'clone' },
+    ];
+    const group = getEnabledProvidersWithVoices(
+      {
+        'voxcpm-tts': {
+          enabled: true,
+          isServerConfigured: true,
+          voices,
+          providerOptions: { backend },
+        },
+      },
+      profiles,
+    )[0];
+    for (const profile of profiles) {
+      const id = getVoxCPMProfileVoiceId(profile.id);
+      expect(group.voices.map((v) => v.id)).toContain(id);
+      expect(group.modelGroups[0].voices.map((v) => v.id)).toContain(id);
+    }
+  },
+);
+
+it.each([
+  { providerId: 'qwen-tts' as const, voiceId: 'enrolled-clone' },
+  { providerId: 'voxcpm-tts' as const, voiceId: 'voxcpm:profile:user-clone' },
+])('keeps a user voice selected globally for $providerId', async ({ providerId, voiceId }) => {
+  const { ttsSelection } = await import('@/lib/audio/tts-selection');
+  const { slotVoice } = await import('@/lib/server/generation/run/narration-voice');
+  const input = { providers: { custom: { preset: providerId, voices } }, slots: { tts: 'custom' } };
+  const target = resolveSlot('tts', [
+    { source: 'deployment', config: parseModelConfig(JSON.stringify(input)) },
+  ]);
+  if (target.status !== 'assigned') throw new Error('unassigned');
+  const capabilities = {
+    known: true,
+    tts: target,
+    llm: null,
+    asr: null,
+    image: null,
+    video: null,
+    webSearch: null,
+    webFetch: null,
+    document: null,
+    resolved: new Set(['tts'] as const),
+  };
+  expect(ttsSelection(capabilities, { providerId, voice: voiceId, speed: 1 })?.voice).toBe(voiceId);
+  expect(
+    slotVoice(
+      {
+        providerId,
+        modelId: target.modelId,
+        connection: {
+          providerId,
+          managed: true,
+          userEndpoint: false,
+          origin: 'configuration',
+          voices,
+        },
+      },
+      { providerId, voiceId },
+    ).voice,
+  ).toBe(voiceId);
 });
