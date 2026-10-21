@@ -14,10 +14,7 @@ const event = (
 const message = (text: string) => ({
   message: {
     role: 'assistant',
-    content: [
-      { type: 'text', text },
-      { type: 'thinking', thinking: 'PRIVATE REASONING' },
-    ],
+    content: [{ type: 'text', text }],
   },
 });
 describe('student conversation projection', () => {
@@ -56,7 +53,7 @@ describe('student conversation projection', () => {
       event(6, 'tool_execution_start', {
         toolName: 'write_file',
         toolCallId: 'w',
-        args: { text: 'SECRET SOURCE' },
+        args: { text: 'print(1)' },
       }),
       event(7, 'tool_execution_end', {
         toolName: 'write_file',
@@ -74,10 +71,119 @@ describe('student conversation projection', () => {
     ];
     const output = projectConversation(history, 'coder', true);
     expect(output).toHaveLength(2);
-    expect(output[1]!.parts.map((p) => p.kind)).toEqual(['text', 'tool', 'text']);
+    expect(output[1]!.parts.map((p) => p.kind)).toEqual(['text', 'tool', 'tool', 'text']);
     expect(output[1]!.parts[0]).toMatchObject({ text: 'Hello', streaming: false });
-    expect(output[1]!.parts[2]).toMatchObject({ text: 'Done, now review', streaming: true });
-    expect(JSON.stringify(output)).not.toMatch(/PRIVATE|SECRET|thinking|read_next_skill/);
+    expect(output[1]!.parts[3]).toMatchObject({ text: 'Done, now review', streaming: true });
+    expect(JSON.stringify(output)).not.toMatch(/PRIVATE|SECRET/);
+  });
+  it('streams real thinking before text, freezes duration and replays without duplicate blocks', () => {
+    const frame = (thinking: string, text = '') => ({
+      message: {
+        role: 'assistant',
+        content: [{ type: 'thinking', thinking }, ...(text ? [{ type: 'text', text }] : [])],
+      },
+    });
+    const history = [
+      event(1, 'session_start', {}),
+      event(2, 'message_start', frame('')),
+      event(3, 'message_update', frame('Consider the input.')),
+    ];
+    const first = projectConversation(history, 'discussion', true);
+    expect(first[0]?.parts).toEqual([
+      {
+        kind: 'thinking',
+        id: 'thinking-3-0',
+        text: 'Consider the input.',
+        startedAt: 3,
+        streaming: true,
+      },
+    ]);
+    history.push(event(7, 'message_update', frame('Consider the input and output.', 'Explain')));
+    history.push(event(8, 'thinking_end', {}));
+    history.push(event(9, 'message_end', frame('Consider the input and output.', 'Explanation')));
+    history.push(event(10, 'session_end', { status: 'succeeded' }));
+    const replay = projectConversation(history, 'discussion', false);
+    expect(replay[0]?.status).toBe('succeeded');
+    expect(replay[0]?.parts.map((p) => p.kind)).toEqual(['thinking', 'text']);
+    expect(replay[0]?.parts[0]).toMatchObject({ endedAt: 7, streaming: false });
+    expect(replay[0]?.parts[1]).toMatchObject({ text: 'Explanation', streaming: false });
+    expect(projectConversation(history, 'discussion', true)).toEqual(replay);
+  });
+  it('shows one pre-content wait and separates cancellation/retry without animating history', () => {
+    const history = [event(1, 'user_message', { text: 'Explain' }), event(2, 'session_start', {})];
+    expect(projectConversation(history, 'mentor', true)[1]).toMatchObject({
+      status: 'running',
+      parts: [],
+    });
+    history.push(event(3, 'session_end', { status: 'cancelled', error: 'SECRET' }));
+    const queued = projectConversation(history, 'mentor', true, 'queued');
+    expect(queued.map((p) => p.status)).toEqual([undefined, 'cancelled', 'running']);
+    history.push(
+      event(4, 'session_start', {}, 2),
+      event(5, 'message_end', message('Retry reply'), 2),
+      event(6, 'session_end', { status: 'succeeded' }, 2),
+    );
+    const replay = projectConversation(history, 'mentor', false);
+    expect(replay.map((p) => p.status)).toEqual([undefined, 'cancelled', 'succeeded']);
+    expect(JSON.stringify(replay)).not.toContain('SECRET');
+  });
+  it('exposes project file details and skill activity without publishing control receipts or protocols', () => {
+    const result = (value: unknown) => ({
+      content: [{ type: 'text', text: JSON.stringify(value) }],
+    });
+    const output = projectConversation(
+      [
+        event(1, 'tool_execution_start', {
+          toolName: 'read_file',
+          toolCallId: 'r',
+          args: { path: 'src/main.py', token: 'SECRET' },
+        }),
+        event(2, 'tool_execution_end', {
+          toolName: 'read_file',
+          toolCallId: 'r',
+          result: result({ text: 'print(1)', hash: 'SECRET' }),
+        }),
+        event(3, 'tool_execution_start', {
+          toolName: 'read_next_skill',
+          toolCallId: 's',
+          args: { studentFeedback: 'INTERNAL' },
+        }),
+        event(4, 'tool_execution_end', {
+          toolName: 'read_next_skill',
+          toolCallId: 's',
+          result: result({ section: 'A-teach.md', content: 'PROTOCOL' }),
+        }),
+        event(5, 'session_end', { status: 'succeeded' }),
+      ],
+      'coder',
+      false,
+    );
+    expect(output[0]?.parts[0]).toMatchObject({
+      name: 'read_file',
+      args: { path: 'src/main.py' },
+      result: 'print(1)',
+      startedAt: 1,
+      endedAt: 2,
+    });
+    expect(output[0]?.parts[1]).toMatchObject({ name: 'read_next_skill', status: 'succeeded' });
+    expect(JSON.stringify(output)).not.toMatch(/SECRET|INTERNAL|PROTOCOL/);
+  });
+  it('settles partial thinking and tool activity when the worker is interrupted', () => {
+    const output = projectConversation(
+      [
+        event(1, 'message_update', {
+          message: { role: 'assistant', content: [{ type: 'thinking', thinking: 'Working' }] },
+        }),
+        event(2, 'tool_execution_start', { toolName: 'run_build', toolCallId: 'build' }),
+        event(3, 'session_interrupted', { reason: 'SECRET INFRASTRUCTURE' }),
+      ],
+      'coder',
+      false,
+    );
+    expect(output[0]?.status).toBe('interrupted');
+    expect(output[0]?.parts[0]).toMatchObject({ streaming: false, endedAt: 2 });
+    expect(output[0]?.parts[1]).toMatchObject({ status: 'interrupted', endedAt: 3 });
+    expect(JSON.stringify(output)).not.toContain('SECRET');
   });
   it('settles interrupted tools and retains saved review questions on a failed turn', () => {
     const history = [

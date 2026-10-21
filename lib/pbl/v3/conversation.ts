@@ -1,9 +1,10 @@
 import type { AgentRole } from './domain/project/project-schema';
 
-/** Deliberately excludes raw tool payloads, prompts, reasoning and provider errors. */
+/** Learner-owned conversation, with explicit display fields rather than raw runner payloads. */
 export interface LearningConversationEntry {
   id: string;
   at?: number;
+  status?: 'running' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted';
   speaker: 'user' | AgentRole;
   boundary?: {
     milestoneId: string;
@@ -16,9 +17,31 @@ export interface LearningConversationEntry {
   parts: (
     | { kind: 'text'; id: string; text: string; streaming?: boolean }
     | {
+        kind: 'thinking';
+        id: string;
+        text: string;
+        streaming?: boolean;
+        startedAt?: number;
+        endedAt?: number;
+      }
+    | {
         kind: 'tool';
         id: string;
-        action: 'read' | 'write' | 'build' | 'collect' | 'review' | 'complete';
+        action:
+          | 'read'
+          | 'write'
+          | 'build'
+          | 'collect'
+          | 'review'
+          | 'complete'
+          | 'list'
+          | 'manage'
+          | 'skill';
+        name?: string;
+        args?: Record<string, string>;
+        result?: string;
+        startedAt?: number;
+        endedAt?: number;
         status: 'running' | 'succeeded' | 'failed' | 'interrupted';
       }
   )[];

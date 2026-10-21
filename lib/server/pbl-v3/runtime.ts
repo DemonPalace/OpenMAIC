@@ -716,6 +716,7 @@ export async function learningView(principal: OwnerPrincipal, id: string): Promi
       events,
       binding.role,
       meta?.status === 'running' || meta?.status === 'queued',
+      meta?.status,
     );
     for (const event of events) {
       const data = event.data as {

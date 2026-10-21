@@ -39,8 +39,13 @@ Scene re-entry reloads durable study state; unsent drafts are not durable record
 The teaching panel uses the host's existing OpenPBL-derived chat skin, Markdown
 renderer and sticky scrolling, with four role identities and ordered turn parts.
 Existing runner event snapshots update replies through the learning poll; no second
-stream, runner or chat database is introduced. Tool cards expose only an allowlisted
-action and status, never raw inputs/results, protocol sections or model reasoning.
+stream, runner or chat database is introduced. The host's ThinkingBlock, WaitingBar,
+ToolGroup and ToolCard render real reasoning (when supplied by the model), pre-content
+waiting, ordered calls, disclosure details and elapsed times inside OpenPBL-style
+role turns. Text snapshots replace earlier snapshots; completed thoughts stop timing
+when prose or a tool takes over. Terminal and interrupted turns settle on replay.
+Tool details include project files and structured build outcomes; credentials, raw
+provider errors, hashes and teaching protocol bodies stay out of the display payload.
 Recent conversations span the current milestone roles and project mentor; older
 records remain available in the report. Explicit sends re-anchor the conversation;
 reading older messages does not force scrolling to the bottom.

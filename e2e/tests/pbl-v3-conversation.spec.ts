@@ -241,17 +241,87 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
   await expect(task.getByText('1/7', { exact: true })).toBeVisible();
   const conversation = page.getByRole('log', { name: 'Learning conversation' });
   await expect(conversation.getByText('Discussion', { exact: true })).toBeVisible();
-  await conversation.getByText('Waiting for your review', { exact: true }).click();
-  await expect(
-    conversation.getByText('Read the question in the conversation and respond in your own words.'),
-  ).toBeVisible();
+  // Real component behavior: pre-token wait, thinking, ordered tool group, then prose.
+  const finished = view.conversation![1]!;
+  finished.status = 'running';
+  const originalParts = finished.parts;
+  finished.parts = [];
+  view.busy = true;
+  view.activitySequence++;
+  await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
+  await expect(conversation.getByTestId('workbench-waiting-bar')).toHaveCount(1);
+  await expect(conversation.getByTestId('workbench-thinking-bar')).toHaveCount(0);
+  finished.parts = [
+    {
+      kind: 'thinking',
+      id: 'thought',
+      text: 'Consider the input.\nTrace the returned value.',
+      streaming: true,
+      startedAt: 1000,
+    },
+  ];
+  view.activitySequence++;
+  await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
+  const thinking = conversation.getByTestId('workbench-thinking-bar');
+  await expect(conversation.getByTestId('workbench-waiting-bar')).toHaveCount(0);
+  await expect(thinking).toHaveAttribute('data-streaming', 'true');
+  await expect(thinking.getByRole('button')).toHaveAttribute('aria-expanded', 'false');
+  await thinking.getByRole('button').click();
+  await expect(thinking.locator('pre')).toContainText('Consider the input.');
+  finished.parts = [
+    {
+      kind: 'thinking',
+      id: 'thought',
+      text: 'Consider the input.\nTrace the returned value.',
+      streaming: false,
+      startedAt: 1000,
+      endedAt: 3000,
+    },
+    {
+      kind: 'tool',
+      id: 'read',
+      action: 'read',
+      status: 'running',
+      args: { path: 'src/main.py' },
+      startedAt: 3000,
+    },
+    {
+      kind: 'tool',
+      id: 'write',
+      action: 'write',
+      status: 'running',
+      args: { path: 'src/main.py', text: 'return greeting' },
+      startedAt: 4000,
+    },
+  ];
+  view.activitySequence++;
+  await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
+  await expect(thinking.getByRole('button')).toHaveAttribute('aria-expanded', 'true');
+  await expect(thinking).not.toHaveAttribute('data-streaming', 'true');
+  const tools = conversation.getByTestId('workbench-tool-group');
+  await expect(tools).toBeVisible();
+  await expect(tools.getByTestId('workbench-tool-card')).toHaveCount(2);
+  await tools.getByTestId('workbench-tool-card').first().getByRole('button').click();
+  await expect(tools.locator('pre').first()).toContainText('src/main.py');
+  for (const part of finished.parts)
+    if (part.kind === 'tool') {
+      part.status = 'succeeded';
+      part.endedAt = 5000;
+    }
+  finished.parts.push(...originalParts);
+  finished.status = 'succeeded';
+  view.busy = false;
+  view.activitySequence++;
+  await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
+  await expect(conversation.getByTestId('workbench-waiting-bar')).toHaveCount(0);
+  await expect(conversation.getByText('Where does the value go?', { exact: true })).toBeVisible();
   view.conversation![1]!.parts.push({
     kind: 'text',
     id: 'streaming',
     text: 'A partial explanation',
     streaming: true,
   });
-  view.activitySequence = 11;
+  view.activitySequence++;
   await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
   await expect(conversation.getByText('A partial explanation', { exact: true })).toHaveCount(1);
   const partial = view.conversation![1]!.parts.at(-1)!;
@@ -259,10 +329,22 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
     partial.text = 'A completed explanation';
     partial.streaming = false;
   }
-  view.activitySequence = 12;
+  view.activitySequence++;
   await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
   await expect(conversation.getByText('A completed explanation', { exact: true })).toHaveCount(1);
   await expect(conversation.getByText('A partial explanation', { exact: true })).toHaveCount(0);
+  finished.status = 'cancelled';
+  view.activitySequence++;
+  await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
+  await expect(conversation.getByRole('status')).toContainText('This teaching turn was cancelled.');
+  await expect(conversation.getByTestId('workbench-waiting-bar')).toHaveCount(0);
+  finished.status = 'succeeded';
+  view.activitySequence++;
+  await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
+  await thinking.getByRole('button').click();
+  await expect(thinking.getByRole('button')).toHaveAttribute('aria-expanded', 'false');
+  await tools.getByTestId('workbench-tool-card').first().getByRole('button').click();
+
   await expect(page.locator('.monaco-editor .view-lines')).toContainText('Greeting plan');
   await page.getByLabel('Your message', { exact: true }).fill('My draft answer');
   await page.getByRole('button', { name: 'Expand project workspace' }).click();
@@ -281,6 +363,12 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
   // The host may select its first scene on reload; select the same installed PBL again.
   await page.getByTestId('scene-title').filter({ hasText: 'Practice project' }).click();
   await expect(page.getByText('Return sends a value to the caller.')).toBeVisible();
+  await expect(page.getByTestId('workbench-thinking-bar').getByRole('button')).toHaveAttribute(
+    'aria-expanded',
+    'false',
+  );
+  await expect(page.getByTestId('workbench-tool-group')).toHaveAttribute('data-open', 'false');
+  await expect(page.getByTestId('workbench-waiting-bar')).toHaveCount(0);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole('button', { name: 'Expand project workspace' }).click();
   await expect(page.getByLabel('Your message', { exact: true })).toBeVisible();

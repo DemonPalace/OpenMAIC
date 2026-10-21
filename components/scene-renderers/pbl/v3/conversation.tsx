@@ -1,6 +1,14 @@
 'use client';
-import { useEffect, useRef } from 'react';
-import { Route, Code2, GraduationCap, ListChecks, MessageSquareText } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import {
+  Check,
+  Copy,
+  Route,
+  Code2,
+  GraduationCap,
+  ListChecks,
+  MessageSquareText,
+} from 'lucide-react';
 import { useStickToBottomContext } from 'use-stick-to-bottom';
 import {
   Conversation,
@@ -8,7 +16,11 @@ import {
   ConversationScrollButton,
 } from '@/components/ai-elements/conversation';
 import { TextBlock } from '@/components/workbench/chat/text-block';
-import { wbStyles } from '@/components/workbench/chat/chat-styles';
+import { ThinkingBlock } from '@/components/workbench/chat/thinking-block';
+import { WaitingBar } from '@/components/workbench/chat/waiting-bar';
+import { ToolGroup } from '@/components/workbench/chat/tool-group';
+import { UserBubble } from '@/components/workbench/chat/user-bubble';
+import type { ChatNode } from '@/lib/workbench/session-store';
 import { useI18n } from '@/lib/hooks/use-i18n';
 import type { LearningView } from '@/lib/pbl/v3/types';
 import type { LearningConversationEntry } from '@/lib/pbl/v3/conversation';
@@ -26,10 +38,10 @@ function FollowSend({ count }: { count: number }) {
   return null;
 }
 const accents = {
-  mentor: 'border-violet-200 dark:border-violet-900',
-  discussion: 'border-sky-200 dark:border-sky-900',
-  planner: 'border-emerald-200 dark:border-emerald-900',
-  coder: 'border-amber-200 dark:border-amber-900',
+  mentor: 'border-violet-400/40 text-violet-700 dark:text-violet-300',
+  discussion: 'border-sky-400/40 text-sky-700 dark:text-sky-300',
+  planner: 'border-emerald-400/40 text-emerald-700 dark:text-emerald-300',
+  coder: 'border-amber-400/40 text-amber-700 dark:text-amber-300',
 };
 const icons = {
   mentor: GraduationCap,
@@ -37,6 +49,112 @@ const icons = {
   planner: ListChecks,
   coder: Code2,
 };
+type Part = LearningConversationEntry['parts'][number];
+type ToolPart = Extract<Part, { kind: 'tool' }>;
+const toolNames = {
+  read: 'read_file',
+  write: 'write_file',
+  build: 'run_build',
+  collect: 'collect_build',
+  review: 'request_skill_review',
+  complete: 'complete_stage',
+  list: 'list_files',
+  manage: 'manage_file',
+  skill: 'read_next_skill',
+};
+function toolNode(part: ToolPart): ChatNode {
+  return {
+    key: part.id,
+    kind: 'tool',
+    text: '',
+    toolName: part.name ?? toolNames[part.action],
+    toolState:
+      part.status === 'running' ? 'running' : part.status === 'succeeded' ? 'done' : 'failed',
+    toolDetails: { interrupted: part.status === 'interrupted' },
+    toolArgs: part.args,
+    toolResultText: part.result,
+    toolStartedAt: part.startedAt,
+    toolEndedAt: part.endedAt,
+  };
+}
+// Keep the OpenPBL turn order. Only adjacent tool calls form a group; prose/thinking splits it.
+function groupParts(parts: Part[]) {
+  const groups: (Part | ToolPart[])[] = [];
+  for (const part of parts) {
+    const previous = groups.at(-1);
+    if (part.kind === 'tool') {
+      if (Array.isArray(previous)) previous.push(part);
+      else groups.push([part]);
+    } else groups.push(part);
+  }
+  return groups;
+}
+function AgentTurn({ entry }: { entry: LearningConversationEntry }) {
+  const { t } = useI18n();
+  const [copied, setCopied] = useState(false);
+  const role = entry.speaker === 'user' ? 'mentor' : entry.speaker;
+  const Icon = icons[role];
+  const copyText = entry.parts.flatMap((p) => (p.kind === 'text' ? [p.text] : [])).join('\n\n');
+  return (
+    <article
+      className="group/turn min-w-0 space-y-1.5"
+      data-testid="pbl-agent-turn"
+      data-status={entry.status}
+    >
+      <div className={`flex items-center gap-2 text-[13px] font-medium ${accents[role]}`}>
+        <span className="inline-flex size-[22px] items-center justify-center rounded-full bg-current/10">
+          <Icon size={14} />
+        </span>
+        {t(`pblV3.roles.${role}`)}
+      </div>
+      <div
+        className={`pbl-assistant-bubble min-w-0 space-y-2 rounded-xl rounded-tl-md border-l-2 px-3 py-2.5 ${accents[role]}`}
+      >
+        {groupParts(entry.parts).map((part) =>
+          Array.isArray(part) ? (
+            <ToolGroup key={part[0].id} nodes={part.map(toolNode)} t={t} />
+          ) : part.kind === 'thinking' ? (
+            <ThinkingBlock
+              key={part.id}
+              text={part.text}
+              streaming={part.streaming}
+              startedAt={part.startedAt}
+              endedAt={part.endedAt}
+              t={t}
+            />
+          ) : part.kind === 'text' ? (
+            <div className="text-foreground" key={part.id}>
+              <TextBlock text={part.text} streaming={part.streaming} />
+            </div>
+          ) : null,
+        )}
+        {entry.status === 'running' && entry.parts.length === 0 && <WaitingBar t={t} />}
+        {(entry.status === 'failed' ||
+          entry.status === 'cancelled' ||
+          entry.status === 'interrupted') && (
+          <p role="status" className="text-xs text-muted-foreground">
+            {t(`pblV3.run.${entry.status === 'cancelled' ? 'cancelled' : 'unavailable'}`)}
+          </p>
+        )}
+      </div>
+      {copyText && (
+        <button
+          type="button"
+          className="rounded p-1 text-muted-foreground opacity-0 hover:text-foreground group-hover/turn:opacity-100 focus:opacity-100 [@media(hover:none)]:opacity-100"
+          aria-label={t('workbench.chat.copyReply')}
+          onClick={() => {
+            void navigator.clipboard
+              .writeText(copyText)
+              .then(() => setCopied(true))
+              .catch(() => setCopied(false));
+          }}
+        >
+          {copied ? <Check size={13} /> : <Copy size={13} />}
+        </button>
+      )}
+    </article>
+  );
+}
 export function LearningConversation({ view, sent }: { view: LearningView; sent: number }) {
   const { t } = useI18n();
   const entries: LearningConversationEntry[] =
@@ -50,86 +168,38 @@ export function LearningConversation({ view, sent }: { view: LearningView; sent:
     <Conversation className="min-h-0 flex-1 bg-background" aria-label={t('pblV3.learning')}>
       <FollowSend count={sent} />
       <ConversationContent className="gap-5 p-4">
-        {!entries.length && (
+        {!entries.length && !view.busy && (
           <p className="text-sm text-muted-foreground">{t('pblV3.journey.startConversation')}</p>
         )}
-        {entries.map((entry) => {
-          if (entry.boundary)
-            return (
-              <div
-                key={entry.id}
-                role="separator"
-                className="flex items-center gap-3 py-2 text-[11px] text-muted-foreground"
-              >
-                <span className="h-px flex-1 bg-border" />
-                <Route size={13} />
-                <span>
-                  M{entry.boundary.milestoneIndex + 1} · {entry.boundary.milestoneTitle} ·{' '}
-                  {entry.boundary.stageIndex + 1}/{entry.boundary.total}{' '}
-                  {t(`pblV3.journey.steps.${entry.boundary.step}`)}
-                </span>
-                <span className="h-px flex-1 bg-border" />
-              </div>
-            );
-          const user = entry.speaker === 'user';
-          const Icon = icons[user ? 'mentor' : (entry.speaker as keyof typeof icons)];
-          return (
-            <article key={entry.id} className={user ? wbStyles.userBubble.row : 'min-w-0'}>
-              <div
-                className={
-                  user
-                    ? wbStyles.userBubble.bubble
-                    : `pbl-assistant-bubble space-y-3 rounded-xl border p-4 ${accents[entry.speaker as keyof typeof accents]}`
-                }
-              >
-                <div className="flex items-center gap-2 text-xs font-semibold">
-                  {!user && <Icon size={15} />}
-                  {t(user ? 'pblV3.learner' : `pblV3.roles.${entry.speaker}`)}
-                </div>
-                {entry.parts.map((part) =>
-                  part.kind === 'text' ? (
-                    <div key={part.id}>
-                      {user ? (
-                        <p className="whitespace-pre-wrap">{part.text}</p>
-                      ) : (
-                        <TextBlock text={part.text} streaming={part.streaming} />
-                      )}
-                    </div>
-                  ) : (
-                    <details key={part.id} className="rounded-lg border bg-background text-sm">
-                      <summary className="flex cursor-pointer items-center gap-2 p-2">
-                        <span
-                          className={wbStyles.statusDot}
-                          data-kind={
-                            part.status === 'succeeded'
-                              ? 'ok'
-                              : part.status === 'failed'
-                                ? 'error'
-                                : part.status === 'running'
-                                  ? 'running'
-                                  : 'suspended'
-                          }
-                        />
-                        <span>{t(`pblV3.activity.${part.action}`)}</span>
-                        <span className="ml-auto text-xs text-muted-foreground">
-                          {t(`pblV3.activity.${part.status}`)}
-                        </span>
-                      </summary>
-                      <p className="border-t p-3 text-xs text-muted-foreground">
-                        {t(`pblV3.activity.${part.action}Hint`)}
-                      </p>
-                    </details>
-                  ),
-                )}
-              </div>
-            </article>
-          );
-        })}
-        {view.busy && (
-          <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground">
-            <span className={wbStyles.statusDot} data-kind="running" />
-            {t('pblV3.thinking')}
-          </p>
+        {entries.map((entry) =>
+          entry.boundary ? (
+            <div
+              key={entry.id}
+              role="separator"
+              className="flex items-center gap-3 py-2 text-[11px] text-muted-foreground"
+            >
+              <span className="h-px flex-1 bg-border" />
+              <Route size={13} />
+              <span>
+                M{entry.boundary.milestoneIndex + 1} · {entry.boundary.milestoneTitle} ·{' '}
+                {entry.boundary.stageIndex + 1}/{entry.boundary.total}{' '}
+                {t(`pblV3.journey.steps.${entry.boundary.step}`)}
+              </span>
+              <span className="h-px flex-1 bg-border" />
+            </div>
+          ) : entry.speaker === 'user' ? (
+            <UserBubble
+              key={entry.id}
+              text={entry.parts.flatMap((p) => (p.kind === 'text' ? [p.text] : [])).join('\n')}
+            />
+          ) : (
+            <AgentTurn key={entry.id} entry={entry} />
+          ),
+        )}
+        {view.busy && !view.conversation && (
+          <AgentTurn
+            entry={{ id: 'queued', speaker: view.role ?? 'mentor', status: 'running', parts: [] }}
+          />
         )}
       </ConversationContent>
       <ConversationScrollButton aria-label={t('pblV3.journey.latest')} />
