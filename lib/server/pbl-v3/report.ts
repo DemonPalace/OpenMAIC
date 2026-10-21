@@ -80,16 +80,23 @@ export async function learningReport(
     const last = await agents.lastEventSeq(binding.session_id);
     const entries = await agents.readEventsAfter(binding.session_id, Math.max(0, last - 500), 500);
     const messages: LearningReport['conversations'][number]['messages'] = [];
+    let latestInputSequence: number | undefined;
     for (const entry of entries) {
       const data = entry.data as {
         text?: string;
+        pblOpening?: boolean;
         message?: { role?: string; content?: { type: string; text?: string }[] };
       };
       const question = reviewQuestion(entry);
       if (question !== null)
         messages.push({ sequence: entry.id, role: 'assistant', text: question });
-      if (entry.type === 'user_message' && typeof data.text === 'string')
-        messages.push({ sequence: entry.id, role: 'user', text: data.text.slice(0, 8000) });
+      if (entry.type === 'user_message') {
+        // Review recovery follows the actual queued input, including automatic
+        // openings. Only real learner messages belong in the visible transcript.
+        latestInputSequence = entry.id;
+        if (!data.pblOpening && typeof data.text === 'string')
+          messages.push({ sequence: entry.id, role: 'user', text: data.text.slice(0, 8000) });
+      }
       if (
         entry.type === 'message_end' &&
         data.message?.role === 'assistant' &&
@@ -103,14 +110,13 @@ export async function learningReport(
           messages.push({ sequence: entry.id, role: 'assistant', text: text.slice(0, 8000) });
       }
     }
-    const latestUser = messages.findLast((m) => m.role === 'user');
     const pending = binding.guided?.pending;
     if (
-      latestUser &&
-      pending?.runId === `${binding.stage_key}:${latestUser.sequence}` &&
+      latestInputSequence !== undefined &&
+      pending?.runId === `${binding.stage_key}:${latestInputSequence}` &&
       !messages.some(
         (m) =>
-          m.sequence > latestUser.sequence && m.role === 'assistant' && m.text === pending.question,
+          m.sequence > latestInputSequence && m.role === 'assistant' && m.text === pending.question,
       )
     )
       messages.push({ sequence: last + 1, role: 'assistant', text: pending.question });

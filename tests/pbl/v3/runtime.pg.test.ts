@@ -1063,6 +1063,74 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
       expectedAttempt: reply!.attempt,
     });
   });
+  it('hides automatic stage inputs in reports while preserving questions and real learner replies', async () => {
+    const study = await freshStudy();
+    const started = (await study.send('begin')) as { sessionId: string };
+    const meta = await agents.claimNextSession('report-worker', process.pid, {
+      sessionId: started.sessionId,
+      leaseTtlMs: 10000,
+      maxAttempts: 5,
+    });
+    const config = await teachingRunnerConfig({
+      sessionId: started.sessionId,
+      ownerId: principal.ownerId,
+      workerId: 'report-worker',
+      attempt: meta!.attempt,
+      signal: new AbortController().signal,
+    });
+    const question = 'What will this project do?';
+    await invoke(config, 'read_next_skill');
+    await invoke(config, 'request_skill_review', { question });
+    const before = await store.get(study.id, principal.ownerId);
+    const binding = await store.binding(started.sessionId);
+    const events = await agents.readEventsAfter(started.sessionId, 0, 100);
+    expect(events.some((entry) => (entry.data as { pblOpening?: boolean }).pblOpening)).toBe(true);
+
+    // The review is committed before its tool display event exists. Hiding the
+    // wakeup must retain this recoverable Agent question without inventing a learner.
+    const pending = await learningReport(principal, study.id);
+    expect(pending.conversations[0]!.messages).toEqual([
+      expect.objectContaining({ role: 'assistant', text: question }),
+    ]);
+    expect(JSON.stringify(pending)).not.toContain('System stage entry:');
+    expect(await store.get(study.id, principal.ownerId)).toEqual(before);
+    expect(await store.binding(started.sessionId)).toEqual(binding);
+    expect(await agents.readEventsAfter(started.sessionId, 0, 100)).toEqual(events);
+
+    await agents.appendControlEvent(started.sessionId, {
+      ts: Date.now(),
+      type: 'tool_execution_end',
+      data: {
+        toolName: 'request_skill_review',
+        isError: false,
+        result: { content: [{ type: 'text', text: JSON.stringify({ question }) }] },
+      },
+    });
+    const displayed = await learningReport(principal, study.id);
+    expect(displayed.conversations[0]!.messages).toEqual([
+      expect.objectContaining({ role: 'assistant', text: question }),
+    ]);
+    await agents.finishSession(started.sessionId, 'report-worker', {
+      status: 'succeeded',
+      expectedAttempt: meta!.attempt,
+    });
+    const text = 'What does System stage entry mean?';
+    await commandStudy(principal, study.id, {
+      id: randomUUID(),
+      revision: before.revision,
+      type: 'chat',
+      text,
+    });
+    const answered = await learningReport(principal, study.id);
+    expect(answered.conversations[0]!.messages).toEqual([
+      expect.objectContaining({ role: 'assistant', text: question }),
+      expect.objectContaining({ role: 'user', text }),
+    ]);
+    await expect(
+      learningReport({ ...principal, ownerId: 'another-owner' }, study.id),
+    ).rejects.toMatchObject({ status: 404 });
+    await agents.softDeleteSession(started.sessionId, principal.ownerId);
+  });
   it('prepares once and runs the complete learning flow with actual Python tests', async () => {
     await command('prepare');
     await guided('teaching'); // project opening and concepts share the first step
