@@ -125,7 +125,7 @@ function catalogVoiceGender(
 
 /** The voices the agent-profiles step may bind agents to, as the browser advertises them. */
 export function advertisedVoices(target: RunNarrationTarget) {
-  return getEnabledProvidersWithVoices(providersConfig(target)).flatMap((provider) =>
+  const voices = getEnabledProvidersWithVoices(providersConfig(target)).flatMap((provider) =>
     provider.voices.map((voice) => {
       const cloneModelGroup =
         provider.providerId === 'qwen-tts' && isQwenCloneVoice(voice.id, target.connection.voices)
@@ -149,6 +149,22 @@ export function advertisedVoices(target: RunNarrationTarget) {
       };
     }),
   );
+  // A standalone provider default is an operator-declared voice too. Keep the
+  // built-in catalogue, but let profile generation pin the teacher to it.
+  const defaultVoice = !target.connection.voices
+    ? configuredDefaultVoice(target.connection.options)
+    : undefined;
+  if (defaultVoice && !voices.some((voice) => voice.voiceId === defaultVoice)) {
+    const narrator = narratorVoiceForGeneration(target, undefined);
+    if (narrator) {
+      voices.push({
+        ...narrator,
+        voiceName: defaultVoice,
+        voiceLanguage: 'auto',
+      });
+    }
+  }
+  return voices;
 }
 
 /** The narrator voice the teacher is pinned to at agent generation. */
