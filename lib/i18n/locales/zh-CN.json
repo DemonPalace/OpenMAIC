@@ -2651,7 +2651,10 @@
       "noTests": "暂无保留的测试结果",
       "noQuiz": "暂无保留的测验结果",
       "reflected": "已记录复盘",
-      "notReflected": "尚未记录复盘"
+      "notReflected": "尚未记录复盘",
+      "taskDetails": "当前任务详情",
+      "closeDetails": "收起任务详情",
+      "milestoneSteps": "当前阶段的学习步骤"
     },
     "activity": {
       "read": "读取项目文件",
@@ -2716,7 +2719,10 @@
       "connected": "学习环境已连接",
       "disconnected": "学习环境未连接",
       "messagePlaceholder": "提出问题，或说说你的理解…",
-      "sendHint": "Enter 发送 · Shift+Enter 换行"
+      "sendHint": "Enter 发送 · Shift+Enter 换行",
+      "previewNotStarted": "先在终端或运行面板启动项目的网页服务，再连接下方已配置的端口。",
+      "previewUnavailable": "当前环节暂不能连接应用预览。可以先查看代码并继续与学习助手交流。",
+      "connectPreview": "连接预览"
     }
   }
 }

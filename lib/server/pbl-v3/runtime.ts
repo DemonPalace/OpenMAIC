@@ -13,6 +13,7 @@ import { listAgentUserMessages } from '@/lib/server/agent-runtime/user-messages'
 import { getOwnerScopedDocumentStore } from '@/lib/server/agent-runtime/owner-scoped-documents';
 import { isAgentRuntimeConfigured } from '@/lib/config/feature-flags';
 import { assertWorkspaceModelsAuthorized } from '@/lib/server/model-config/runtime';
+import { stageStep } from '@/lib/pbl/v3/presentation';
 import { isPBLV3Reference, type LearningView } from '@/lib/pbl/v3/types';
 import { isExplorationStage } from '@/lib/pbl/v3/domain/project/project-schema';
 import type { AgentRole } from '@/lib/pbl/v3/domain/project/project-schema';
@@ -815,9 +816,7 @@ export async function learningView(principal: OwnerPrincipal, id: string): Promi
       id: m.id,
       title: m.title,
       optional: !!m.optional,
-      stages: m.stages.map((s) =>
-        s.kind === 'produce' ? s.writes : s.kind === 'check' ? s.checker : s.kind,
-      ),
+      stages: m.stages.map(stageStep),
     })),
     actions:
       row.evaluation || (guided && !approvalCurrent)

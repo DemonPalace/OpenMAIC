@@ -65,6 +65,16 @@ handoffs until saved or explicitly discarded; changing environments preserves dr
 but disables stale writes. Scene navigation/reload still requires saving work first.
 All controls use the existing workspace routes, permissions and version checks.
 
+A compact status strip above the composer shows the current step and opens an upward
+scrollable task drawer. Decisions and quizzes open their task details on entry;
+closing details preserves answer drafts. The drawer does not displace the composer.
+Step counts come from the installed milestone (the project introduction is step zero),
+and the path and task drawer show completed/current steps without authorizing navigation.
+The scene uses OpenPBL's blue-gray/green palette in dark mode and its light counterpart,
+scoped to the workbench and following the host theme. Configured application previews
+keep a tab before connection, with guidance for unavailable/not-started states; project
+web applications and their API contracts remain content-specific.
+
 Monaco is loaded only in the browser. Install/dev/build copy its bundled assets to
 `public/code-editor/vs`; Docker copies these with the application's public directory.
 No third-party editor CDN is required. Source hashes, stage gates, file durability

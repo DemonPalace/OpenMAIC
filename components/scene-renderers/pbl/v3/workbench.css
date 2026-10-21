@@ -1,0 +1,54 @@
+/* OpenPBL workspace palette, scoped to the scene so the surrounding classroom is unchanged. */
+.pbl-workbench {
+  --background: #ffffff;
+  --foreground: #243248;
+  --card: #ffffff;
+  --card-foreground: #243248;
+  --popover: #ffffff;
+  --popover-foreground: #243248;
+  --muted: #edf2f7;
+  --muted-foreground: #607087;
+  --border: #dce3ec;
+  --input: #dce3ec;
+  --primary: #0b7a52;
+  --primary-foreground: #ffffff;
+  --accent: #e5f3ed;
+  --accent-foreground: #135d43;
+  --ring: #0b7a52;
+  --pbl-assistant-bubble: #f0f4f8;
+  --pbl-chrome: #f8fafc;
+  container-type: size;
+}
+.dark .pbl-workbench {
+  color-scheme: dark;
+  --background: #111827;
+  --foreground: #dce4ef;
+  --card: #151d2b;
+  --card-foreground: #dce4ef;
+  --popover: #1a2332;
+  --popover-foreground: #dce4ef;
+  --muted: #223046;
+  --muted-foreground: #a4b0c2;
+  --border: #2b384c;
+  --input: #2b384c;
+  --primary: #3bf0a4;
+  --primary-foreground: #012417;
+  --accent: #153b30;
+  --accent-foreground: #63f5ba;
+  --ring: #3bf0a4;
+  --pbl-assistant-bubble: #202b3d;
+  --pbl-chrome: #151d2b;
+}
+.pbl-workbench .pbl-chrome {
+  background: var(--pbl-chrome);
+}
+.pbl-workbench .pbl-assistant-bubble {
+  background: var(--pbl-assistant-bubble);
+}
+.pbl-workbench .pbl-task-drawer {
+  max-height: min(320px, 55cqh);
+}
+.pbl-workbench button:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}

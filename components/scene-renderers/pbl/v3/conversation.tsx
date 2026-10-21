@@ -62,7 +62,7 @@ export function LearningConversation({ view, sent }: { view: LearningView; sent:
                 className={
                   user
                     ? wbStyles.userBubble.bubble
-                    : `space-y-3 rounded-2xl border bg-muted/20 p-4 ${accents[entry.speaker as keyof typeof accents]}`
+                    : `pbl-assistant-bubble space-y-3 rounded-xl border p-4 ${accents[entry.speaker as keyof typeof accents]}`
                 }
               >
                 <div className="flex items-center gap-2 text-xs font-semibold">

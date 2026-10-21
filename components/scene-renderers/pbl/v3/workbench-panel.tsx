@@ -367,7 +367,7 @@ export function LearningWorkbenchPanel({
                   </button>
                 </div>
               ))}
-              {preview && work?.canRun && (
+              {!!work?.ports.length && (
                 <button
                   role="tab"
                   aria-selected={editorTab === 'preview'}
@@ -380,10 +380,7 @@ export function LearningWorkbenchPanel({
               )}
             </div>
             <div className="relative min-h-0 flex-1">
-              <div
-                className="absolute inset-0"
-                hidden={editorTab === 'preview' && !!preview && work?.canRun}
-              >
+              <div className="absolute inset-0" hidden={editorTab === 'preview'}>
                 {buffer ? (
                   <CodeEditor
                     studyId={view.id}
@@ -399,6 +396,27 @@ export function LearningWorkbenchPanel({
                   </p>
                 )}
               </div>
+              {editorTab === 'preview' && (!preview || !work?.canRun) && (
+                <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center text-sm text-muted-foreground">
+                  <Globe size={28} />
+                  <strong className="text-foreground">{t('pblV3.workbench.application')}</strong>
+                  <p className="max-w-sm">
+                    {t(
+                      work?.canRun ? 'pblV3.ide.previewNotStarted' : 'pblV3.ide.previewUnavailable',
+                    )}
+                  </p>
+                  {work?.ports.map((port) => (
+                    <button
+                      key={port}
+                      className={`${button} border`}
+                      disabled={disabled || !work.canRun}
+                      onClick={() => void run('preview', { port })}
+                    >
+                      {t('pblV3.ide.connectPreview')} · {port}
+                    </button>
+                  ))}
+                </div>
+              )}
               {preview && work?.canRun && (
                 <iframe
                   title={t('pblV3.workbench.application')}

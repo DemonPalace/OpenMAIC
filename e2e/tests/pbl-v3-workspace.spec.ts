@@ -347,6 +347,13 @@ test('installed sample opens in the normal classroom and preserves progress afte
   await page.getByLabel('Project command', { exact: true }).fill('python3 src/moved.py');
   await page.getByRole('button', { name: 'Run command', exact: true }).click();
   await expect.poll(() => workCalls.some((c) => c.action === 'run')).toBe(true);
+  await page.getByRole('tab', { name: 'Project application', exact: true }).click();
+  await expect(
+    page.getByText(
+      'Start the project web server in the terminal or Run panel, then connect to a configured port below.',
+    ),
+  ).toBeVisible();
+  await expect(page.locator('iframe[title="Project application"]')).toHaveCount(0);
   await page.route('https://preview.example.test/**', (route) =>
     route.fulfill({
       contentType: 'text/html',
@@ -398,6 +405,7 @@ test('installed sample opens in the normal classroom and preserves progress afte
   await expect.poll(() => calls.some((c) => c.type === 'checkpoint')).toBe(true);
   view.questions = [{ q: 'What does return do?', options: ['Returns a value', 'Prints a value'] }];
   view.actions = ['quiz'];
+  view.state.position.stageIndex = 5;
   await page.getByRole('button', { name: 'Refresh progress' }).click();
   await page.getByRole('radio', { name: 'Prints a value' }).check();
   await page.getByRole('button', { name: 'Submit answers' }).click();
@@ -405,6 +413,10 @@ test('installed sample opens in the normal classroom and preserves progress afte
     page.getByText('0/1 correct. Review your answers and try again.', { exact: true }),
   ).toBeVisible();
   await page.reload();
+  // Reload reconstructs the study asynchronously; wait for that view before checking its receipt.
+  await expect(page.getByRole('region', { name: 'Current task details', exact: true })).toBeVisible(
+    { timeout: 15000 },
+  );
   await expect(
     page.getByText('0/1 correct. Review your answers and try again.', { exact: true }),
   ).toBeVisible();

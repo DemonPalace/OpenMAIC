@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { useI18n } from '@/lib/hooks/use-i18n';
 import type { LearningView } from '@/lib/pbl/v3/types';
 import type { LearningReport } from '@/lib/pbl/v3/report';
-import { learningStep } from '@/lib/pbl/v3/presentation';
+import { learningStep, learningProgress } from '@/lib/pbl/v3/presentation';
 import { TextBlock } from '@/components/workbench/chat/text-block';
 import { sandboxErrorMessage } from '@/lib/sandbox/error-message';
 
@@ -49,7 +49,7 @@ export function LearningPanels({ view }: { view: LearningView }) {
           className="absolute right-2 top-12 z-20 max-h-80 max-w-[90%] overflow-auto rounded border bg-background p-4 shadow-lg"
         >
           <h3 className="font-semibold">{t('pblV3.learningPath')}</h3>
-          <ol className="mt-2 flex flex-wrap gap-3">
+          <ol className="mt-2 space-y-4">
             {view.milestones?.map((m, i) => (
               <li
                 key={m.id}
@@ -60,9 +60,21 @@ export function LearningPanels({ view }: { view: LearningView }) {
                 {m.title}
                 {m.optional ? ` (${t('pblV3.optional')})` : ''}
                 {i === view.state.position.milestoneIndex && (
-                  <span className="block text-xs text-muted-foreground">
-                    {t(`pblV3.journey.steps.${learningStep(view)}`)}
-                  </span>
+                  <div className="mt-2 space-y-1 text-xs font-normal">
+                    <p className="text-primary">{t(`pblV3.journey.steps.${learningStep(view)}`)}</p>
+                    <ol className="space-y-1" aria-label={t('pblV3.journey.milestoneSteps')}>
+                      {learningProgress(view).steps.map((step, index) => (
+                        <li
+                          key={index}
+                          aria-current={step.active ? 'step' : undefined}
+                          className={step.active ? 'text-primary' : 'text-muted-foreground'}
+                        >
+                          {step.complete ? '✓' : index + 1}.{' '}
+                          {t(`pblV3.journey.steps.${step.label}`)}
+                        </li>
+                      ))}
+                    </ol>
+                  </div>
                 )}
               </li>
             ))}

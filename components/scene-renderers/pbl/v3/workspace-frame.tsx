@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Maximize2, Minimize2 } from 'lucide-react';
 import { useI18n } from '@/lib/hooks/use-i18n';
+import './workbench.css';
 
 /** Native fullscreen keeps a single scene/workspace instance and restores the host classroom on exit. */
 export function WorkspaceFrame({ children }: { children: ReactNode }) {
@@ -18,12 +19,14 @@ export function WorkspaceFrame({ children }: { children: ReactNode }) {
     <div
       ref={ref}
       data-testid="pbl-v3-frame"
-      className="wbchat relative flex h-full min-h-0 flex-col overflow-hidden bg-background text-foreground"
+      className="wbchat pbl-workbench relative flex h-full min-h-0 flex-col overflow-hidden bg-background text-foreground"
     >
-      <div className="z-10 flex shrink-0 justify-end border-b bg-background/95 px-4 py-2">
+      <div className="absolute right-2 top-2 z-10">
         <button
           type="button"
-          className="flex items-center gap-2 rounded px-3 py-1 text-sm hover:bg-muted"
+          className="rounded p-1.5 text-sm hover:bg-muted"
+          aria-label={t(expanded ? 'pblV3.journey.returnClassroom' : 'pblV3.journey.expand')}
+          title={t(expanded ? 'pblV3.journey.returnClassroom' : 'pblV3.journey.expand')}
           onClick={async () => {
             setError(false);
             try {
@@ -35,7 +38,6 @@ export function WorkspaceFrame({ children }: { children: ReactNode }) {
           }}
         >
           {expanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
-          {t(expanded ? 'pblV3.journey.returnClassroom' : 'pblV3.journey.expand')}
         </button>
       </div>
       {error && (

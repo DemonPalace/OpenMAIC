@@ -2651,7 +2651,10 @@
       "noTests": "No retained test result",
       "noQuiz": "No retained quiz result",
       "reflected": "Reflection recorded",
-      "notReflected": "Reflection not yet recorded"
+      "notReflected": "Reflection not yet recorded",
+      "taskDetails": "Current task details",
+      "closeDetails": "Close task details",
+      "milestoneSteps": "Milestone learning steps"
     },
     "activity": {
       "read": "Reading project files",
@@ -2716,7 +2719,10 @@
       "connected": "Environment connected",
       "disconnected": "Environment unavailable",
       "messagePlaceholder": "Ask a question or explain your understanding…",
-      "sendHint": "Enter to send · Shift+Enter for a new line"
+      "sendHint": "Enter to send · Shift+Enter for a new line",
+      "previewNotStarted": "Start the project web server in the terminal or Run panel, then connect to a configured port below.",
+      "previewUnavailable": "Application preview is unavailable in this step. You can read the code and continue with the learning assistant.",
+      "connectPreview": "Connect preview"
     }
   }
 }

@@ -97,13 +97,13 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
         id: 'greeting',
         title: 'Implement a greeting',
         optional: false,
-        stages: ['mentor_say', 'dialogue', 'plan', 'code', 'tests', 'quiz', 'mentor_say'],
+        stages: ['teaching', 'dialogue', 'plan', 'code', 'tests', 'quiz', 'recap'],
       },
       {
         id: 'normalize',
         title: 'Extend the greeting',
         optional: false,
-        stages: ['mentor_say', 'plan', 'code', 'tests', 'quiz', 'mentor_say'],
+        stages: ['teaching', 'plan', 'code', 'tests', 'quiz', 'recap'],
       },
     ],
     role: 'discussion',
@@ -181,6 +181,33 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
       .getByRole('region', { name: 'Current learning step' })
       .getByText('Learn before deciding', { exact: true }),
   ).toBeVisible();
+  const task = page.getByRole('region', { name: 'Current learning step', exact: true });
+  const details = page.getByRole('region', { name: 'Current task details', exact: true });
+  await expect(task.getByText('1/7', { exact: true })).toBeVisible();
+  const composerBefore = await page.getByLabel('Your message', { exact: true }).boundingBox();
+  await task.getByRole('button', { name: /Current task details/ }).click();
+  await expect(details).toBeVisible();
+  await expect(details.getByRole('listitem')).toHaveCount(7);
+  const composerAfter = await page.getByLabel('Your message', { exact: true }).boundingBox();
+  expect(composerAfter?.y).toBe(composerBefore?.y);
+  await details.getByRole('button', { name: 'Close task details' }).press('Escape');
+  await expect(details).toBeHidden();
+  await expect(task.getByRole('button', { name: /Current task details/ })).toBeFocused();
+  // Opening task details must not submit an answer or advance the learning state.
+  expect(view.revision).toBe(8);
+  view.state.introCompleted = false;
+  view.revision++;
+  await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
+  await expect(task.getByText('0/7', { exact: true })).toBeVisible();
+  view.state.introCompleted = true;
+  view.state.position = { milestoneIndex: 1, milestoneId: 'normalize', stageIndex: 2 };
+  view.revision++;
+  await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
+  await expect(task.getByText('3/6', { exact: true })).toBeVisible();
+  view.state.position = { milestoneIndex: 0, milestoneId: 'greeting', stageIndex: 0 };
+  view.revision++;
+  await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
+  await expect(task.getByText('1/7', { exact: true })).toBeVisible();
   const conversation = page.getByRole('log', { name: 'Learning conversation' });
   await expect(conversation.getByText('Discussion', { exact: true })).toBeVisible();
   await conversation.getByText('Waiting for your review', { exact: true }).click();

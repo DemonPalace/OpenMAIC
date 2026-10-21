@@ -9,7 +9,8 @@ import { LearningWorkbenchPanel } from './workbench-panel';
 import { LearningPanels } from './learning-panels';
 import { LearningConversation } from './conversation';
 import { WorkspaceFrame } from './workspace-frame';
-import { learningStep } from '@/lib/pbl/v3/presentation';
+import { TaskDock } from './task-dock';
+import { learningStep, learningProgress } from '@/lib/pbl/v3/presentation';
 import { sandboxErrorMessage } from '@/lib/sandbox/error-message';
 import { SandboxRequestError } from '@/components/sandbox/client';
 
@@ -129,6 +130,7 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
   };
   const quiz = view?.state.collected[view.state.position.milestoneId ?? '']?.quiz;
   const disabled = pending || view?.busy || !view?.environment?.ready || dirtyFiles;
+  const progress = view ? learningProgress(view) : null;
   const button =
     'rounded-md border px-3 py-2 text-sm disabled:opacity-40 hover:bg-muted aria-pressed:bg-primary aria-pressed:text-primary-foreground';
   return (
@@ -138,14 +140,16 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
       // Editor, terminal and teaching inputs own their keys, not the host's slide/chat shortcuts.
       onKeyDown={(event) => event.stopPropagation()}
     >
-      <header className="flex shrink-0 flex-wrap items-center gap-2 border-b bg-muted/20 px-3 py-2">
+      <header className="flex shrink-0 flex-wrap items-center gap-2 border-b pbl-chrome py-2 pl-3 pr-12">
         <h2 className="mr-auto min-w-0 truncate text-sm font-semibold">
           {view?.title ?? t('pblV3.title')}
         </h2>
         {view && (
           <>
             <span className="rounded bg-muted px-2 py-1 text-xs">
-              {view.state.position.milestoneId} · {t(`pblV3.journey.steps.${learningStep(view)}`)}
+              M{view.state.position.milestoneIndex + 1} ·{' '}
+              {progress?.total ? `${progress.current}/${progress.total} · ` : ''}
+              {t(`pblV3.journey.steps.${learningStep(view)}`)}
             </span>
             <span className="flex items-center gap-1 text-xs text-muted-foreground">
               <span
@@ -261,7 +265,7 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
                 data-testid="pbl-assistant"
                 className="flex h-full min-h-0 flex-col bg-muted/10"
               >
-                <header className="flex shrink-0 items-center gap-2 border-b px-3 py-2 text-xs">
+                <header className="pbl-chrome flex shrink-0 items-center gap-2 border-b px-3 py-2 text-xs">
                   <MessageSquareText size={15} />
                   <h3 className="font-semibold">{t('pblV3.learning')}</h3>
                   <span className="ml-auto text-muted-foreground">
@@ -293,34 +297,34 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
                     {t('pblV3.workbench.unsaved')}
                   </p>
                 )}
-                <div className="max-h-[40%] shrink-0 overflow-auto border-t bg-background px-3 py-2 text-sm">
-                  <section aria-label={t('pblV3.journey.currentTask')} className="mb-2 text-xs">
-                    <div className="flex items-center gap-2">
-                      <strong>{t(`pblV3.journey.steps.${learningStep(view)}`)}</strong>
-                      <span className="min-w-0 truncate text-muted-foreground">
-                        {view.task?.title ?? view.title}
-                      </span>
-                    </div>
-                    <details className="mt-1">
-                      <summary className="cursor-pointer text-muted-foreground">
-                        {t(`pblV3.journey.hints.${learningStep(view)}`)}
-                      </summary>
-                      {view.task?.goal && <p className="py-2">{view.task.goal}</p>}
-                    </details>
-                    <p role="status" className="mt-1 text-muted-foreground">
-                      {t(
-                        view.state.status === 'completed'
-                          ? 'pblV3.completed'
-                          : view.busy
-                            ? 'pblV3.thinking'
-                            : view.evaluation
-                              ? 'pblV3.journey.collectResult'
-                              : view.actions.includes('next')
-                                ? 'pblV3.journey.ready'
-                                : 'pblV3.journey.followStep',
-                      )}
-                    </p>
-                  </section>
+                <TaskDock
+                  key={`${view.id}:${view.state.introCompleted}:${view.state.position.milestoneIndex}:${view.state.position.stageIndex}`}
+                  view={view}
+                  action={
+                    view.actions.includes('next') && (
+                      <button
+                        className={button}
+                        disabled={disabled}
+                        onClick={() => void command('next')}
+                      >
+                        {t('pblV3.next')}
+                      </button>
+                    )
+                  }
+                >
+                  <p role="status" className="text-xs text-muted-foreground">
+                    {t(
+                      view.state.status === 'completed'
+                        ? 'pblV3.completed'
+                        : view.busy
+                          ? 'pblV3.thinking'
+                          : view.evaluation
+                            ? 'pblV3.journey.collectResult'
+                            : view.actions.includes('next')
+                              ? 'pblV3.journey.ready'
+                              : 'pblV3.journey.followStep',
+                    )}
+                  </p>
                   {view.stage.kind === 'produce' && view.stage.exploration && (
                     <p className="mb-2 rounded border p-2">{view.stage.exploration.introduction}</p>
                   )}
@@ -387,16 +391,7 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
                       {t('pblV3.submitQuiz')}
                     </button>
                   )}
-                  {view.actions.includes('next') && (
-                    <button
-                      className={button}
-                      disabled={disabled}
-                      onClick={() => void command('next')}
-                    >
-                      {t('pblV3.next')}
-                    </button>
-                  )}
-                </div>
+                </TaskDock>
                 {view.actions.includes('chat') && (
                   <form
                     className="shrink-0 border-t bg-background p-3"
