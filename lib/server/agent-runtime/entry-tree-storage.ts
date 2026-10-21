@@ -66,8 +66,9 @@ const PRIOR_RUN_SCAN_PAGE = 500;
 
 /**
  * Read the prior runs from the event log, stopping at the first completed
- * message. Only consulted for an empty tree, whose log is short unless the
- * tree was lost, and then the scan stops at that run's first message.
+ * message. Consulted for an empty tree, whose log is short unless the tree was
+ * lost, and by the runner to find a session's opening message on a resume;
+ * either way the scan stops at the first run's first completed message.
  */
 export async function readPriorRunRecord(
   log: Pick<AgentSessionEventLog, 'readEventsAfter'>,
