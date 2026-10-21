@@ -115,23 +115,26 @@ export async function synthesizeNarration(
   }
 
   // Build TTS config (managed providers may pin the model server-side)
-  const qwenCloneVoice = ttsProviderId === 'qwen-tts' && isQwenCloneVoice(ttsVoice);
+  const qwenCloneVoice =
+    ttsProviderId === 'qwen-tts' && isQwenCloneVoice(ttsVoice, connection.voices);
   const requestedSpeed = input.speed ?? 1.0;
   // A configured slot's own model; on the deprecated and default paths the
   // client's (or default) model under the legacy server pins. Qwen
   // voice-clone voices switch to the clone model either way.
   const resolvedModelId =
     connection.origin === 'configuration'
-      ? slotTTSModel(ttsProviderId, connection.modelId, ttsVoice)
+      ? slotTTSModel(ttsProviderId, connection.modelId, ttsVoice, connection.voices)
       : resolveTTSModel(
           ttsProviderId,
           connection.origin === 'request' ? input.requestedModelId : connection.modelId,
           ttsVoice,
+          connection.voices,
         );
   const config = {
     providerId: ttsProviderId as TTSProviderId,
     modelId: resolvedModelId,
     voice: ttsVoice,
+    ...(connection.voices ? { voices: connection.voices } : {}),
     speed: qwenCloneVoice ? 1 : requestedSpeed,
     apiKey: apiKey ?? '',
     baseUrl,

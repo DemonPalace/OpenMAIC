@@ -64,7 +64,15 @@ export function resolveNarratorVoiceBinding(
     // not an authority. Catalog voices remain validated against the catalog.
     return {
       providerId: bound.providerId,
-      modelId: resolveTTSModelForVoice(bound.providerId, bound.voiceId, bound.modelId),
+      modelId: resolveTTSModelForVoice(
+        bound.providerId,
+        bound.voiceId,
+        bound.providerId === 'qwen-tts' &&
+          providerConfigs[bound.providerId]?.voices?.some((voice) => voice.id === bound.voiceId)
+          ? (providerConfigs[bound.providerId]?.modelId ?? bound.modelId)
+          : bound.modelId,
+        providerConfigs[bound.providerId]?.voices,
+      ),
       voiceId: bound.voiceId,
     };
   }
@@ -74,6 +82,7 @@ export function resolveNarratorVoiceBinding(
       globalVoice.providerId,
       globalVoice.voiceId,
       globalVoice.modelId,
+      providerConfigs[globalVoice.providerId]?.voices,
     ),
   };
 }
@@ -122,11 +131,23 @@ export function resolveAgentVoice(
     const fromEnabled = enabledProviders.find((p) => p.providerId === choice.providerId);
     if (!fromEnabled) continue;
     if (choice.providerId === 'qwen-tts') {
-      const catalogVoice = isQwenCatalogVoice(choice.voiceId);
+      const catalogVoice = isQwenCatalogVoice(
+        choice.voiceId,
+        fromEnabled.configuredVoiceList ? fromEnabled.voices : undefined,
+      );
       if (catalogVoice || choice.voiceId.trim()) {
         return {
           providerId: choice.providerId,
-          modelId: resolveTTSModelForVoice(choice.providerId, choice.voiceId, choice.modelId),
+          modelId: resolveTTSModelForVoice(
+            choice.providerId,
+            choice.voiceId,
+            (fromEnabled.configuredVoiceList
+              ? fromEnabled.modelGroups.find((group) =>
+                  group.voices.some((voice) => voice.id === choice.voiceId),
+                )?.modelId
+              : undefined) ?? choice.modelId,
+            fromEnabled.configuredVoiceList ? fromEnabled.voices : undefined,
+          ),
           voiceId: choice.voiceId,
         };
       }
@@ -213,7 +234,7 @@ export function resolveDeterministicFallbackVoice(
   if (enabledProviders.length === 0) return null;
   const first = enabledProviders[0];
   const fallbackVoices =
-    first.providerId === 'qwen-tts'
+    first.providerId === 'qwen-tts' && !first.configuredVoiceList
       ? first.voices.filter((voice) => isQwenCatalogVoice(voice.id))
       : first.voices;
   if (fallbackVoices.length === 0) return null;
@@ -299,8 +320,13 @@ export function resolveNarratorVoiceForGeneration(
   if (!voiceServesModel(providerId, trimmed, providerConfig?.modelId, providerConfig?.voices))
     return undefined;
   const modelId =
-    providerId === 'qwen-tts' && isQwenCloneVoice(trimmed)
-      ? resolveTTSModelForVoice(providerId, trimmed, providerConfig?.modelId)
+    providerId === 'qwen-tts' && isQwenCloneVoice(trimmed, providerConfig?.voices)
+      ? resolveTTSModelForVoice(
+          providerId,
+          trimmed,
+          providerConfig?.modelId,
+          providerConfig?.voices,
+        )
       : undefined;
   return { providerId, voiceId: trimmed, ...(modelId ? { modelId } : {}) };
 }

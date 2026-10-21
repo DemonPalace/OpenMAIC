@@ -92,14 +92,24 @@ export function isQwenVoiceCloneModel(modelId?: string, configuredModelId?: stri
   );
 }
 
-/** A Qwen catalog voice is provider-owned and must never use the clone model. */
-export function isQwenCatalogVoice(voiceId?: string): boolean {
-  return !!voiceId && TTS_PROVIDERS['qwen-tts'].voices.some((voice) => voice.id === voiceId);
+/** Built-in and explicitly configured Qwen catalogue voices never use the clone model. */
+export function isQwenCatalogVoice(
+  voiceId?: string,
+  configuredVoices?: readonly { id: string }[],
+): boolean {
+  return (
+    !!voiceId &&
+    (configuredVoices?.some((voice) => voice.id === voiceId) ||
+      TTS_PROVIDERS['qwen-tts'].voices.some((voice) => voice.id === voiceId))
+  );
 }
 
 /** A non-catalog Qwen voice ID is an enrolled clone; local profile storage is not authoritative. */
-export function isQwenCloneVoice(voiceId?: string): boolean {
-  return !!voiceId && !isQwenCatalogVoice(voiceId);
+export function isQwenCloneVoice(
+  voiceId?: string,
+  configuredVoices?: readonly { id: string }[],
+): boolean {
+  return !!voiceId && !isQwenCatalogVoice(voiceId, configuredVoices);
 }
 
 /**
@@ -110,9 +120,10 @@ export function resolveTTSModelForVoice(
   providerId: TTSProviderId,
   voiceId: string,
   requestedModelId?: string,
+  configuredVoices?: readonly { id: string }[],
 ): string | undefined {
   if (providerId !== 'qwen-tts') return requestedModelId;
-  if (isQwenCloneVoice(voiceId)) return QWEN_TTS_VOICE_CLONE_MODEL;
+  if (isQwenCloneVoice(voiceId, configuredVoices)) return QWEN_TTS_VOICE_CLONE_MODEL;
   return requestedModelId && !isQwenVoiceCloneModel(requestedModelId)
     ? requestedModelId
     : TTS_PROVIDERS['qwen-tts'].defaultModelId;

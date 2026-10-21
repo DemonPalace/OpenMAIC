@@ -122,7 +122,7 @@ export function advertisedVoices(target: RunNarrationTarget) {
   return getEnabledProvidersWithVoices(providersConfig(target)).flatMap((provider) =>
     provider.voices.map((voice) => {
       const cloneModelGroup =
-        provider.providerId === 'qwen-tts' && isQwenCloneVoice(voice.id)
+        provider.providerId === 'qwen-tts' && isQwenCloneVoice(voice.id, target.connection.voices)
           ? provider.modelGroups.find((group) =>
               group.voices.some((groupVoice) => groupVoice.id === voice.id),
             )
@@ -226,6 +226,7 @@ export function clipProviderConfig(target: RunNarrationTarget, voice: ResolvedVo
       voice.providerId,
       voice.voiceId,
       voice.modelId ?? config?.modelId,
+      config?.voices,
     ),
   };
 }

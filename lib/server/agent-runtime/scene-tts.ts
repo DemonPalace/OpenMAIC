@@ -66,8 +66,8 @@ export async function synthesizeSceneNarration(input: SceneTtsInput): Promise<Sc
   // A configured slot's own model; the legacy server pins apply only to a default.
   const modelId =
     (connection.origin === 'configuration'
-      ? slotTTSModel(providerId, model, voice)
-      : resolveTTSModel(providerId, model, voice)) || '';
+      ? slotTTSModel(providerId, model, voice, connection.voices)
+      : resolveTTSModel(providerId, model, voice, connection.voices)) || '';
   authorizeMediaModel(connection, 'tts', modelId);
   let generated = 0;
   let skipped = 0;
@@ -90,6 +90,7 @@ export async function synthesizeSceneNarration(input: SceneTtsInput): Promise<Sc
           managed: connection.managed,
           publicOnly: connection.userEndpoint,
           voice,
+          ...(connection.voices ? { voices: connection.voices } : {}),
           speed: speech.speed,
           // The provider's own options (a VoxCPM backend, say).
           providerOptions: adapterOptions(connection),

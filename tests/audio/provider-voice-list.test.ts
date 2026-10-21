@@ -185,3 +185,63 @@ it('uses the first configured voice when no separate default is provided', async
   );
   expect(defaultVoiceFor('openai-tts', 'custom-tts')).toBe('alloy');
 });
+
+it('keeps configured Qwen catalogue voices on the ordinary model through selection', async () => {
+  const { isQwenCloneVoice, resolveTTSModelForVoice } = await import('@/lib/audio/constants');
+  const { slotTTSModel } = await import('@/lib/server/provider-config');
+  const { clipVoice, advertisedVoices } =
+    await import('@/lib/server/generation/run/narration-voice');
+  const catalog = [{ id: 'vivian', name: 'Vivian' }];
+  expect(isQwenCloneVoice('vivian', catalog)).toBe(false);
+  expect(isQwenCloneVoice('unlisted-clone', catalog)).toBe(true);
+  expect(isQwenCloneVoice('vivian')).toBe(true);
+  expect(resolveTTSModelForVoice('qwen-tts', 'vivian', 'qwen3-tts', catalog)).toBe('qwen3-tts');
+  expect(slotTTSModel('qwen-tts', 'qwen3-tts', 'vivian', catalog)).toBe('qwen3-tts');
+  const target = {
+    providerId: 'qwen-tts' as const,
+    modelId: 'qwen3-tts',
+    connection: {
+      providerId: 'qwen-tts',
+      modelId: 'qwen3-tts',
+      managed: true,
+      userEndpoint: false,
+      origin: 'configuration' as const,
+      voices: catalog,
+    },
+  };
+  expect(advertisedVoices(target)[0].modelId).toBeUndefined();
+  expect(
+    clipVoice({
+      target,
+      preference: undefined,
+      bound: { providerId: 'qwen-tts', voiceId: 'vivian' },
+      unavailable: new Set(),
+    })?.voice.modelId,
+  ).toBe('qwen3-tts');
+  const groups = getEnabledProvidersWithVoices({
+    'qwen-tts': { enabled: true, isServerConfigured: true, modelId: 'qwen3-tts', voices: catalog },
+  });
+  expect(resolveAgentVoice({ id: 'teacher' } as AgentConfig, 0, groups)?.voiceId).toBe('vivian');
+});
+
+it('recovers stale VC model bindings to the configured ordinary Qwen model', async () => {
+  const { resolveNarratorVoiceBinding } = await import('@/lib/audio/voice-resolver');
+  const catalog = [{ id: 'vivian', name: 'Vivian' }];
+  const config = { enabled: true, isServerConfigured: true, modelId: 'qwen3-tts', voices: catalog };
+  const bound = {
+    providerId: 'qwen-tts' as const,
+    voiceId: 'vivian',
+    modelId: 'qwen3-tts-vc-2026-01-22',
+  };
+  const global = { providerId: 'qwen-tts' as const, voiceId: 'vivian', modelId: 'qwen3-tts' };
+  expect(resolveNarratorVoiceBinding(bound, global, { 'qwen-tts': config }).modelId).toBe(
+    'qwen3-tts',
+  );
+  expect(
+    resolveAgentVoice(
+      { id: 'teacher', voiceConfig: bound } as AgentConfig,
+      0,
+      getEnabledProvidersWithVoices({ 'qwen-tts': config }),
+    )?.modelId,
+  ).toBe('qwen3-tts');
+});

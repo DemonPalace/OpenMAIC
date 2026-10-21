@@ -162,6 +162,8 @@ export interface TTSModelConfig {
   apiKey?: string;
   baseUrl?: string;
   voice: string;
+  /** Provider-local ordinary voices, resolved from stored server configuration. */
+  voices?: ConfiguredTTSVoice[];
   speed?: number;
   format?: string;
   providerOptions?: Record<string, unknown>;
