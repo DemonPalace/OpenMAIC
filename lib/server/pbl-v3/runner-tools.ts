@@ -36,6 +36,7 @@ import { stageSkill, teachingRules, interactionRules } from './skills';
 import { isExplorationStage } from '@/lib/pbl/v3/domain/project/project-schema';
 import { GuidedSkillReview } from './guided-review';
 import { currentTeachingContext, type TeachingHistoryWindow } from './teaching-context';
+import { hasStageCompletion } from './stage-progress';
 
 /** Reserved server-created IDs route to a real role binding; a missing binding fails closed. */
 export async function teachingRunnerConfig(input: {
@@ -75,16 +76,13 @@ export async function teachingRunnerConfig(input: {
   );
   const exploring = isExplorationStage(stage);
   const guided = (stage.kind === 'produce' && !exploring) || stage.kind === 'mentor_say';
+  const completionRecorded = hasStageCompletion(row, stage, bound);
   let turnComplete =
     guided &&
     (review.state.pending?.runId === runId ||
-      (bound.completion?.stageKey === bound.stage_key &&
-        bound.completion.feedbackSeq === bound.feedback_seq &&
-        bound.completion.userMessageSeq === latest?.seq));
-  const completionRecorded =
-    bound.completion?.stageKey === bound.stage_key &&
-    bound.completion.feedbackSeq === bound.feedback_seq &&
-    bound.completion.userMessageSeq === latest?.seq;
+      (completionRecorded &&
+        bound.completion?.feedbackSeq === bound.feedback_seq &&
+        bound.completion?.userMessageSeq === latest?.seq));
   const service = async () => {
     const grant = await (await SandboxStore.open()).sessionGrant(input.sessionId, input.ownerId);
     if (!grant || grant.environment_id !== row.environment_id)
@@ -459,6 +457,17 @@ export async function teachingRunnerConfig(input: {
               ? project.definition.intro.say
               : undefined,
         },
+        learningRoadmap: {
+          currentStep: stageStep(stage),
+          nextStep: milestone.stages[row.state.position.stageIndex + 1]
+            ? stageStep(milestone.stages[row.state.position.stageIndex + 1]!)
+            : row.state.position.milestoneIndex + 1 < project.definition.milestones.length
+              ? 'next_milestone'
+              : 'project_complete',
+          completionRecorded,
+          confirmation:
+            'The learner uses the task bar above the chat input to enter the next step.',
+        },
         milestone: { id: milestone.id, title: milestone.title },
         goal: milestone.goal ?? milestone.title,
         ...(guided
@@ -467,6 +476,11 @@ export async function teachingRunnerConfig(input: {
                 stageKey: bound.stage_key,
                 completionRecorded,
                 activeSection: review.state.activeFile || null,
+                nextSection:
+                  progression[
+                    review.state.reviewedFiles.length + (review.state.activeFile ? 2 : 1)
+                  ] ?? null,
+                finalSection: protocol.final,
               },
             }
           : {}),
@@ -523,13 +537,16 @@ export async function teachingRunnerConfig(input: {
     '\n' +
     teachingRules +
     interactionRules +
+    (completionRecorded
+      ? '\nThe current stage is ALREADY complete for the recorded evidence. Answer any follow-up directly and point to the task-bar Continue action. Do not restart teaching, invent a new required question, or require complete_stage again just because the learner sent another message. Actual artifact changes invalidate the affected review and require reviewing that new version before completion.'
+      : '') +
     (stage.kind === 'mentor_say' || stage.kind === 'dialogue'
       ? '\nThe current classroom stage is read-only: the learner can discuss concepts or record offered decisions, but cannot edit files or run commands. Ask for conceptual explanations and predicted results. Never require an edit, terminal action or newly executed output to finish this stage. Implementation and test execution belong to their dedicated stages; use only recorded evidence during reflection.'
       : stage.kind === 'produce' && stage.writes === 'plan'
         ? '\nPlanning permits changes to PLAN.md only. Source editing, commands and terminals are unavailable. Review the plan and the learner’s reasoning; do not require code implementation or execution for plan approval.'
         : '') +
     (guided
-      ? '\nThe current teachingContext is authoritative. Earlier stage completion does not complete this stage. When activeSection is null, begin with read_next_skill. Never tell the learner to Continue unless complete_stage succeeds for this stage and turn. Use read_next_skill to open one section at a time. After each section use request_skill_review and wait for a NEW student reply. Assess the actual studentResponses bound to currentReview, combining replies when needed. Supply studentFeedback as an explanation of how those replies answer the question; quoting or summarizing is allowed, but never invent a reply. If understanding is missing, clarify rather than advance. A short confirmation is sufficient only when the question asks for confirmation. After final feedback, use complete_stage. A completed tool is only a completion signal; the learner separately confirms progression.'
+      ? '\nThe current teachingContext is authoritative. Earlier stages do not complete this stage. If completionRecorded is true, answer follow-ups without reopening completed sections and point to the task-bar Continue action. Otherwise, when activeSection is null, begin with read_next_skill. Never tell the learner to Continue before complete_stage succeeds for the current stage and evidence. Use read_next_skill to open one section at a time. After delivering a section use request_skill_review and wait for a NEW student reply. Assess the actual studentResponses bound to currentReview, combining replies when needed. Supply studentFeedback as an explanation of how those replies answer the question; quoting or summarizing is allowed, but never invent a reply. If understanding is missing, clarify rather than advance. A short confirmation is sufficient only when the question asks for confirmation. Once final feedback is sufficient, use complete_stage as the last action instead of adding more questions. A completed tool is only a completion signal; the learner separately confirms progression.'
       : exploring
         ? '\nThis is optional, ongoing exploration. Discuss the learner’s goal, inspect current files, make focused changes and explain how to verify them. There is no fixed review sequence or completion signal. Preserve existing work; viewing the report never ends exploration.'
         : repairing

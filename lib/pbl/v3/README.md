@@ -102,6 +102,12 @@ Shared rules preserve one disclosed step per reply, direct help before further
 questioning, meaningful rather than keyword-based feedback, non-repetitive review,
 and fresh approval after a changed artifact. The existing guided-review receipts
 still enforce ordering, real new student messages and current artifact versions.
+The role receives the current/next learning step and remaining section boundaries.
+Only a successful `complete_stage` receipt and valid stage evidence authorize
+Continue; an ordinary follow-up message does not revoke a completed review. File
+changes still invalidate affected approvals, and progression rechecks the actual
+artifact fingerprint. Required decisions must all be submitted before Continue
+is offered. The learner confirms the transition, then the next role opens its step.
 Named Discussion Skills select teaching, not mentor reflection. Public assets contain
 no private course decisions, tests, reference answers or milestone-specific material.
 

@@ -894,6 +894,13 @@ export function allowedStudentActions(
   if (stage.kind === 'mentor_say' || stage.kind === 'dialogue' || stage.kind === 'produce') {
     const collected = state.collected[state.position.milestoneId ?? ''];
     if (
+      stage.kind === 'dialogue' &&
+      !currentMilestone(project, state)!.decisions.every((id) =>
+        collected?.decisions.some((decision) => decision.id === id),
+      )
+    )
+      return stage.studentActions.filter((action) => action !== 'next');
+    if (
       stage.kind === 'mentor_say' &&
       stage.agent === 'discussion' &&
       !collected?.teachingCompleted

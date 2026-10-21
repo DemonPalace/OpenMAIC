@@ -133,7 +133,36 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
     ],
   } as unknown as LearningView;
   let openings = 0;
+  let advances = 0;
   await page.route('**/api/pbl/v3**', async (route) => {
+    const command =
+      route.request().method() === 'POST' ? route.request().postDataJSON()?.command : undefined;
+    if (command?.type === 'chat') {
+      // The server preserves a completed review while answering a follow-up.
+      view.activitySequence!++;
+      return route.fulfill({ json: { view } });
+    }
+    if (command?.type === 'next') {
+      expect(view.actions).toContain('next');
+      advances++;
+      view.stage = {
+        kind: 'dialogue',
+        agent: 'discussion',
+        studentActions: ['chat', 'decide', 'next'],
+      } as LearningView['stage'];
+      view.state.position.stageIndex = 1;
+      view.actions = ['chat', 'decide'];
+      view.decisions = [
+        {
+          id: 'storage',
+          prompt: 'Where will tasks live?',
+          options: [{ id: 'list', label: 'A Python list' }],
+        },
+      ];
+      view.needsOpening = true;
+      view.revision++;
+      return route.fulfill({ json: { view } });
+    }
     if (
       route.request().method() === 'POST' &&
       route.request().postDataJSON()?.command?.type === 'begin'
@@ -203,21 +232,23 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
   await expect(task.getByRole('button', { name: /Current task details/ })).toHaveCount(0);
   await expect(details).toHaveCount(0);
   const originalStage = view.stage;
-  view.stage = {
-    kind: 'dialogue',
-    agent: 'discussion',
-    studentActions: ['chat', 'decide', 'next'],
-  } as LearningView['stage'];
-  view.state.position.stageIndex = 1;
-  view.decisions = [
-    {
-      id: 'storage',
-      prompt: 'Where will tasks live?',
-      options: [{ id: 'list', label: 'A Python list' }],
-    },
-  ];
+  const enterDecisions = task.getByRole('button', {
+    name: 'Continue to Make your decisions',
+    exact: true,
+  });
+  await expect(enterDecisions).toHaveCount(0);
+  view.actions = ['chat', 'next'];
   view.revision++;
   await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
+  await expect(enterDecisions).toBeVisible();
+  await page.getByLabel('Your message', { exact: true }).fill('What should I do next?');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(enterDecisions).toBeVisible();
+  await enterDecisions.click();
+  await expect.poll(() => advances).toBe(1);
+  await expect.poll(() => openings).toBe(2);
+  await expect(task.getByText('2/7', { exact: true })).toBeVisible();
+  await expect(enterDecisions).toHaveCount(0);
   const composerBefore = await page.getByLabel('Your message', { exact: true }).boundingBox();
   await task.getByRole('button', { name: /Current task details/ }).click();
   await expect(details.getByText('Where will tasks live?')).toBeVisible();
@@ -229,6 +260,7 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
   await expect(details).toHaveCount(0);
   await expect(task.getByRole('button', { name: /Current task details/ })).toBeFocused();
   view.stage = originalStage;
+  view.actions = ['chat'];
   view.decisions = [];
   view.state.introCompleted = true;
   view.state.position = { milestoneIndex: 1, milestoneId: 'normalize', stageIndex: 2 };

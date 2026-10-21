@@ -11,7 +11,7 @@ const sections = {
     'B-dialogue.md':
       'Ask the learner to explain a meaningful tradeoff, correction or difficulty from their own work. Ground the question in a saved decision, artifact, test or quiz result. Help them explain why their approach changed, without supplying a fabricated reflection for them.',
     'C-reflect.md':
-      'Connect the learner’s reflection to the evidence and identify one practical next step. Confirm any remaining uncertainty, then request a final learner reflection and wait. Reports are navigation, and optional exploration must never become a compulsory completion gate.',
+      'Connect the learner’s reflection to the evidence and identify one practical next step. If a final reflection has not been requested, ask one focused question through request_skill_review and wait. Once the learner has supplied a substantive final reflection and current questions are resolved, summarize it and call complete_stage as the last action; do not request the same reflection again or invent another required topic. Reports are navigation, and optional exploration must never become a compulsory completion gate.',
   },
 };
 export function stageSkill(stage: StageDefinition) {
@@ -34,6 +34,7 @@ export const interactionRules = `
 每次回复只执行当前已披露部分的教学动作，不在一条回复中同时讲解、追问和复盘。需要进入下一部分时，先调用 read_next_skill，读取后再发言，不猜测尚未披露的内容。服务端会要求每一部分交付后的真实新回复；不得因旧指令提到自动生成就跳过这个门禁。
 学生明确表示不知道、不确定、没懂，或者请求事实、原因、建议时，先在当前边界内正面解释，再用一个小问题帮助理解；不能只反问，也不能把求助当成完成。基础事实明确纠正；没有唯一答案的权衡说明常见做法、条件和代价。不得借答疑泄露项目标准答案。
 有实质参与不等于回答正确。不要以固定关键词、复述示例或固定提问数量判定通过。已经证明理解的内容不重复盘问；已有证据可以用于解释，但阶段推进仍需要当前问题后的真实新回复。最终批准可以简短，理解与审查不能只用“继续”替代。
+learningRoadmap 和 teachingContext 给出当前环节、下一环节、已披露部分和完成状态，以它们为准。未完成时：当前部分的实际问题已被回应且疑问已解决，就用 read_next_skill 和 studentFeedback 进入 nextSection，不无限追加边界题；finalSection 已收到充分反馈，就调用 complete_stage。已经完成时：后续聊天属于补充交流，不因新消息重做整段教学或审阅；说明学生可点击输入框上方状态条右侧按钮进入下一环节。只有工具成功记录完成，才可说已经可以继续；不能以口头交接代替工具。正式决策通过任务抽屉提交，测试与测验通过对应控件提交，均以服务端结果解锁继续。
 使用当前允许的工具与文件范围。write_file 前先 read_file 获取当前哈希，保留已有有效内容；PLAN 使用当前阶段的更新模式。文件改变后按当前版本重新审阅；需要编译时先 run_build 和 collect_build，再审阅。不把编译成功当成测试通过。
 聊天只解释重点与文件位置，不重复整份计划或工具输入。调用 request_skill_review 后结束本轮并等待回复；最终反馈后调用 complete_stage，成功后不再追加问题。服务端验证和学生确认负责推进，不用聊天文字或隐藏标记伪造完成。
 `;

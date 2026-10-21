@@ -32,6 +32,7 @@ import {
 } from './evaluation';
 import { installedProject } from './catalog';
 import { LearningStore, type Study, type RoleBinding } from './store';
+import { hasStageCompletion } from './stage-progress';
 import {
   learningWorkspaceId,
   withLearningWorkspaceAccess,
@@ -621,17 +622,7 @@ export async function commandStudy(
       if (role && (stage.kind === 'mentor_say' || stage.kind === 'produce')) {
         const bindings = await store.roles(id);
         const binding = bindings.find((b) => b.role === role && b.stage_key === stageKey(row));
-        const meta = binding ? await agents.getSession(binding.session_id) : null;
-        const latestUser = binding
-          ? (await listAgentUserMessages(agents, binding.session_id)).at(-1)
-          : null;
-        if (
-          meta?.status !== 'succeeded' ||
-          ((stage.kind === 'mentor_say' || stage.kind === 'produce') &&
-            (binding?.completion?.stageKey !== stageKey(row) ||
-              binding.completion.feedbackSeq !== binding.feedback_seq ||
-              binding.completion.userMessageSeq !== latestUser?.seq))
-        )
+        if (!hasStageCompletion(row, stage, binding))
           throw sandboxConflict('Complete the current teaching interaction first.');
       }
       if (stage.kind === 'produce' || (stage.kind === 'check' && stage.checker === 'tests')) {
@@ -844,11 +835,7 @@ export async function learningView(principal: OwnerPrincipal, id: string): Promi
     actions.push('compile');
   const guided =
     stage.kind === 'mentor_say' || (stage.kind === 'produce' && !isExplorationStage(stage));
-  const approvalCurrent =
-    roleRun?.status === 'succeeded' &&
-    binding?.completion?.stageKey === stageKey(row) &&
-    binding.completion.feedbackSeq === binding.feedback_seq &&
-    binding.completion.userMessageSeq === latestUserSeq;
+  const approvalCurrent = hasStageCompletion(row, stage, binding);
   return {
     id,
     revision: row.revision,

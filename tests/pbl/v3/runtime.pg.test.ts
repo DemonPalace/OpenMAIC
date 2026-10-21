@@ -461,29 +461,36 @@ async function guided(role: 'teaching' | 'plan' | 'code') {
       row.state.collected,
     );
   }
-  if (!(await store.get(studyId, principal.ownerId)).state.introCompleted) {
-    // Generic Agent APIs must not make an old completion valid for a new student message.
-    const binding = (await store.roles(studyId)).find((binding) => binding.role === 'mentor')!;
-    await agents.postUserMessage(
-      binding.session_id,
-      { text: 'I still have a question.' },
-      { expectedOwnerId: principal.ownerId },
-    );
-    const meta = await agents.claimNextSession('direct-worker', process.pid, {
-      sessionId: binding.session_id,
-      leaseTtlMs: 10000,
-      maxAttempts: 5,
-    });
-    await agents.finishSession(binding.session_id, 'direct-worker', {
-      status: 'succeeded',
-      expectedAttempt: meta!.attempt,
-    });
-    expect((await learningView(principal, studyId)).actions).not.toContain('next');
-    await expect(command('next')).rejects.toThrow('teaching interaction');
-    await runTools('I checked the current part and confirm it.', async (config) => {
-      await invoke(config, 'complete_stage', { studentFeedback: 'I checked the current part' });
-    });
-  }
+  // Generic Agent messages also preserve a valid stage approval; they cannot advance it.
+  const approved = await store.get(studyId, principal.ownerId);
+  const key = `${approved.state.position.milestoneId}:${approved.state.position.stageIndex}`;
+  const binding = (await store.roles(studyId)).find((binding) => binding.stage_key === key)!;
+  await agents.postUserMessage(
+    binding.session_id,
+    { text: 'I still have a question.' },
+    { expectedOwnerId: principal.ownerId },
+  );
+  const meta = await agents.claimNextSession('direct-worker', process.pid, {
+    sessionId: binding.session_id,
+    leaseTtlMs: 10000,
+    maxAttempts: 5,
+  });
+  const followUp = await teachingRunnerConfig({
+    sessionId: binding.session_id,
+    ownerId: principal.ownerId,
+    workerId: 'direct-worker',
+    attempt: meta!.attempt,
+    signal: new AbortController().signal,
+  });
+  expect(followUp.systemPrompt).toContain('"completionRecorded":true');
+  await agents.finishSession(binding.session_id, 'direct-worker', {
+    status: 'succeeded',
+    expectedAttempt: meta!.attempt,
+  });
+  expect((await learningView(principal, studyId)).actions).toContain('next');
+  expect((await store.get(studyId, principal.ownerId)).state.position).toEqual(
+    approved.state.position,
+  );
   await command('next');
 }
 describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
@@ -631,14 +638,58 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
         await roleTurn('I checked this part and approve the current version.', async (config) => {
           await invoke(config, 'complete_stage', { studentFeedback: 'I checked this part' });
         });
+        const approved = await learningView(principal, id);
+        expect(approved.actions).toContain('next');
+        const completedPosition = approved.state.position;
+        // A normal follow-up is not a request to revoke an already recorded review.
+        await roleTurn('What should I do next?', async (config) => {
+          expect(config.systemPrompt).toContain('"completionRecorded":true');
+          expect(config.systemPrompt).toContain('ALREADY complete');
+          expect(config.isTurnComplete()).toBe(false); // Answer the new question normally.
+        });
+        const afterFollowUp = await learningView(principal, id);
+        expect(afterFollowUp.actions).toContain('next');
+        expect(afterFollowUp.state.position).toEqual(completedPosition);
         await send('next');
+        const entered = await learningView(principal, id);
+        if (entered.state.status !== 'completed') {
+          expect(entered.state.position).not.toEqual(completedPosition);
+          expect(entered.needsOpening).toBe(true);
+          const opening = (await send('begin')) as { sessionId: string };
+          const openingEvents = await agents.readEventsAfter(opening.sessionId, 0, 1000);
+          expect(openingEvents.some((event) => event.type === 'pbl_stage_entered')).toBe(true);
+          expect(openingEvents.at(-1)?.data).toMatchObject({ pblOpening: true });
+          const claimed = await agents.claimNextSession('opening-check-worker', process.pid, {
+            sessionId: opening.sessionId,
+            leaseTtlMs: 30000,
+            maxAttempts: 5,
+          });
+          const config = await teachingRunnerConfig({
+            sessionId: opening.sessionId,
+            ownerId: principal.ownerId,
+            workerId: 'opening-check-worker',
+            attempt: claimed!.attempt,
+            signal: new AbortController().signal,
+          });
+          expect(config.systemPrompt).toContain('"automatic":true');
+          expect(config.systemPrompt).toContain(
+            `"currentStep":"${entered.milestones![entered.state.position.milestoneIndex]!.stages[entered.state.position.stageIndex]}"`,
+          );
+          await agents.finishSession(opening.sessionId, 'opening-check-worker', {
+            status: 'succeeded',
+            expectedAttempt: claimed!.attempt,
+          });
+        }
       };
       await send('prepare');
       const initialEnv = (await store.get(id, principal.ownerId)).environment_id!;
       for (let milestone = 0; milestone < 2; milestone++) {
         await guidedStage();
         if (milestone === 0) {
+          expect((await learningView(principal, id)).actions).not.toContain('next');
+          await expect(send('next')).rejects.toThrow('not available');
           await send('decide', { decisionId: 'format', chosen: 'concat' });
+          expect((await learningView(principal, id)).actions).toContain('next');
           await send('next');
         }
         const oldPlan = await (
@@ -941,7 +992,7 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
   it('prepares once and runs the complete learning flow with actual Python tests', async () => {
     await command('prepare');
     await guided('teaching'); // project opening and concepts share the first step
-    await expect(command('next')).rejects.toThrow('all milestone decisions');
+    await expect(command('next')).rejects.toThrow('not available');
     await command('decide', { decisionId: 'format', chosen: 'format' });
     await command('next');
     await guided('plan');
@@ -1021,7 +1072,7 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
       const mentor = (await store.roles(studyId)).find((binding) => binding.role === 'mentor')!;
       expect(mentor.stage_key).toBe('greeting:6');
       expect(config.systemPrompt).toContain(
-        '"teachingContext":{"stageKey":"greeting:6","completionRecorded":false,"activeSection":null}',
+        '"teachingContext":{"stageKey":"greeting:6","completionRecorded":false,"activeSection":null,',
       );
       expect(config.systemPrompt).toContain('"recordedEvidence"');
       expect(config.systemPrompt).toContain('2 checks passed');
