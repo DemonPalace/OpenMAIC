@@ -418,3 +418,19 @@ it('accepts a standalone defaultVoice without requiring a catalogue', () => {
     parseModelConfig(JSON.stringify(input)).providers?.['custom-tts'].options?.defaultVoice,
   ).toBe('vivian');
 });
+
+it.each(['voice::variant', '::voice', 'voice::'])(
+  'rejects the roster delimiter in configured voice IDs: %s',
+  (id) => {
+    expect(() =>
+      parseModelConfig(JSON.stringify(config([{ id, name: 'Invalid binding' }]))),
+    ).toThrow(/providers.custom-tts.voices.0.id.*::/);
+  },
+);
+
+it('allows single colons used by provider voice identifiers', () => {
+  const parsed = parseModelConfig(
+    JSON.stringify(config([{ id: 'voice:variant', name: 'Variant' }])),
+  );
+  expect(parsed.providers?.['custom-tts'].voices?.[0].id).toBe('voice:variant');
+});

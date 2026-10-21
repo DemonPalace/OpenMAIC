@@ -121,7 +121,15 @@ const providerVoicesSchema = z
   .array(
     z
       .object({
-        id: z.string().trim().min(1).max(256),
+        id: z
+          .string()
+          .trim()
+          .min(1)
+          .max(256)
+          .refine(
+            (id) => !id.includes('::'),
+            'voice id must not contain the roster binding delimiter ::',
+          ),
         name: z.string().trim().min(1).max(256),
         language: z.string().trim().min(1).max(64).optional(),
         gender: z.enum(['male', 'female', 'neutral']).optional(),
