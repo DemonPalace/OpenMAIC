@@ -324,12 +324,11 @@ function crossCheck(
     if (provider.voices && !preset.capabilities.tts) {
       issues.push(`providers.${id}.voices: only TTS presets support a voice catalogue`);
     }
-    if (provider.voices && provider.options?.defaultVoice !== undefined) {
+    if (provider.options?.defaultVoice !== undefined) {
       const voice = provider.options.defaultVoice;
-      if (
-        typeof voice !== 'string' ||
-        !provider.voices.some((entry) => entry.id === voice.trim())
-      ) {
+      if (typeof voice !== 'string' || !voice.trim()) {
+        issues.push(`providers.${id}.options.defaultVoice: must be a nonblank string`);
+      } else if (provider.voices && !provider.voices.some((entry) => entry.id === voice.trim())) {
         issues.push(
           `providers.${id}.options.defaultVoice: must name a voice in the configured voices list`,
         );

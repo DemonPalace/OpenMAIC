@@ -399,3 +399,22 @@ it.each([
     ).voice,
   ).toBe(voiceId);
 });
+
+it.each([42, true, false, '', '   '])(
+  'rejects malformed standalone defaultVoice: %j',
+  (defaultVoice) => {
+    const input = config();
+    Object.assign(input.providers['custom-tts'], { options: { defaultVoice } });
+    expect(() => parseModelConfig(JSON.stringify(input))).toThrow(
+      /providers.custom-tts.options.defaultVoice.*nonblank string/,
+    );
+  },
+);
+
+it('accepts a standalone defaultVoice without requiring a catalogue', () => {
+  const input = config();
+  Object.assign(input.providers['custom-tts'], { options: { defaultVoice: 'vivian' } });
+  expect(
+    parseModelConfig(JSON.stringify(input)).providers?.['custom-tts'].options?.defaultVoice,
+  ).toBe('vivian');
+});
