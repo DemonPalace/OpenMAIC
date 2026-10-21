@@ -9,7 +9,7 @@ const event = (
   id: number,
   type: string,
   data: unknown,
-  attempt = 1,
+  attempt = type === 'user_message' || type === 'pbl_stage_entered' ? 0 : 1,
 ): PersistedAgentSessionEvent => ({ id, type, data, attempt, ts: id });
 const message = (text: string) => ({
   message: {
@@ -18,6 +18,66 @@ const message = (text: string) => ({
   },
 });
 describe('student conversation projection', () => {
+  it('keeps queued student messages and successful worker replies in one turn across exchanges', () => {
+    const history: PersistedAgentSessionEvent[] = [];
+    for (let round = 0; round < 3; round++) {
+      const id = round * 4 + 1;
+      history.push(event(id, 'user_message', { text: `Question ${round}`, delivery: 'queued' }));
+      const waiting = projectConversation(history, 'discussion', true, 'queued');
+      expect(waiting.at(-1)).toMatchObject({ id: `turn-${id}`, status: 'running', parts: [] });
+      history.push(event(id + 1, round ? 'session_resumed' : 'session_start', {}));
+      const started = projectConversation(history, 'discussion', true, 'running');
+      expect(started).toEqual(waiting);
+      history.push(
+        event(id + 2, 'message_end', message(`Answer ${round}`)),
+        event(id + 3, 'session_end', { status: 'succeeded' }),
+      );
+      const replay = projectConversation(history, 'discussion', false, 'succeeded');
+      expect(replay).toHaveLength((round + 1) * 2);
+      expect(
+        replay.filter((entry) => entry.speaker === 'discussion').map((entry) => entry.status),
+      ).toEqual(Array(round + 1).fill('succeeded'));
+      expect(replay.at(-1)).toMatchObject({
+        id: `turn-${id}`,
+        parts: [{ text: `Answer ${round}` }],
+      });
+    }
+  });
+  it('does not interpret control-event generations as interrupted worker attempts', () => {
+    const history = [
+      event(1, 'user_message', { text: 'Start', pblOpening: true }, 3),
+      event(2, 'session_resumed', {}, 4),
+      event(3, 'message_start', message('Answer'), 4),
+      event(4, 'material_extraction', { status: 'succeeded' }, 0),
+      event(5, 'message_end', message('Answer complete'), 4),
+      event(6, 'session_end', { status: 'succeeded' }, 4),
+    ];
+    const output = projectConversation(history, 'discussion', false);
+    expect(output).toHaveLength(1);
+    expect(output[0]).toMatchObject({ status: 'succeeded', parts: [{ text: 'Answer complete' }] });
+  });
+  it('preserves a real interrupted attempt and starts the next student reply without a phantom failure', () => {
+    const history = [
+      event(1, 'user_message', { text: 'Help' }),
+      event(2, 'session_start', {}),
+      event(3, 'message_update', message('Partial')),
+      event(4, 'session_resumed', {}, 2),
+      event(5, 'message_end', message('Recovered'), 2),
+      event(6, 'session_end', { status: 'succeeded' }, 2),
+      event(7, 'user_message', { text: 'Continue' }),
+      event(8, 'session_resumed', {}),
+      event(9, 'session_end', { status: 'failed' }),
+    ];
+    const output = projectConversation(history, 'discussion', false, 'failed');
+    expect(output.map((entry) => entry.status)).toEqual([
+      undefined,
+      'interrupted',
+      'succeeded',
+      undefined,
+      'failed',
+    ]);
+    expect(output[1]?.parts[0]).toMatchObject({ text: 'Partial', streaming: false });
+  });
   it('replays durable stage dividers and hides system opening requests', () => {
     const boundary = {
       milestoneId: 'one',

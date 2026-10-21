@@ -1231,6 +1231,9 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
       const settled = await agents.getSession(queued.sessionId);
       expect(settled?.status, settled?.error).toBe('succeeded');
       const restored = await learningView(principal, studyId);
+      expect(
+        restored.conversation?.filter((entry) => !entry.boundary && entry.speaker !== 'user'),
+      ).toMatchObject([{ status: 'succeeded' }]);
       expect(restored.messages.some((m) => m.text === 'What should greet(name) return?')).toBe(
         true,
       );
@@ -1280,6 +1283,10 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
       expect(mocked.modelCalls - nextCalls).toBe(1);
       expect((await agents.getSession(queued.sessionId))?.status).toBe('succeeded');
       expect((await store.binding(queued.sessionId))?.guided?.activeFile).toBe('B-dialogue.md');
+      const replayed = await learningView(principal, studyId);
+      expect(
+        replayed.conversation?.filter((entry) => !entry.boundary && entry.speaker !== 'user'),
+      ).toMatchObject([{ status: 'succeeded' }, { status: 'succeeded' }]);
       // Inspect the actual connector input AFTER Pi's conversion and toModelMessages.
       const request = mocked.modelRequests.at(-1)!;
       expect(

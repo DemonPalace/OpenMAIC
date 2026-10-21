@@ -17,6 +17,18 @@ const visibleTools = {
   manage_file: 'manage',
   read_next_skill: 'skill',
 } as const;
+const runEvents = new Set([
+  'session_start',
+  'session_resumed',
+  'session_end',
+  'session_interrupted',
+  'thinking_end',
+  'message_start',
+  'message_update',
+  'message_end',
+  'tool_execution_start',
+  'tool_execution_end',
+]);
 
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -120,16 +132,11 @@ export function projectConversation(
     return assistant;
   };
   for (const event of events) {
-    if (attempt !== undefined && event.attempt !== attempt) {
-      settle(event.ts);
-      if (assistant?.status === 'running') assistant.status = 'interrupted';
-      assistant = undefined;
-    }
-    attempt = event.attempt;
     const data = record(event.data);
     if (event.type === 'pbl_stage_entered') {
       settle(event.ts);
       assistant = undefined;
+      attempt = undefined;
       entries.push({
         id: `stage-${event.id}`,
         at: event.ts,
@@ -143,6 +150,7 @@ export function projectConversation(
       settle(event.ts);
       if (assistant?.status === 'running') assistant.status = 'succeeded';
       assistant = undefined;
+      attempt = undefined;
       if (!data.pblOpening && typeof data.text === 'string')
         entries.push({
           id: `user-${event.id}`,
@@ -153,6 +161,16 @@ export function projectConversation(
       getAssistant(event);
       continue;
     }
+    // Control-plane messages have attempt 0 (or the previous generation for
+    // automatic openings). Their waiting turn belongs to the NEXT worker run.
+    // Only run events can establish or interrupt an execution attempt.
+    if (!runEvents.has(event.type)) continue;
+    if (attempt !== undefined && event.attempt !== attempt) {
+      settle(event.ts);
+      if (assistant?.status === 'running') assistant.status = 'interrupted';
+      assistant = undefined;
+    }
+    attempt = event.attempt;
     if (event.type === 'session_start' || event.type === 'session_resumed') {
       getAssistant(event);
       continue;
