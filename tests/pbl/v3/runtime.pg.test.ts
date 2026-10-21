@@ -31,6 +31,7 @@ const mocked = vi.hoisted(() => ({
   responses: [] as Array<Array<Record<string, unknown>>>,
   modelCalls: 0,
   modelRequests: [] as ModelMessage[][],
+  modelSystems: [] as (string | undefined)[],
 }));
 vi.mock('@/lib/persistence/server-provider', () => ({
   getServerPersistenceProvider: async () => ({
@@ -256,7 +257,8 @@ vi.mock('@/lib/server/agent-runtime/event-notify-bus', () => ({
   subscribeAgentEventWakeup: () => () => {},
 }));
 vi.mock('@/lib/ai/llm', () => ({
-  streamLLM: (options: { messages: ModelMessage[] }) => {
+  streamLLM: (options: { messages: ModelMessage[]; system?: string }) => {
+    mocked.modelSystems.push(options.system);
     mocked.modelRequests.push(structuredClone(options.messages));
     return {
       fullStream: (async function* () {
@@ -324,6 +326,33 @@ async function freshStudy() {
     });
   await send('prepare');
   return { id: row.id, send };
+}
+function modelFinish(finishReason: string) {
+  return {
+    type: 'finish',
+    finishReason,
+    totalUsage: {
+      inputTokens: 1,
+      outputTokens: 1,
+      inputTokenDetails: { cacheReadTokens: 0, cacheWriteTokens: 0 },
+      outputTokenDetails: { reasoningTokens: 0 },
+      totalTokens: 2,
+    },
+  };
+}
+function textResponse(text: string) {
+  return [{ type: 'text-delta', text }, modelFinish('stop')];
+}
+function toolResponse(calls: { name: string; input: Record<string, unknown> }[]) {
+  return [
+    ...calls.map((call) => ({
+      type: 'tool-call',
+      toolCallId: randomUUID(),
+      toolName: call.name,
+      input: call.input,
+    })),
+    modelFinish('tool-calls'),
+  ];
 }
 async function runTools(
   instruction: string,
@@ -585,6 +614,13 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
           signal: new AbortController().signal,
         });
         await body(config);
+        const inputs = await agents.listUserMessages(queued.sessionId);
+        await agents.markUserMessageDelivered(
+          queued.sessionId,
+          'journey-worker',
+          claimed!.attempt,
+          inputs.at(-1)!.seq,
+        );
         await agents.finishSession(queued.sessionId, 'journey-worker', {
           status: 'succeeded',
           expectedAttempt: claimed!.attempt,
@@ -635,9 +671,34 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
             await invoke(config, 'write_file', { ...write, expectedHash: digest('') });
             await invoke(config, 'request_skill_review', { question: 'Review the repaired plan.' });
           });
-        await roleTurn('I checked this part and approve the current version.', async (config) => {
-          await invoke(config, 'complete_stage', { studentFeedback: 'I checked this part' });
+        const queued = (await send('chat', {
+          text: 'I checked this part and approve the current version.',
+        })) as { sessionId: string };
+        const handle = startAgentRunner();
+        await handle.stop();
+        const meta = await agents.claimNextSession(handle.workerId, process.pid, {
+          sessionId: queued.sessionId,
+          leaseTtlMs: 30000,
+          maxAttempts: 5,
         });
+        // Reproduce a fluent but uncommitted handoff for EVERY guided stage.
+        // The runner must close the same real turn, never fabricate learner input.
+        mocked.responses = [
+          textResponse('All done. Click Continue.'),
+          toolResponse([
+            { name: 'complete_stage', input: { studentFeedback: 'I checked this part' } },
+          ]),
+        ];
+        const beforeCalls = mocked.modelCalls;
+        const realInputs = await agents.listUserMessages(queued.sessionId);
+        await runSession({ running: new Map(), shuttingDown: false }, meta!);
+        expect(mocked.modelCalls - beforeCalls).toBe(2);
+        const settled = await agents.getSession(queued.sessionId);
+        expect(settled?.status, settled?.error).toBe('succeeded');
+        expect(await agents.listUserMessages(queued.sessionId)).toEqual(realInputs);
+        const request = mocked.modelRequests.at(-1)!;
+        expect(request.at(-1)?.role).not.toBe('assistant');
+        expect(mocked.modelSystems.at(-1)).toContain('Runtime continuation:');
         const approved = await learningView(principal, id);
         expect(approved.actions).toContain('next');
         const completedPosition = approved.state.position;
@@ -674,6 +735,13 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
           expect(config.systemPrompt).toContain('"automatic":true');
           expect(config.systemPrompt).toContain(
             `"currentStep":"${entered.milestones![entered.state.position.milestoneIndex]!.stages[entered.state.position.stageIndex]}"`,
+          );
+          const inputs = await agents.listUserMessages(opening.sessionId);
+          await agents.markUserMessageDelivered(
+            opening.sessionId,
+            'opening-check-worker',
+            claimed!.attempt,
+            inputs.at(-1)!.seq,
           );
           await agents.finishSession(opening.sessionId, 'opening-check-worker', {
             status: 'succeeded',
@@ -1214,6 +1282,72 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
       canRetry: true,
     });
   });
+  it('repairs a prose-only guided turn once, fails explicitly if still unclosed, and retries without a new learner reply', async () => {
+    const original = studyId;
+    const study = await freshStudy();
+    studyId = study.id;
+    const handle = startAgentRunner();
+    await handle.stop();
+    const claim = (id: string) =>
+      agents.claimNextSession(handle.workerId, process.pid, {
+        sessionId: id,
+        leaseTtlMs: 30000,
+        maxAttempts: 5,
+      });
+    const queued = (await study.send('chat')) as { sessionId: string };
+    mocked.responses = [
+      toolResponse([
+        { name: 'read_next_skill', input: {} },
+        { name: 'request_skill_review', input: { question: 'Explain the return value.' } },
+      ]),
+    ];
+    await runSession({ running: new Map(), shuttingDown: false }, (await claim(queued.sessionId))!);
+    expect((await agents.getSession(queued.sessionId))?.status).toBe('succeeded');
+    const reply = 'A returned value goes back to the caller.';
+    await command('chat', { text: reply });
+    const inputs = await agents.listUserMessages(queued.sessionId);
+    const before = mocked.modelCalls;
+    mocked.responses = [textResponse('You can continue now.'), textResponse('Click Continue.')];
+    await runSession({ running: new Map(), shuttingDown: false }, (await claim(queued.sessionId))!);
+    expect(mocked.modelCalls - before).toBe(2); // bounded, not an autonomous retry loop
+    expect((await agents.getSession(queued.sessionId))?.status).toBe('failed');
+    expect((await agents.getSession(queued.sessionId))?.error).toContain('without recording');
+    expect((await learningView(principal, study.id)).actions).not.toContain('next');
+    expect((await store.binding(queued.sessionId))?.guided?.activeFile).toBe('A-teach.md');
+    expect(await agents.listUserMessages(queued.sessionId)).toEqual(inputs);
+    // The durable assistant stop is not grounds to early-settle an unclosed teaching turn.
+    // Emulate an older release that incorrectly settled the same prose-only run as succeeded.
+    await pool.query("UPDATE agent_sessions SET status='succeeded' WHERE id=$1", [
+      queued.sessionId,
+    ]);
+    expect((await learningView(principal, study.id)).roleRun).toMatchObject({
+      status: 'failed',
+      failure: 'incomplete',
+      canRetry: true,
+    });
+    await study.send('retry');
+    const retried = await claim(queued.sessionId);
+    const retryRequestIndex = mocked.modelRequests.length;
+    mocked.responses = [
+      toolResponse([{ name: 'read_next_skill', input: { studentFeedback: reply } }]),
+      toolResponse([
+        { name: 'request_skill_review', input: { question: 'How does the caller use it?' } },
+      ]),
+    ];
+    await runSession({ running: new Map(), shuttingDown: false }, retried!);
+    const settled = await agents.getSession(queued.sessionId);
+    expect(settled?.status, settled?.error).toBe('succeeded');
+    expect((await store.binding(queued.sessionId))?.guided?.activeFile).toBe('B-dialogue.md');
+    expect(await agents.listUserMessages(queued.sessionId)).toEqual(inputs);
+    expect(mocked.modelRequests[retryRequestIndex]?.at(-1)).toMatchObject({
+      role: 'user',
+      content: reply,
+    });
+    expect(mocked.modelSystems.at(-1)).toContain('\"activeSection\":\"B-dialogue.md\"');
+    expect(mocked.modelSystems.at(-1)).toContain('Authoritative live teaching state');
+    expect((await learningView(principal, study.id)).actions).not.toContain('next');
+    studyId = original;
+  }, 30000);
   it.each(['mixed', 'invalid-tail', 'failed-review'] as const)(
     'stops teaching at a saved review in a %s batch through the real Pi loop',
     async (batch) => {

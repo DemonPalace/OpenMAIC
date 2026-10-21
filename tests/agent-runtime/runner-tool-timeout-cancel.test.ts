@@ -376,6 +376,7 @@ describe('runner: teaching turn deadline', () => {
         allowedToolNames: new Set([TOOL_NAME]),
         // A review receipt can be committed before the tool finishes. The
         // real teaching boundary then exits locally without a model error.
+        needsTurnReceipt: () => false,
         isTurnComplete: () => outcome === 'timeout-at-review' && captured.length > 0,
       });
       useResponses([[toolCallPart(), finish('tool-calls')]]);
@@ -452,6 +453,7 @@ describe('runner: teaching turn deadline', () => {
       tools: [],
       systemPrompt: 'Teaching test',
       allowedToolNames: new Set(),
+      needsTurnReceipt: () => false,
       isTurnComplete: () => false,
     });
     mocks.streamLLM.mockImplementation(() => ({
@@ -499,6 +501,7 @@ describe('runner: teaching turn deadline', () => {
       tools: [],
       systemPrompt: 'Teaching test',
       allowedToolNames: new Set(),
+      needsTurnReceipt: () => false,
       isTurnComplete: () => false,
     });
     mocks.streamLLM.mockImplementation(() => ({
@@ -547,6 +550,7 @@ describe('runner: teaching turn deadline', () => {
                   tools: [],
                   systemPrompt: 'Teaching test',
                   allowedToolNames: new Set(),
+                  needsTurnReceipt: () => false,
                   isTurnComplete: () => false,
                 });
             });

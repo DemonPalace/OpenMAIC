@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 vi.mock('server-only', () => ({}));
-import { projectConversation } from '@/lib/server/pbl-v3/conversation';
+import { projectConversation, learningRunFailure } from '@/lib/server/pbl-v3/conversation';
 import { stageSkill, interactionRules } from '@/lib/server/pbl-v3/skills';
 import type { PersistedAgentSessionEvent } from '@openmaic/storage';
 import type { StageDefinition } from '@/lib/pbl/v3/domain/project/project-schema';
@@ -18,6 +18,15 @@ const message = (text: string) => ({
   },
 });
 describe('student conversation projection', () => {
+  it('distinguishes an unclosed review from model or provider failures', () => {
+    expect(
+      learningRunFailure(
+        'Teaching turn ended without recording a review question or stage completion. Retry to continue the current review.',
+      ),
+    ).toBe('incomplete');
+    expect(learningRunFailure('request timed out')).toBe('timeout');
+    expect(learningRunFailure('401 unauthorized')).toBe('authentication');
+  });
   it('keeps queued student messages and successful worker replies in one turn across exchanges', () => {
     const history: PersistedAgentSessionEvent[] = [];
     for (let round = 0; round < 3; round++) {

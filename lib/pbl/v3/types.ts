@@ -37,7 +37,7 @@ export interface LearningView {
   needsOpening?: boolean;
   roleRun: {
     status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'missing';
-    failure: 'authentication' | 'timeout' | 'unavailable' | null;
+    failure: import('./conversation').LearningRunFailure | null;
     canRetry: boolean;
   } | null;
   decisions: { id: string; prompt: string; options: { id: string; label: string }[] }[];

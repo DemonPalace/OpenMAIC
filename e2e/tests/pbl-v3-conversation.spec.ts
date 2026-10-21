@@ -256,9 +256,18 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
   });
   await expect(enterDecisions).toHaveCount(0);
   view.actions = ['chat', 'next'];
+  view
+    .conversation!.at(-1)!
+    .parts.push({ kind: 'tool', id: 'completion', action: 'complete', status: 'succeeded' });
   view.revision++;
   await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
   await expect(enterDecisions).toBeVisible();
+  await expect(
+    page.getByText(
+      'This step is complete. Use the Continue button on the task bar above the message box to move on.',
+      { exact: true },
+    ),
+  ).toBeVisible();
   await expect(enterDecisions).toHaveAttribute('data-state', 'ready');
   const readyColor = () => enterDecisions.evaluate((el) => getComputedStyle(el).backgroundColor);
   const greens = ['rgb(11, 122, 82)', 'rgb(59, 240, 164)'];

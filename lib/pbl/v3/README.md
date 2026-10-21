@@ -317,3 +317,11 @@ The #1951 follow-ups for evaluator false passes and completion-before-validation
 addressed here. Dedicated workspace controls are provided by the merged workbench;
 real-provider concurrency and capacity remain acceptance work. Shared no-op saves,
 mutation scope and source policies remain supplied by the parent workspace contract.
+
+Guided teaching, planning, implementation and reflection turns finish only after a committed
+review question or stage completion. A normal model text stop alone is not completion. The
+runner makes at most one continuation attempt with the same real learner input and current
+protocol state, then reports an explicit retryable failure if the turn is still unclosed.
+Retry and worker takeover preserve the same rule; no synthetic learner approval is added.
+Successful completion displays a localized handoff above the composer. Progression remains
+a separate learner action, with existing artifact, test and quiz checks unchanged.

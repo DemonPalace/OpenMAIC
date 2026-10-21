@@ -2576,6 +2576,7 @@
     },
     "retryResponse": "重试本轮回复",
     "run": {
+      "incomplete": "本轮回复尚未完成当前审阅的记录，请点击“重试本轮回复”继续。学习进度未被跳过。",
       "authentication": "教学模型认证失败，请检查模型配置后重试。",
       "timeout": "教学回复超时，可以重试本轮回复。",
       "unavailable": "教学回复未能完成，请稍后重试。",
@@ -2616,6 +2617,7 @@
       "artifact_review_completed": "完成审阅"
     },
     "journey": {
+      "completionHandoff": "本环节已完成。请点击输入框上方状态条右侧的继续按钮。",
       "startConversation": "学习环境就绪后，助手会主动开始当前环节。",
       "latest": "回到最新消息",
       "expand": "展开项目工作台",

@@ -112,7 +112,12 @@ function AgentTurn({ entry }: { entry: LearningConversationEntry }) {
       >
         {groupParts(entry.parts).map((part) =>
           Array.isArray(part) ? (
-            <ToolGroup key={part[0].id} nodes={part.map(toolNode)} t={t} />
+            <div key={part[0].id} className="space-y-2">
+              <ToolGroup nodes={part.map(toolNode)} t={t} />
+              {part.some((tool) => tool.action === 'complete' && tool.status === 'succeeded') && (
+                <p className="text-foreground">{t('pblV3.journey.completionHandoff')}</p>
+              )}
+            </div>
           ) : part.kind === 'thinking' ? (
             <ThinkingBlock
               key={part.id}

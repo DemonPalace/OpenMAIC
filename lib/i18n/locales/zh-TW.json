@@ -2576,6 +2576,7 @@
     },
     "retryResponse": "Retry response",
     "run": {
+      "incomplete": "本輪回覆尚未完成目前審閱的記錄，請點擊「重試本輪回覆」繼續。學習進度未被跳過。",
       "authentication": "The teaching model could not authenticate. Check the model configuration before retrying.",
       "timeout": "The teaching response timed out. You can retry this turn.",
       "unavailable": "The teaching response could not finish. Please retry shortly.",
@@ -2616,6 +2617,7 @@
       "artifact_review_completed": "Review completed"
     },
     "journey": {
+      "completionHandoff": "本環節已完成。請點擊輸入框上方狀態列右側的繼續按鈕。",
       "startConversation": "Your assistant will open this step when the learning environment is ready.",
       "latest": "Go to the latest message",
       "expand": "Expand project workspace",

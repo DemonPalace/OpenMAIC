@@ -1310,7 +1310,11 @@ export async function runSession(ctx: RunContext, meta: ClaimedAgentSession): Pr
     const idleAttach = meta.existingCourse;
 
     if (teachingTimedOut) throw new Error(teachingTimeoutError);
-    if ((plan.kind === 'already-complete' || teaching?.isTurnComplete()) && pending.length === 0) {
+    if (
+      ((plan.kind === 'already-complete' && !teaching?.needsTurnReceipt()) ||
+        teaching?.isTurnComplete()) &&
+      pending.length === 0
+    ) {
       deadline?.dispose();
       emit(LIFECYCLE.sessionEnd, {
         status: 'succeeded',
@@ -1632,6 +1636,7 @@ export async function runSession(ctx: RunContext, meta: ClaimedAgentSession): Pr
             streamFn,
             teaching.isTurnComplete,
             teaching.historyWindow,
+            teaching.liveContext,
           )
         : streamFn,
       systemPrompt: execution.systemPrompt,
@@ -1792,6 +1797,20 @@ export async function runSession(ctx: RunContext, meta: ClaimedAgentSession): Pr
     const messagePoll = setInterval(() => void requestDrain(), SESSION_WAKEUP_FALLBACK_MS);
     messagePoll.unref?.();
 
+    let teachingContinuationUsed = false;
+    const repairTeachingStop = async () => {
+      if (
+        !teaching?.needsTurnReceipt() ||
+        teachingContinuationUsed ||
+        abort.signal.aborted ||
+        terminalLoopError(agent.state.messages, agent.state.errorMessage)
+      )
+        return false;
+      const { prepareTeachingContinuation } = await import('@/lib/server/pbl-v3/runner-tools');
+      if (!prepareTeachingContinuation(agent)) return false;
+      teachingContinuationUsed = true;
+      return true;
+    };
     try {
       // Setup may have outlived the deadline before the Agent subscribed.
       if (teachingTimedOut) throw new Error(teachingTimeoutError);
@@ -1888,6 +1907,7 @@ export async function runSession(ctx: RunContext, meta: ClaimedAgentSession): Pr
         if (repair.messages.length > 0) {
           await agent.prompt(repair.messages);
         } else {
+          if (plan.kind === 'already-complete') await repairTeachingStop();
           await agent.continue();
         }
       }
@@ -1899,6 +1919,10 @@ export async function runSession(ctx: RunContext, meta: ClaimedAgentSession): Pr
         await agent.waitForIdle();
         if (abort.signal.aborted) break;
         if (questionEmitted || askUserLatch.isCommitted()) break;
+        if (await repairTeachingStop()) {
+          await agent.continue();
+          continue;
+        }
         const before = acceptedMessageSeqs.size;
         const delivered = await requestDrain();
         if (abort.signal.aborted) break;
@@ -1915,7 +1939,10 @@ export async function runSession(ctx: RunContext, meta: ClaimedAgentSession): Pr
       deadline?.dispose();
       const loopError = teachingTimedOut
         ? teachingTimeoutError
-        : terminalLoopError(agent.state.messages, agent.state.errorMessage);
+        : terminalLoopError(agent.state.messages, agent.state.errorMessage) ||
+          (teaching?.needsTurnReceipt()
+            ? 'Teaching turn ended without recording a review question or stage completion. Retry to continue the current review.'
+            : undefined);
       const shutdown = ctx.shuttingDown && abort.signal.aborted && !cancelled;
       if (shutdown || tripwireViolated || (leaseLost && abort.signal.aborted)) {
         emit(LIFECYCLE.sessionInterrupted, {

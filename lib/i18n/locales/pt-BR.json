@@ -2576,6 +2576,7 @@
     },
     "retryResponse": "Retry response",
     "run": {
+      "incomplete": "This reply did not finish recording the current review. Retry this reply to continue; your progress is unchanged.",
       "authentication": "The teaching model could not authenticate. Check the model configuration before retrying.",
       "timeout": "The teaching response timed out. You can retry this turn.",
       "unavailable": "The teaching response could not finish. Please retry shortly.",
@@ -2616,6 +2617,7 @@
       "artifact_review_completed": "Review completed"
     },
     "journey": {
+      "completionHandoff": "This step is complete. Use the Continue button on the task bar above the message box to move on.",
       "startConversation": "Your assistant will open this step when the learning environment is ready.",
       "latest": "Go to the latest message",
       "expand": "Expand project workspace",

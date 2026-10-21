@@ -6,7 +6,7 @@ import {
 } from '@/lib/server/sandbox/managed-workspace';
 import { randomUUID } from 'node:crypto';
 import { createAssistantMessageEventStream } from '@earendil-works/pi-ai';
-import type { AgentTool, StreamFn } from '@earendil-works/pi-agent-core';
+import type { Agent, AgentTool, StreamFn } from '@earendil-works/pi-agent-core';
 import { Type, type Static, type TSchema } from 'typebox';
 import { getAgentSessionStore } from '@/lib/server/agent-runtime/store';
 import { listAgentUserMessages } from '@/lib/server/agent-runtime/user-messages';
@@ -77,7 +77,7 @@ export async function teachingRunnerConfig(input: {
   );
   const exploring = isExplorationStage(stage);
   const guided = (stage.kind === 'produce' && !exploring) || stage.kind === 'mentor_say';
-  const completionRecorded = hasStageCompletion(row, stage, bound);
+  let completionRecorded = hasStageCompletion(row, stage, bound);
   let turnComplete =
     guided &&
     (review.state.pending?.runId === runId ||
@@ -175,6 +175,13 @@ export async function teachingRunnerConfig(input: {
                 }),
               ]);
           });
+          completionRecorded =
+            name === 'complete_stage' ||
+            hasStageCompletion(
+              { ...current, state: result.transition?.state ?? current.state },
+              stage,
+              bound,
+            );
           if (name === 'complete_stage') review.finishRun();
           if (name === 'request_skill_review' || name === 'complete_stage') turnComplete = true;
           return {
@@ -592,6 +599,21 @@ export async function teachingRunnerConfig(input: {
     systemPrompt,
     allowedToolNames: new Set(tools.map((t) => t.name)),
     isTurnComplete: () => turnComplete,
+    needsTurnReceipt: () => guided && !completionRecorded && !turnComplete,
+    liveContext: () =>
+      guided
+        ? JSON.stringify({
+            stageKey: bound.stage_key,
+            completionRecorded,
+            activeSection: review.state.activeFile || null,
+            nextSection:
+              progression[review.state.reviewedFiles.length + (review.state.activeFile ? 2 : 1)] ??
+              null,
+            finalSection: protocol.final,
+            currentQuestion: review.state.pending?.question ?? null,
+            studentResponses: review.studentResponses(),
+          })
+        : '',
     historyWindow: { stageKey: bound.stage_key, studentTurns: bound.feedback_seq },
   };
 }
@@ -605,6 +627,7 @@ export function withTeachingTurnBoundary(
   streamFn: StreamFn,
   isComplete: () => boolean,
   historyWindow?: TeachingHistoryWindow,
+  liveContext?: () => string,
 ): StreamFn {
   return (model, context, options) => {
     if (!isComplete()) {
@@ -619,7 +642,16 @@ export function withTeachingTurnBoundary(
             message.content.length === 0
           ),
       );
-      const current = { ...context, messages };
+      const live = liveContext?.();
+      const current = {
+        ...context,
+        messages,
+        ...(live
+          ? {
+              systemPrompt: `${context.systemPrompt ?? ''}\nAuthoritative live teaching state (overrides the entry snapshot): ${live}`,
+            }
+          : {}),
+      };
       return streamFn(
         model,
         historyWindow ? currentTeachingContext(current, historyWindow) : current,
@@ -650,4 +682,30 @@ export function withTeachingTurnBoundary(
     });
     return stream;
   };
+}
+
+/** A normal text stop is not a teaching receipt. Retry its unfinished work once
+ * against real learner input and current protocol state, without inventing a
+ * user message or deleting the durable reply. Only the next request view loses
+ * the terminal prose suffix, which Pi cannot continue from.
+ */
+export function prepareTeachingContinuation(agent: Agent): boolean {
+  const messages = [...agent.state.messages];
+  let removed = false;
+  while (messages.at(-1)?.role === 'assistant') {
+    const last = messages.at(-1)!;
+    if (
+      last.role !== 'assistant' ||
+      last.stopReason !== 'stop' ||
+      last.content.some((part) => part.type === 'toolCall')
+    )
+      return false;
+    messages.pop();
+    removed = true;
+  }
+  if (!removed || !messages.length) return false;
+  agent.state.messages = messages;
+  agent.state.systemPrompt +=
+    '\nRuntime continuation: your preceding text reply ended without a committed teaching receipt. Complete the unfinished work for the SAME real learner input using the authoritative live state. If the reply answers the current question, open the next section with read_next_skill; deliver it and record its focused question using request_skill_review. If clarification is still needed, record that question instead. Only after the final section has a real new answer may complete_stage commit completion. Do not claim a Continue button exists before that succeeds. Never invent a student response or repeat already demonstrated reasoning as a new quiz.';
+  return true;
 }

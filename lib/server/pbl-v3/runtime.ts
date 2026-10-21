@@ -32,7 +32,7 @@ import {
 } from './evaluation';
 import { installedProject } from './catalog';
 import { LearningStore, type Study, type RoleBinding } from './store';
-import { hasStageCompletion } from './stage-progress';
+import { hasStageCompletion, succeededWithoutTeachingReceipt } from './stage-progress';
 import {
   learningWorkspaceId,
   withLearningWorkspaceAccess,
@@ -370,7 +370,17 @@ export async function commandStudy(
           );
           const sessionStore = store.agentStore(db);
           const meta = binding ? await sessionStore.getSession(binding.session_id) : null;
-          if (!binding || !meta || !['failed', 'cancelled'].includes(meta.status))
+          const unclosed =
+            binding &&
+            meta &&
+            succeededWithoutTeachingReceipt(
+              row,
+              stage,
+              binding,
+              meta.status,
+              (await listAgentUserMessages(sessionStore, binding.session_id)).at(-1)?.seq,
+            );
+          if (!binding || !meta || (!['failed', 'cancelled'].includes(meta.status) && !unclosed))
             throw sandboxConflict('Only a failed or cancelled teaching turn can be retried.');
           await writeSessionGrant(
             db,
@@ -695,13 +705,24 @@ export async function learningView(principal: OwnerPrincipal, id: string): Promi
   if (binding) {
     const agents = await getAgentSessionStore();
     const meta = await agents.getSession(binding.session_id);
-    roleRun = {
-      status: meta?.status ?? 'missing',
-      canRetry: !!meta && ['failed', 'cancelled'].includes(meta.status),
-      // Never expose raw provider errors, URLs, or credentials to the browser.
-      failure: meta?.status === 'failed' ? learningRunFailure(meta.error) : null,
-    };
     latestUserSeq = (await listAgentUserMessages(agents, binding.session_id)).at(-1)?.seq;
+    const unclosed = succeededWithoutTeachingReceipt(
+      row,
+      stage,
+      binding,
+      meta?.status,
+      latestUserSeq,
+    );
+    roleRun = {
+      status: unclosed ? 'failed' : (meta?.status ?? 'missing'),
+      canRetry: !!meta && (unclosed || ['failed', 'cancelled'].includes(meta.status)),
+      // Never expose raw provider errors, URLs, or credentials to the browser.
+      failure: unclosed
+        ? 'incomplete'
+        : meta?.status === 'failed'
+          ? learningRunFailure(meta.error)
+          : null,
+    };
     // Bounded transcript projection; durable role history remains in the runner's entry tree.
     const last = await agents.lastEventSeq(binding.session_id);
     activitySequence = last;
@@ -710,7 +731,7 @@ export async function learningView(principal: OwnerPrincipal, id: string): Promi
       events,
       binding.role,
       meta?.status === 'running' || meta?.status === 'queued',
-      meta?.status,
+      roleRun.status,
     );
     for (const event of events) {
       const data = event.data as {

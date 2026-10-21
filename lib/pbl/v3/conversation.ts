@@ -1,6 +1,6 @@
 import type { AgentRole } from './domain/project/project-schema';
 
-export type LearningRunFailure = 'authentication' | 'timeout' | 'unavailable';
+export type LearningRunFailure = 'authentication' | 'timeout' | 'incomplete' | 'unavailable';
 
 /** Learner-owned conversation, with explicit display fields rather than raw runner payloads. */
 export interface LearningConversationEntry {
