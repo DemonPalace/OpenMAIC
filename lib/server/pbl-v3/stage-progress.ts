@@ -5,6 +5,21 @@ import {
 } from '@/lib/pbl/v3/domain/project/project-schema';
 import type { Study, RoleBinding } from './store';
 
+/** Optional milestones in pinned projects do not postpone the required-work report. */
+export function canViewProjectReport(project: ProjectDefinition, state: Study['state']): boolean {
+  if (project.completionMode === 'awaiting_more_milestones') return false;
+  if (state.status === 'completed') return true;
+  const required = project.milestones.filter((milestone) => !milestone.optional);
+  return (
+    required.length > 0 &&
+    required.every(
+      (milestone) =>
+        state.milestones.find((progress) => progress.milestoneId === milestone.id)?.status ===
+        'completed',
+    )
+  );
+}
+
 /** A completed review belongs to a stage and its evidence, not the latest chat message. */
 export function hasStageCompletion(
   row: Pick<Study, 'state'>,

@@ -7,6 +7,7 @@ export interface LearningView {
   id: string;
   revision: number;
   title: string;
+  reportAvailable: boolean;
   environmentId: string | null;
   environment: { state: import('@/lib/sandbox/types').SandboxState; ready: boolean } | null;
   recovery: { checkpointRevision: number; progressReset: boolean } | null;

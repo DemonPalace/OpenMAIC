@@ -30,7 +30,11 @@ import { evaluationCommand, evaluationFor, evaluationOutcome } from './evaluatio
 import { installedProject } from './catalog';
 import { resolveProject } from './project-resolver';
 import { LearningStore, type Study, type RoleBinding } from './store';
-import { hasStageCompletion, succeededWithoutTeachingReceipt } from './stage-progress';
+import {
+  canViewProjectReport,
+  hasStageCompletion,
+  succeededWithoutTeachingReceipt,
+} from './stage-progress';
 import {
   learningWorkspaceId,
   withLearningWorkspaceAccess,
@@ -908,6 +912,7 @@ export async function learningView(principal: OwnerPrincipal, id: string): Promi
     id,
     revision: row.revision,
     title: project.definition.title,
+    reportAvailable: canViewProjectReport(project.definition, row.state),
     environmentId: row.environment_id,
     environment,
     recovery:

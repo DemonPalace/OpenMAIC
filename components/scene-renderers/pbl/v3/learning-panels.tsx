@@ -101,7 +101,7 @@ export function LearningPanels({ view }: { view: LearningView }) {
           </nav>
         )}
       </div>
-      {view.state.status === 'completed' && <ProjectReport view={view} />}
+      {view.reportAvailable && <ProjectReport view={view} />}
     </div>
   );
 }

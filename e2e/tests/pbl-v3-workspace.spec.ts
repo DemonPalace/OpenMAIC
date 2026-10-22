@@ -32,6 +32,7 @@ test('installed sample opens in the normal classroom and preserves progress afte
     id: 'learning-browser',
     revision: 0,
     title: 'A friendly greeting',
+    reportAvailable: false,
     environmentId: null as string | null,
     environment: null as LearningView['environment'],
     recovery: null as LearningView['recovery'],
@@ -681,6 +682,7 @@ test('installed sample opens in the normal classroom and preserves progress afte
   ).toBeVisible();
   await expect(page.getByRole('button', { name: /^Continue(?: to|$)/ })).toBeEnabled();
   view.state.status = 'completed';
+  view.reportAvailable = true;
   view.environment = { state: 'destroyed', ready: false };
   view.stage = {
     kind: 'mentor_say',
@@ -709,4 +711,32 @@ test('installed sample opens in the normal classroom and preserves progress afte
   await expect(report).toHaveCount(0);
   await page.getByRole('button', { name: 'Learning report', exact: true }).click();
   await expect(report.getByText('A saved learning journey', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Return to learning' }).click();
+
+  // A pinned legacy project can keep optional exploration open while its report
+  // remains available. The server's report eligibility is independent of status.
+  view.state.status = 'waiting_for_student';
+  view.state.position = { milestoneIndex: 1, milestoneId: 'explore', stageIndex: 0 };
+  view.milestones.push({ id: 'explore', title: 'Optional extension', stages: ['explore'] });
+  view.stage = {
+    kind: 'produce',
+    agent: 'coder',
+    writes: 'code',
+    exploration: { introduction: 'Explore an extension.' },
+    reviewRequired: false,
+    reads: [],
+    studentActions: ['chat', 'edit'],
+  } as LearningView['stage'];
+  view.role = 'coder';
+  view.actions = ['chat', 'edit'];
+  view.needsOpening = false;
+  view.environment = { state: 'running', ready: true };
+  await page.reload();
+  await page.getByRole('button', { name: 'Learning report', exact: true }).click();
+  await expect(report.getByText('A saved learning journey', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Return to learning' }).click();
+  await expect(report).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Learning report', exact: true })).toBeEnabled();
+  expect(view.state.status).toBe('waiting_for_student');
+  expect(calls.filter((c) => c.type === 'prepare')).toHaveLength(attempts + 1);
 });

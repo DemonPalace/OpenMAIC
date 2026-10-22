@@ -272,6 +272,11 @@ contract; its release synchronization and runtime topology are not copied.
 | Cross-milestone | The same workspace and PLAN continue; project roles change context. Checkpoints record the saved milestone/stage; recovery clears downstream gates if saved work predates current progress. |
 | Report | Available only after the final milestone recap is completed by `complete_stage`. The report button makes one bounded analysis request; the result and its evidence are saved. Returning to the workbench and reopening reads the saved report. No live sandbox is required to read it. |
 
+Pinned legacy projects with an optional exploration milestone retain report access
+after all required milestones are completed; exploration remains open. The server
+uses the same eligibility rule for the report button, evidence and GET/POST report
+access. Releases awaiting more milestones do not unlock a final report.
+
 Review feedback is bound to durable student messages after the pending question's
 turn in the same stage. The teaching role can assess multiple replies together and
 quote or summarize them in `studentFeedback`; literal substring matching is not an

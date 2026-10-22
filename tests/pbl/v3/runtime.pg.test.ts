@@ -330,7 +330,10 @@ import {
 } from '@/lib/server/pbl-v3/runtime';
 import { teachingRunnerConfig } from '@/lib/server/pbl-v3/runner-tools';
 import { touchEnvironment } from '@/lib/server/pbl-v3/environment';
-import { startOrchestration } from '@/lib/pbl/v3/domain/orchestration/transition';
+import {
+  completeCurrentStage,
+  startOrchestration,
+} from '@/lib/pbl/v3/domain/orchestration/transition';
 import { isExplorationStage } from '@/lib/pbl/v3/domain/project/project-schema';
 import { SandboxService } from '@/lib/server/sandbox/service';
 import { SandboxStore } from '@/lib/server/sandbox/store';
@@ -937,6 +940,73 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
       expect(bindings.filter((b) => b.role === 'planner')).toHaveLength(2);
     },
     120000,
+  );
+  it.each(['greeting-python-lab', 'greeting-java'])(
+    'opens and saves reports after required legacy milestones without completing exploration for %s',
+    async (projectId) => {
+      const selected = installedProject({ id: projectId, version: '1.0.0' });
+      const initial = startOrchestration(selected.definition);
+      // A pinned learner has reached the last required recap. Its confirmation alone
+      // must not bypass the milestone completion transition.
+      initial.state.milestones[0]!.status = 'completed';
+      const milestone = selected.definition.milestones[1]!;
+      initial.state.position = {
+        milestoneIndex: 1,
+        milestoneId: milestone.id,
+        stageIndex: milestone.stages.length - 1,
+      };
+      initial.state.milestones[1]!.status = 'active';
+      initial.state.milestones[1]!.stageIndex = milestone.stages.length - 1;
+      initial.state.collected[milestone.id]!.recapCompleted = true;
+      const created = await store.create(
+        {
+          ownerId: principal.ownerId,
+          stageId: randomUUID(),
+          sceneId: 'scene',
+          projectId,
+          version: '1.0.0',
+        },
+        initial,
+      );
+      const calls = mocked.reportAnalysis.mock.calls.length;
+      const signal = new AbortController().signal;
+      expect((await learningView(principal, created.id)).reportAvailable).toBe(false);
+      expect((await learningEvidence(principal, created.id)).requiredComplete).toBe(false);
+      await expect(learningReport(principal, created.id)).rejects.toMatchObject({ status: 409 });
+      await expect(generateLearningReport(principal, created.id, signal)).rejects.toMatchObject({
+        status: 409,
+      });
+      expect(mocked.reportAnalysis).toHaveBeenCalledTimes(calls);
+      await store.transaction(async (db) => {
+        const row = await store.get(created.id, principal.ownerId, db);
+        await store.commit(db, row, completeCurrentStage(selected.definition, row.state));
+      });
+      const before = await store.get(created.id, principal.ownerId);
+      const view = await learningView(principal, created.id);
+      expect(view.reportAvailable).toBe(true);
+      expect(view.state.status).toBe('waiting_for_student');
+      expect(isExplorationStage(view.stage)).toBe(true);
+      expect(view.actions).toContain('edit');
+      expect(() => completeCurrentStage(selected.definition, before.state)).toThrow(
+        'exploration stays open',
+      );
+      expect((await learningReport(principal, created.id)).requiredComplete).toBe(true);
+      mocked.reportAnalysis.mockResolvedValueOnce({ findings: [], omitted: false });
+      const report = await generateLearningReport(principal, created.id, signal);
+      expect(report.requiredComplete).toBe(true);
+      expect(report.analysis?.status).toBe('ready');
+      expect(await learningReport(principal, created.id)).toEqual(report);
+      expect(await generateLearningReport(principal, created.id, signal)).toEqual(report);
+      expect(mocked.reportAnalysis).toHaveBeenCalledTimes(calls + 1);
+      expect(await store.get(created.id, principal.ownerId)).toEqual(before);
+      expect((await learningView(principal, created.id)).environmentId).toBeNull();
+      await expect(
+        learningReport({ ...principal, ownerId: 'another-owner' }, created.id),
+      ).rejects.toMatchObject({ status: 404 });
+      await expect(
+        generateLearningReport({ ...principal, ownerId: 'another-owner' }, created.id, signal),
+      ).rejects.toMatchObject({ status: 404 });
+    },
   );
   it('pins project identity and isolates learners', async () => {
     const same = await store.create(

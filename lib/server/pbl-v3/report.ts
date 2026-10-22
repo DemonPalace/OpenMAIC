@@ -9,6 +9,7 @@ import { getAgentSessionStore } from '@/lib/server/agent-runtime/store';
 import { LearningStore } from './store';
 import { projectFor } from './runtime';
 import { reviewQuestion } from './review-question';
+import { canViewProjectReport } from './stage-progress';
 
 /** Facts come from durable events. This read does not require an execution environment or change progress. */
 export async function learningEvidence(
@@ -220,7 +221,7 @@ export async function learningEvidence(
     studyId: id,
     project: { id: project.ref.id, version: project.ref.version, title: project.definition.title },
     revision: row.revision,
-    requiredComplete: row.state.status === 'completed',
+    requiredComplete: canViewProjectReport(project.definition, row.state),
     milestones: project.definition.milestones.map((m, i) => ({
       id: m.id,
       title: m.title,
@@ -262,7 +263,7 @@ export async function learningReport(
 ): Promise<LearningReport> {
   const store = await LearningStore.open();
   const row = await store.get(id, principal.ownerId);
-  if (row.state.status !== 'completed')
+  if (!canViewProjectReport(projectFor(row).definition, row.state))
     throw sandboxConflict(
       'Complete the final project reflection before viewing the report.',
       'WORKBENCH_ACCESS_DENIED',
