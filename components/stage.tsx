@@ -22,7 +22,7 @@ import {
 } from '@/components/scene-renderers/InteractiveIframeHost';
 import { CHROME_EASE } from '@/lib/edit/transitions';
 import { enterEditMode } from '@/lib/edit/enter-edit-mode';
-import { preloadEditor } from '@/lib/edit/preload-editor';
+import { isEditorPreloaded, preloadEditor } from '@/lib/edit/preload-editor';
 import { WorkbenchReturnControl } from '@/components/workbench/WorkbenchReturnControl';
 import { resolveClassroomBackControl } from '@/lib/workbench/classroom-back-control';
 import { resolveClassroomHeaderControls } from '@/lib/workbench/classroom-header-controls';
@@ -146,36 +146,55 @@ export function Stage({
     hasCurrentScene: !!currentScene,
   });
   const chromeEditable = hosted ? hostedSceneEditable : isEditable;
-  // Keep playback mounted until its SSE/engine/audio teardown and the editor
-  // preload finish. This also covers automatic restoration of saved editing
-  // when generation ends, not only a click on the tab's mode switch.
+  // Only an already mounted learning surface stays up during edit entry.
+  // Cold editing mounts and reopened editors wait in the neutral loading shell.
   const [editorPreloadState, setEditorPreloadState] = useState<
-    'idle' | 'loading' | 'ready' | 'failed'
-  >('idle');
+    'idle' | 'loading' | 'playback' | 'ready' | 'failed'
+  >(() => (isEditorPreloaded() ? 'ready' : 'idle'));
   const playbackRef = useRef<PlaybackChromeRootHandle>(null);
 
   useEffect(() => {
+    const mountedPlayback = playbackRef.current;
     if (!hosted || !workbenchShowingClassroom || !hostedSceneEditable) {
-      setEditorPreloadState('idle');
+      setEditorPreloadState(
+        hosted && workbenchPanel.visible && currentStageMatchesHost && mountedPlayback
+          ? 'playback'
+          : 'idle',
+      );
+      return;
+    }
+    if (!mountedPlayback && isEditorPreloaded()) {
+      setEditorPreloadState('ready');
       return;
     }
     let cancelled = false;
-    setEditorPreloadState('loading');
+    setEditorPreloadState((previous) =>
+      mountedPlayback && previous === 'playback' ? 'playback' : 'loading',
+    );
     void enterEditMode({
-      teardown: () => playbackRef.current?.teardown(),
+      teardown: () => mountedPlayback?.teardown(),
       preload: preloadEditor,
       activate: () => {
         if (!cancelled) setEditorPreloadState('ready');
       },
       onError: (error) => {
         console.error('[Stage] hosted editor entry failed', error);
-        if (!cancelled) setEditorPreloadState('failed');
+        if (!cancelled) {
+          setEditorPreloadState((previous) => (previous === 'playback' ? 'playback' : 'failed'));
+        }
       },
     });
     return () => {
       cancelled = true;
     };
-  }, [hosted, workbenchShowingClassroom, hostedSceneEditable, classroomId]);
+  }, [
+    hosted,
+    workbenchShowingClassroom,
+    hostedSceneEditable,
+    classroomId,
+    workbenchPanel.visible,
+    currentStageMatchesHost,
+  ]);
 
   // Resolve before paint so a restored edit preference cannot override a
   // generating course's fence or leak into a different course's chrome.
@@ -188,7 +207,7 @@ export function Stage({
       workbenchPanel.visible &&
       (workbenchPanel.learning ||
         courseGenerating ||
-        (workbenchShowingClassroom && editorPreloadState !== 'ready')),
+        (workbenchShowingClassroom && editorPreloadState === 'playback')),
     isEditable: chromeEditable,
     hasCurrentScene: !!currentScene,
     stageMatchesHost: currentStageMatchesHost,

@@ -1,18 +1,33 @@
 // @vitest-environment jsdom
-import { act, createElement, forwardRef, useImperativeHandle, type ReactNode } from 'react';
+import {
+  act,
+  createElement,
+  forwardRef,
+  useImperativeHandle,
+  useLayoutEffect,
+  type ReactNode,
+} from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { useCanvasStore } from '@/lib/store/canvas';
 import { useStageStore } from '@/lib/store/stage';
 import { WorkbenchPanelProvider } from '@/lib/workbench/panel-context';
 
-const probe = vi.hoisted(() => ({ teardown: vi.fn(), preload: vi.fn() }));
+const probe = vi.hoisted(() => ({
+  teardown: vi.fn(),
+  preload: vi.fn(),
+  preloaded: false,
+  learningMount: vi.fn(),
+}));
 vi.mock('next/navigation', () => ({ useRouter: () => ({ replace: vi.fn() }) }));
 vi.mock('@/lib/config/feature-flags', () => ({
   isMaicEditorEnabled: () => true,
   isProWorkbenchEnabled: () => true,
 }));
-vi.mock('@/lib/edit/preload-editor', () => ({ preloadEditor: () => probe.preload() }));
+vi.mock('@/lib/edit/preload-editor', () => ({
+  preloadEditor: () => probe.preload(),
+  isEditorPreloaded: () => probe.preloaded,
+}));
 vi.mock('@/lib/workbench/session-store', () => ({
   useWorkbenchStore: (s: (v: unknown) => unknown) => s({ setPanelOpen: vi.fn() }),
 }));
@@ -22,6 +37,9 @@ vi.mock('@/components/edit/EditChromeRoot', () => ({
 vi.mock('@/components/edit/PlaybackChromeRoot', () => ({
   PlaybackChromeRoot: forwardRef(function Playback(_, ref) {
     useImperativeHandle(ref, () => ({ teardown: () => probe.teardown() }));
+    useLayoutEffect(() => {
+      probe.learningMount();
+    }, []);
     return createElement('div', { 'data-testid': 'learning' });
   }),
 }));
@@ -39,8 +57,12 @@ vi.mock('motion/react', () => ({
 import { Stage } from '@/components/stage';
 let root: Root;
 const has = (id: string) => document.querySelector(`[data-testid="${id}"]`) !== null;
-async function render(learning: boolean, courseId = 'stage-1') {
-  const providerProps = { learning, children: createElement(Stage, { classroomId: courseId }) };
+async function render(learning: boolean, courseId = 'stage-1', visible = true) {
+  const providerProps = {
+    learning,
+    visible,
+    children: createElement(Stage, { classroomId: courseId }),
+  };
   await act(async () => root.render(createElement(WorkbenchPanelProvider, providerProps)));
 }
 
@@ -48,6 +70,8 @@ beforeEach(() => {
   const container = document.createElement('div');
   document.body.append(container);
   root = createRoot(container);
+  probe.preloaded = false;
+  probe.learningMount.mockClear();
   probe.teardown.mockReset().mockResolvedValue(undefined);
   probe.preload.mockReset().mockResolvedValue(undefined);
   vi.stubGlobal(
@@ -72,6 +96,43 @@ afterEach(async () => {
 });
 
 describe('hosted Stage mode enforcement and playback lifecycle', () => {
+  it('mounts a cold editing intent through loading without ever mounting learning', async () => {
+    let finish!: () => void;
+    probe.preload.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    await render(false);
+    expect(has('stage-editor-loading')).toBe(true);
+    expect(probe.learningMount).not.toHaveBeenCalled();
+    expect(probe.teardown).not.toHaveBeenCalled();
+    await act(async () => finish());
+    expect(has('edit')).toBe(true);
+    expect(probe.learningMount).not.toHaveBeenCalled();
+  });
+
+  it('unfolds a remembered editing intent without mounting learning', async () => {
+    probe.preloaded = true;
+    await render(false);
+    expect(has('edit')).toBe(true);
+    await render(false, 'stage-1', false);
+    expect(has('stage-editor-loading')).toBe(true);
+    await render(false);
+    expect(has('edit')).toBe(true);
+    expect(probe.learningMount).not.toHaveBeenCalled();
+    expect(probe.teardown).not.toHaveBeenCalled();
+  });
+
+  it('loads the requested editing course without a learning mount', async () => {
+    await render(false, 'stage-2');
+    expect(has('stage-editor-loading')).toBe(true);
+    await act(async () => useStageStore.setState({ stage: { id: 'stage-2' } as never }));
+    expect(has('edit')).toBe(true);
+    expect(probe.learningMount).not.toHaveBeenCalled();
+  });
+
   it('keeps learning mounted until teardown and editor preload finish', async () => {
     let finish!: () => void;
     probe.teardown.mockImplementation(

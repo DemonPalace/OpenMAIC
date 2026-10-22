@@ -75,10 +75,9 @@ export function resolveStageChromeMode(ctx: StageChromeModeContext): StageChrome
   // previous course. Neither chrome may mount against that stale document.
   if (!ctx.stageMatchesHost) return 'loading';
   if (ctx.workbenchLearning) return 'playback';
-  // Folded away. The edit chrome drops (it holds editor resources for a pane
-  // nobody is looking at) but the learning chrome must NOT take its place
-  // behind the fold: unfolding would then cross-fade a full classroom's
-  // playback chrome out over the pane the user just reopened.
+  // A folded pane waits without mounting learning behind it. Reopening an
+  // editing intent stays loading until ready; Stage only retains playback
+  // when a learning surface was already mounted before the edit request.
   if (!ctx.workbenchShowingClassroom) return 'loading';
   // Not editable YET (no scenes, the pending placeholder, no current scene
   // resolved) — a stage of the load, not a request to learn.
