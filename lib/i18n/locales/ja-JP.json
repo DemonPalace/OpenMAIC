@@ -11,7 +11,6 @@
   },
   "home": {
     "slogan": "マルチエージェント対話型教室で生成的に学ぶ",
-    "openWorkspace": "ワークスペース",
     "greetingWithName": "こんにちは、{{name}}さん"
   },
   "toolbar": {
@@ -2368,7 +2367,6 @@
     "retry": "Retry",
     "untitledSession": "Untitled chat",
     "pagePosition": "Page {{index}} of {{total}}",
-    "newCourse": "新しいコース",
     "navAria": "Workspace navigation",
     "homeAria": "Back to home",
     "currentSession": "Current chat",

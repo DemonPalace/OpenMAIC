@@ -11,7 +11,6 @@
   },
   "home": {
     "slogan": "멀티 에이전트 인터랙티브 교실에서 펼치는 생성형 학습",
-    "openWorkspace": "워크스페이스",
     "greetingWithName": "안녕하세요, {{name}}!"
   },
   "toolbar": {
@@ -2368,7 +2367,6 @@
     "retry": "Retry",
     "untitledSession": "Untitled chat",
     "pagePosition": "Page {{index}} of {{total}}",
-    "newCourse": "새 코스",
     "navAria": "Workspace navigation",
     "homeAria": "Back to home",
     "currentSession": "Current chat",
