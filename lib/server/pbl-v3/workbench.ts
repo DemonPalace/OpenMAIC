@@ -1,4 +1,5 @@
 import 'server-only';
+import { recordLearningEvidence } from './evidence';
 import type { OwnerPrincipal } from '@/lib/server/identity/types';
 import type { LearningWorkbench } from '@/lib/pbl/v3/workbench';
 import { allowedStudentActions } from '@/lib/pbl/v3/domain/orchestration/transition';
@@ -25,11 +26,11 @@ import { touchEnvironment, assertEnvironmentReady } from './environment';
 async function permissions(store: LearningStore, row: Study) {
   const stage = stageFor(row),
     project = projectFor(row);
-  const canEdit =
+  const stageEditable =
     row.state.status !== 'completed' &&
     allowedStudentActions(project.definition, row.state).includes('edit') &&
-    !row.evaluation &&
-    !(await busy(store, row));
+    !row.evaluation;
+  const canEdit = stageEditable && !(await busy(store, row));
   const planning = stage.kind === 'produce' && stage.writes === 'plan';
   const pending = (await store.roles(row.id)).some(
     (b) => b.stage_key === stageKey(row) && b.guided?.pending,
@@ -39,6 +40,7 @@ async function permissions(store: LearningStore, row: Study) {
     planning,
     canManageFiles: canEdit && !planning && !!project.sourceRoots?.length,
     canRun: canEdit && !planning && !pending,
+    canPreview: stageEditable && !planning && !pending,
     ports: [...(project.previewPorts ?? [8000])],
   };
 }
@@ -77,7 +79,7 @@ export async function authorizeLearningPreview(
   const store = await LearningStore.open(),
     row = await store.get(studyId, ownerId);
   const policy = await permissions(store, row);
-  if (row.environment_id !== environmentId || !policy.canRun || !policy.ports.includes(port))
+  if (row.environment_id !== environmentId || !policy.canPreview || !policy.ports.includes(port))
     throw sandboxConflict(
       'Preview is unavailable at this learning stage.',
       'WORKBENCH_ACCESS_DENIED',
@@ -134,6 +136,35 @@ export async function workbenchCommand(
         await service.closeTerminal(command.environmentId, terminal.id);
     return { stopped: true };
   }
+  if (command.action === 'input') {
+    if (typeof command.terminalId !== 'string') throw sandboxInvalid('A terminal is required.');
+    return withLearningWorkspaceAccess(
+      {
+        ownerId: principal.ownerId,
+        workspaceId: learningWorkspaceId(id),
+        environmentIds: () => [command.environmentId],
+        operations: ['terminal'],
+      },
+      () =>
+        service.updateTerminal(
+          command.environmentId,
+          command.terminalId!,
+          command.data !== undefined
+            ? { action: 'input', data: command.data }
+            : { action: 'resize', cols: command.cols, rows: command.rows },
+          async () => {
+            const current = await store.get(id, principal.ownerId);
+            if (current.environment_id !== command.environmentId)
+              throw sandboxConflict('The learning environment changed.', 'ENVIRONMENT_CHANGED');
+            if (!(await permissions(store, current)).canRun)
+              throw sandboxConflict(
+                'Terminal input is unavailable at this stage.',
+                'WORKBENCH_ACCESS_DENIED',
+              );
+          },
+        ),
+    );
+  }
   if (
     ['run', 'terminal', 'preview'].includes(command.action) &&
     (!Number.isSafeInteger(command.epoch) || command.epoch! < 0)
@@ -152,7 +183,6 @@ export async function workbenchCommand(
     )
       throw sandboxConflict('Workspace was stopped. Retry the operation.', 'WORKSPACE_STOPPED');
     assertEnvironmentReady(await touchEnvironment(store, row, service));
-    const input = command.action === 'input';
     const receiptId = `workbench:${command.id}`,
       hash = digest(JSON.stringify(command));
     const receipt = (
@@ -170,7 +200,7 @@ export async function workbenchCommand(
       if (receipt.result !== null) return receipt.result;
       if (receipt.stage_key !== stageKey(row))
         throw sandboxConflict('This operation belongs to an earlier stage.', 'PROGRESS_CHANGED');
-    } else if (!input && row.revision !== command.revision)
+    } else if (row.revision !== command.revision)
       throw sandboxConflict('Progress changed. Refresh before continuing.', 'PROGRESS_CHANGED');
     const fileAction = ['create', 'delete', 'rename'].includes(command.action);
     if (fileAction) {
@@ -195,8 +225,8 @@ export async function workbenchCommand(
           'Learning projects support at most 256 source files.',
           'PBL_SOURCE_COUNT',
         );
-    } else if (['run', 'terminal', 'input', 'preview'].includes(command.action)) {
-      if (!policy.canRun)
+    } else if (['run', 'terminal', 'preview'].includes(command.action)) {
+      if (!(command.action === 'preview' ? policy.canPreview : policy.canRun))
         throw sandboxConflict(
           'Stop at the current teaching review before using the terminal or running an application.',
           'WORKBENCH_ACCESS_DENIED',
@@ -209,7 +239,7 @@ export async function workbenchCommand(
         : command.action === 'preview'
           ? 'preview'
           : 'terminal';
-    if (!receipt && !input)
+    if (!receipt)
       await store.pool.query(
         'INSERT INTO pbl_v3_commands(study_id,id,hash,result,stage_key) VALUES($1,$2,$3,NULL,$4)',
         [id, receiptId, hash, stageKey(row)],
@@ -269,28 +299,30 @@ export async function workbenchCommand(
             command.epoch,
           );
         }
-        if (command.action === 'input') {
-          if (typeof command.terminalId !== 'string')
-            throw sandboxInvalid('A terminal is required.');
-          return service.updateTerminal(
-            environmentId,
-            command.terminalId,
-            command.data !== undefined
-              ? { action: 'input', data: command.data }
-              : { action: 'resize', cols: command.cols, rows: command.rows },
-          );
-        }
         if (!policy.ports.includes(command.port!))
           throw sandboxInvalid('Select a configured preview port.');
         return service.preview(environmentId, command.port, command.epoch);
       },
     );
-    if (!input)
-      await store.pool.query('UPDATE pbl_v3_commands SET result=$3 WHERE study_id=$1 AND id=$2', [
-        id,
-        receiptId,
-        JSON.stringify(result),
-      ]);
+    if (fileAction || command.action === 'run' || command.action === 'terminal')
+      await recordLearningEvidence(
+        store.pool,
+        row,
+        'learner',
+        fileAction ? 'file-edit' : 'workspace-run',
+        {
+          action: command.action,
+          path: command.path,
+          destination: command.destination,
+          text: command.text,
+          requestId: command.id,
+        },
+      );
+    await store.pool.query('UPDATE pbl_v3_commands SET result=$3 WHERE study_id=$1 AND id=$2', [
+      id,
+      receiptId,
+      JSON.stringify(result),
+    ]);
     return result;
   });
 }

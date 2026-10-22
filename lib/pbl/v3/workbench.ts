@@ -6,6 +6,7 @@ export interface LearningWorkbench {
   canEdit: boolean;
   canManageFiles: boolean;
   canRun: boolean;
+  canPreview?: boolean;
   planning: boolean;
   ports: number[];
   commands: SandboxCommandResult[];

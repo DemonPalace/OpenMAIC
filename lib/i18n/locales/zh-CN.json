@@ -2535,7 +2535,8 @@
     "profiles": {
       "code": "代码",
       "desktop": "桌面"
-    }
+    },
+    "inputBusy": "工作区持续忙碌，本批输入尚未发送。请重新连接终端后再输入。"
   },
   "pblV3": {
     "title": "编程项目 · Preview",
@@ -2618,12 +2619,12 @@
     "report": "学习报告",
     "backLearning": "返回学习",
     "evidenceReportNotice": "报告来自已保存的学习记录。每条记录对应当时的文件版本和结果，不代表当前文件仍已通过。查看报告不会推进学习进度。",
-    "requiredComplete": "必修学习已完成，可选探索可以随时继续。",
+    "requiredComplete": "项目学习已完成。",
     "inProgress": "学习仍在进行中。",
     "reportEvidence": "决策、作品和结果",
     "reportConversations": "学习对话",
     "truncatedEvidence": "这里仅显示最近的记录，较早记录仍已保存。",
-    "evidenceVersion": "审阅或测试时的版本",
+    "evidenceVersion": "记录版本",
     "learner": "学生",
     "build": "编译／检查语法",
     "sampleSelect": "选择项目",
@@ -2644,7 +2645,10 @@
       "milestone_completed": "完成学习阶段",
       "recap_completed": "完成复盘",
       "teaching_completed": "完成讲解",
-      "artifact_review_completed": "完成审阅"
+      "artifact_review_completed": "完成审阅",
+      "artifact": "作品快照",
+      "file-edit": "文件修改",
+      "workspace-run": "工作区运行"
     },
     "journey": {
       "completionHandoff": "本环节已完成。请点击输入框上方状态条右侧的继续按钮。",
@@ -2785,6 +2789,30 @@
       "opening": "助手尚未完成本环节开场，请重试开场；输入的内容会保留。"
     },
     "recoverEnvironment": "恢复学习环境",
-    "retryOpening": "重试本环节开场"
+    "retryOpening": "重试本环节开场",
+    "reportCopy": {
+      "generating": "正在依据项目过程生成报告…",
+      "failed": "报告分析未能生成。过程记录已保存，可以重试。",
+      "retry": "生成报告／重试",
+      "analysis": "从项目记录里读到的",
+      "omitted": "部分记录在本次分析中被缩短或省略，下方仍可核对已保存的证据。",
+      "source": "查看依据",
+      "journey": "你走过的项目过程",
+      "strength": "做得好的地方",
+      "change": "过程中的变化",
+      "collaboration": "你和 AI 的配合",
+      "next": "可以再走一步",
+      "facts": "过程中的一些数字",
+      "countNotice": "这些数字帮助回顾过程，多少不代表优劣，也不是评分。",
+      "learnerTurns": "你的发言",
+      "assistantTurns": "助手回复与提问",
+      "decisions": "正式决策",
+      "decisionChanges": "改过主意",
+      "testRuns": "测试次数",
+      "quizAttempts": "测验作答次数",
+      "fileEdits": "已记录的文件修改",
+      "interruptedRuns": "助手失败或中断次数",
+      "completed": "项目已完成，可以打开学习报告。"
+    }
   }
 }

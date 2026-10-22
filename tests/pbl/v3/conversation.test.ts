@@ -186,7 +186,7 @@ describe('student conversation projection', () => {
     expect(output[1]!.parts[3]).toMatchObject({ text: 'Done, now review', streaming: true });
     expect(JSON.stringify(output)).not.toMatch(/PRIVATE|SECRET/);
   });
-  it('streams real thinking before text, freezes duration and replays without duplicate blocks', () => {
+  it('keeps thinking status and duration while withholding raw reasoning in live and replay output', () => {
     const frame = (thinking: string, text = '') => ({
       message: {
         role: 'assistant',
@@ -203,7 +203,8 @@ describe('student conversation projection', () => {
       {
         kind: 'thinking',
         id: 'thinking-3-0',
-        text: 'Consider the input.',
+        text: '',
+        hidden: true,
         startedAt: 3,
         streaming: true,
       },
@@ -218,6 +219,7 @@ describe('student conversation projection', () => {
     expect(replay[0]?.parts[0]).toMatchObject({ endedAt: 7, streaming: false });
     expect(replay[0]?.parts[1]).toMatchObject({ text: 'Explanation', streaming: false });
     expect(projectConversation(history, 'discussion', true)).toEqual(replay);
+    expect(JSON.stringify([first, replay])).not.toContain('Consider the input');
   });
   it('shows one pre-content wait and separates cancellation/retry without animating history', () => {
     const history = [event(1, 'user_message', { text: 'Explain' }), event(2, 'session_start', {})];

@@ -2535,7 +2535,8 @@
     "profiles": {
       "code": "Code",
       "desktop": "Desktop"
-    }
+    },
+    "inputBusy": "The workspace remained busy; this input was not sent. Reconnect the terminal before typing again."
   },
   "pblV3": {
     "title": "Programming projects · Preview",
@@ -2618,12 +2619,12 @@
     "report": "Learning report",
     "backLearning": "Return to learning",
     "evidenceReportNotice": "This report uses saved learning records. Each entry refers to the version and result at that time; it does not certify the files currently in your workspace. Viewing it does not advance your progress.",
-    "requiredComplete": "Required learning completed. Exploration remains optional.",
+    "requiredComplete": "Project learning completed.",
     "inProgress": "Learning is still in progress.",
     "reportEvidence": "Decisions, artifacts and results",
     "reportConversations": "Learning conversations",
     "truncatedEvidence": "Only the most recent records are shown here. Earlier records remain saved.",
-    "evidenceVersion": "Reviewed or tested version",
+    "evidenceVersion": "Recorded version",
     "learner": "Learner",
     "build": "Build / check syntax",
     "sampleSelect": "Choose a project",
@@ -2644,7 +2645,10 @@
       "milestone_completed": "Milestone completed",
       "recap_completed": "Reflection completed",
       "teaching_completed": "Teaching completed",
-      "artifact_review_completed": "Review completed"
+      "artifact_review_completed": "Review completed",
+      "artifact": "Artifact snapshot",
+      "file-edit": "File edit",
+      "workspace-run": "Workspace run"
     },
     "journey": {
       "completionHandoff": "This step is complete. Use the Continue button on the task bar above the message box to move on.",
@@ -2785,6 +2789,30 @@
       "opening": "The assistant has not opened this step yet. Retry the opening; your draft is kept."
     },
     "recoverEnvironment": "Restore learning environment",
-    "retryOpening": "Retry step opening"
+    "retryOpening": "Retry step opening",
+    "reportCopy": {
+      "generating": "Preparing your project report…",
+      "failed": "The analysis could not be generated. Your learning records are saved; you can retry.",
+      "retry": "Generate report / retry",
+      "analysis": "What your project records show",
+      "omitted": "Some records were shortened or omitted from this analysis. The saved evidence below remains available.",
+      "source": "Evidence",
+      "journey": "Your project journey",
+      "strength": "What went well",
+      "change": "How your approach changed",
+      "collaboration": "Working with AI",
+      "next": "A useful next step",
+      "facts": "Your project in numbers",
+      "countNotice": "These describe the recorded process; more is not a better score.",
+      "learnerTurns": "Your messages",
+      "assistantTurns": "Assistant replies and review questions",
+      "decisions": "Decisions made",
+      "decisionChanges": "Decisions reconsidered",
+      "testRuns": "Test runs",
+      "quizAttempts": "Quiz attempts",
+      "fileEdits": "Recorded file edits",
+      "interruptedRuns": "Interrupted or failed assistant runs",
+      "completed": "Project completed. You can open your learning report."
+    }
   }
 }

@@ -313,7 +313,7 @@ export function LearningWorkbenchPanel({
             className="w-px bg-border hover:bg-primary"
           />
           <Panel id="editor" minSize="45%" className="flex h-full min-w-0 flex-col">
-            <div className="pbl-chrome flex h-9 shrink-0 items-center border-b">
+            <div className="pbl-chrome flex min-h-9 shrink-0 items-center border-b">
               <button
                 className={button}
                 aria-label={t('pblV3.ide.toggleFiles')}
@@ -328,14 +328,14 @@ export function LearningWorkbenchPanel({
               <div
                 role="tablist"
                 aria-label={t('pblV3.ide.openFiles')}
-                className="flex min-w-0 flex-1 overflow-x-auto"
+                className="flex max-h-28 min-w-0 flex-1 flex-wrap overflow-y-auto"
               >
                 {editor.tabs.map((p) => (
                   <div key={p} className="flex shrink-0 items-center border-r">
                     <button
                       role="tab"
                       aria-selected={p === path && editorTab === 'code'}
-                      className="border-t-2 border-transparent px-3 py-2 text-xs aria-selected:border-primary aria-selected:bg-background"
+                      className="shrink-0 whitespace-nowrap border-t-2 border-transparent px-3 py-2 text-xs aria-selected:border-primary aria-selected:bg-background"
                       title={p}
                       onClick={() => {
                         editor.select(p);
@@ -361,7 +361,7 @@ export function LearningWorkbenchPanel({
                   <button
                     role="tab"
                     aria-selected={editorTab === 'preview'}
-                    className="px-3 py-2 text-xs aria-selected:bg-accent"
+                    className="shrink-0 whitespace-nowrap px-3 py-2 text-xs aria-selected:bg-accent"
                     onClick={() => setEditorTab('preview')}
                   >
                     <Globe size={13} className="mr-1 inline" />
@@ -415,20 +415,22 @@ export function LearningWorkbenchPanel({
                   </p>
                 )}
               </div>
-              {editorTab === 'preview' && (!preview || !work?.canRun) && (
+              {editorTab === 'preview' && (!preview || !work?.canPreview) && (
                 <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center text-sm text-muted-foreground">
                   <Globe size={28} />
                   <strong className="text-foreground">{t('pblV3.workbench.application')}</strong>
                   <p className="max-w-sm">
                     {t(
-                      work?.canRun ? 'pblV3.ide.previewNotStarted' : 'pblV3.ide.previewUnavailable',
+                      work?.canPreview
+                        ? 'pblV3.ide.previewNotStarted'
+                        : 'pblV3.ide.previewUnavailable',
                     )}
                   </p>
                   {work?.ports.map((port) => (
                     <button
                       key={port}
                       className={`${button} border`}
-                      disabled={disabled || !work.canRun}
+                      disabled={pending || working || !view.environment?.ready || !work.canPreview}
                       onClick={() => void run('preview', { port })}
                     >
                       {t('pblV3.ide.connectPreview')} · {port}
@@ -436,7 +438,7 @@ export function LearningWorkbenchPanel({
                   ))}
                 </div>
               )}
-              {preview && work?.canRun && (
+              {preview && work?.canPreview && (
                 <iframe
                   title={t('pblV3.workbench.application')}
                   className="absolute inset-0 h-full w-full bg-white"

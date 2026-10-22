@@ -223,12 +223,18 @@ export function projectConversation(
           if (block.type === 'text') settleThinking(event.ts);
           part =
             block.type === 'thinking'
-              ? { kind: 'thinking', id: `thinking-${event.id}-${index}`, text, startedAt: event.ts }
+              ? {
+                  kind: 'thinking',
+                  id: `thinking-${event.id}-${index}`,
+                  text: '',
+                  hidden: true,
+                  startedAt: event.ts,
+                }
               : { kind: 'text', id: `text-${event.id}-${index}`, text };
           blocks.set(index, part);
           getAssistant(event).parts.push(part);
         }
-        part.text = text;
+        part.text = part.kind === 'thinking' ? '' : text;
         part.streaming =
           event.type !== 'message_end' && (part.kind !== 'thinking' || part.endedAt === undefined);
       }
@@ -260,7 +266,22 @@ export function projectConversation(
         else {
           tool.status = data.isError ? 'failed' : 'succeeded';
           tool.endedAt = event.ts;
-          if (!data.isError) tool.result = displayResult(name, data.result);
+          if (!data.isError) {
+            tool.result = displayResult(name, data.result);
+            if (name === 'complete_stage') {
+              const content = record(data.result).content;
+              if (Array.isArray(content))
+                for (const block of content) {
+                  if (block?.type !== 'text') continue;
+                  try {
+                    if (JSON.parse(block.text).projectCompleted === true)
+                      tool.projectCompleted = true;
+                  } catch {
+                    /* Ignore malformed display content. */
+                  }
+                }
+            }
+          }
         }
       }
       const question = reviewQuestion(event);

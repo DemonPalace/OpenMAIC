@@ -92,7 +92,9 @@ describe('independently authored minimal course archive', () => {
         cwd: workspace,
       });
       expect(evaluationPassed(spec, 'solution', solution.stdout)).toBe(true);
-      expect(solution.stdout).toContain('1 / 1 checks passed');
+      expect(solution.stdout).toContain('stdoutDigest');
+      expect(solution.stdout).not.toContain('继续保持好奇心');
+      expect(spec.resources).not.toHaveProperty('tests/message.json');
       // Verification edits only the temporary workspace; the exported starter stays unfinished.
       expect(project.files['src/main.py']).toContain('return ""');
     },

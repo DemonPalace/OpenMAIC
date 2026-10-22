@@ -1,4 +1,5 @@
 import 'server-only';
+import { recordLearningEvidence } from './evidence';
 import { assertProjectSource, projectFiles } from './workspace-files';
 import {
   learningWorkspaceId,
@@ -24,6 +25,7 @@ import {
   projectFor,
   readFiles,
   filesFingerprint,
+  saveStudyCheckpoint,
   invalidateWorkspace,
 } from './runtime';
 import { touchEnvironment, assertEnvironmentReady } from './environment';
@@ -126,7 +128,11 @@ export async function teachingRunnerConfig(input: {
       params: Static<T>,
       callId: string,
       signal: AbortSignal,
-    ) => Promise<{ value: unknown; transition?: EngineTransition }>,
+    ) => Promise<{
+      value: unknown;
+      transition?: EngineTransition;
+      evidence?: Record<string, unknown>;
+    }>,
   ) {
     return {
       name,
@@ -157,7 +163,9 @@ export async function teachingRunnerConfig(input: {
                   ? ['write']
                   : name === 'run_build'
                     ? ['command']
-                    : [],
+                    : name === 'complete_stage'
+                      ? ['checkpoint']
+                      : [],
             },
             () => execute(current, params, _id, signal),
           );
@@ -165,6 +173,14 @@ export async function teachingRunnerConfig(input: {
           await store.transaction(async (db) => {
             await agents.assertActiveLease(input.sessionId, input.workerId, input.attempt, db);
             assertActive(signal);
+            if (result.evidence)
+              await recordLearningEvidence(
+                db,
+                current,
+                bound.role,
+                name === 'write_file' || name === 'manage_file' ? 'file-edit' : 'artifact',
+                result.evidence,
+              );
             if (result.transition) await store.commit(db, current, result.transition);
             await db.query('UPDATE pbl_v3_roles SET guided=$2 WHERE session_id=$1', [
               input.sessionId,
@@ -250,7 +266,12 @@ export async function teachingRunnerConfig(input: {
               Object.assign(current, invalid);
             },
           );
-          return { value: { written: true, changed, hash: digest(p.text) } };
+          return {
+            value: { written: true, changed, hash: digest(p.text) },
+            ...(changed
+              ? { evidence: { path: p.path, text: p.text, previousHash: p.expectedHash } }
+              : {}),
+          };
         },
       ),
     );
@@ -327,7 +348,7 @@ export async function teachingRunnerConfig(input: {
             });
             Object.assign(current, invalid);
           });
-          return { value };
+          return { value, evidence: { ...p } };
         },
       ),
     );
@@ -386,7 +407,7 @@ export async function teachingRunnerConfig(input: {
     tools.push(
       tool(
         'complete_stage',
-        'Call only when teachingContext.activeSection equals finalSection and the learner has answered its recorded question. Otherwise use read_next_skill, deliver that section and request_skill_review first. Signal completion after the final student review. In studentFeedback, explain how the actual student responses answer the pending review; quotes and summaries are allowed. The server validates the current artifact; the student must still click Continue.',
+        'Call only when teachingContext.activeSection equals finalSection and the learner has answered its recorded question. Otherwise use read_next_skill, deliver that section and request_skill_review first. Signal completion after the final student review. In studentFeedback, explain how the actual student responses answer the pending review; quotes and summaries are allowed. The server validates the current artifact. The final project recap finishes the project immediately; other stages wait for the student to click Continue.',
         Type.Object({ studentFeedback: Type.String({ minLength: 1, maxLength: 2000 }) }),
         async (current, p, _callId, signal) => {
           // Reject an out-of-order model action before any remote file access.
@@ -395,6 +416,7 @@ export async function teachingRunnerConfig(input: {
           review.assertComplete(p.studentFeedback, hash);
           await assertBuilt(store, current, hash);
           let transition: EngineTransition = { state: current.state, events: [] };
+          let evidence: Record<string, unknown> | undefined;
           if (!current.state.introCompleted)
             return { value: { readyForStudentConfirmation: true } };
           if (stage.kind === 'mentor_say') {
@@ -430,6 +452,17 @@ export async function teachingRunnerConfig(input: {
                 );
               if (plan) current.state.collected[milestone.id]!.planReviewCompleted = true;
             }
+            const previous =
+              (
+                await store.pool.query<{ detail: { files: Record<string, string> } }>(
+                  "SELECT detail FROM pbl_v3_evidence WHERE study_id=$1 AND kind='artifact' AND detail->>'artifactKind'=$2 ORDER BY id DESC LIMIT 1",
+                  [current.id, stage.writes],
+                )
+              ).rows[0]?.detail.files ?? project.files;
+            const changedPaths = [
+              ...new Set([...Object.keys(previous), ...Object.keys(files)]),
+            ].filter((path) => path !== 'PLAN.md' && previous[path] !== files[path]);
+            evidence = { files, fingerprint: hash, artifactKind: stage.writes };
             const artifact = {
               id: randomUUID(),
               milestoneId: milestone.id,
@@ -449,7 +482,7 @@ export async function teachingRunnerConfig(input: {
                 : { ...artifact, kind: 'code', value: 'Reviewed sandbox files' },
               stage.writes === 'plan'
                 ? { evidence: { content: files['PLAN.md'] } }
-                : { evidence: { changedPaths: Object.keys(files).filter((p) => p !== 'PLAN.md') } },
+                : { evidence: { changedPaths } },
             );
             if (stage.reviewRequired) {
               const approved = transitions.completeArtifactReview(
@@ -463,7 +496,39 @@ export async function teachingRunnerConfig(input: {
               };
             }
           }
-          return { value: { readyForStudentConfirmation: true }, transition };
+          const finalRecap =
+            stage.kind === 'mentor_say' &&
+            stage.agent === 'mentor' &&
+            current.state.position.milestoneIndex === project.definition.milestones.length - 1 &&
+            current.state.position.stageIndex === milestone.stages.length - 1 &&
+            project.definition.completionMode !== 'awaiting_more_milestones';
+          if (finalRecap) {
+            evidence = {
+              files: await readFiles(
+                await service(signal),
+                current,
+                project,
+                signal,
+                input.onActivity,
+              ),
+              fingerprint: hash,
+              artifactKind: 'final',
+            };
+            await saveStudyCheckpoint(await service(signal), current);
+            const completed = transitions.completeCurrentStage(
+              project.definition,
+              transition.state,
+            );
+            transition = {
+              state: completed.state,
+              events: [...transition.events, ...completed.events],
+            };
+          }
+          return {
+            value: { readyForStudentConfirmation: !finalRecap, projectCompleted: finalRecap },
+            transition,
+            evidence,
+          };
         },
       ),
     );

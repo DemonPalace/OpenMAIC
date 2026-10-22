@@ -29,7 +29,7 @@ export async function touchEnvironment(store: LearningStore, row: Study, service
     )
       return env;
     if (!reconciled) {
-      env = await service.reconcile(env.id);
+      env = await service.reconcile(env.id, false);
       reconciled = true;
     }
     if (env.state !== 'running' || !env.workspaceReady) return env;

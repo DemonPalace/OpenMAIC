@@ -322,7 +322,7 @@ describe('self-contained PBL project packages', () => {
     const commandBytes = (padding: number) =>
       Buffer.byteLength(
         evaluationCommand(
-          { ...spec, resources: { ...spec.resources, 'rubric/padding.txt': 'x'.repeat(padding) } },
+          { ...spec, resources: { ...spec.resources, 'tests/padding.txt': 'x'.repeat(padding) } },
           requestId,
         ),
       );
@@ -341,7 +341,7 @@ describe('self-contained PBL project packages', () => {
     const padded = (padding: number) =>
       indexProjectFiles(bundle.entry.id, bundle.entry.version, {
         ...bundle.files,
-        'rubric/padding.txt': 'x'.repeat(padding),
+        'tests/padding.txt': 'x'.repeat(padding),
       });
     const acceptedProject = validateProjectPackage(padded(accepted)).project;
     expect(
@@ -461,14 +461,14 @@ describe('self-contained PBL project packages', () => {
       const bundle = packageBuiltin(source(id));
       if (id === 'greeting-python-lab') {
         bundle.files['tests/check.py'] =
-          'import sys,os,pathlib\nsys.path.insert(0,os.path.join(os.getcwd(),"src"))\nfrom greeting import greet\nexpected=(pathlib.Path(__file__).parents[1]/"rubric/expected.txt").read_text()\nprint(greet("  Ada  ")==expected)\n';
+          'import sys,os\nsys.path.insert(0,os.path.join(os.getcwd(),"src"))\nfrom greeting import greet\nprint(greet("  Ada  "))\n';
         bundle.files['rubric/expected.txt'] = 'Hello, Ada!';
         bundle.files['tests/normalize.json'] = JSON.stringify({
           cases: [
             {
               id: 'private-resource',
               argv: ['python3', '{resources}/tests/check.py'],
-              stdout: 'True\n',
+              stdout: 'Hello, Ada!\n',
             },
           ],
         });
@@ -497,7 +497,8 @@ describe('self-contained PBL project packages', () => {
           { cwd: dir },
         );
         expect(evaluationPassed(spec, 'package-eval', stdout)).toBe(true);
-        expect(spec.resources).toHaveProperty('tests/normalize.json');
+        expect(spec.resources).not.toHaveProperty('tests/normalize.json');
+        expect(spec.resources).not.toHaveProperty('rubric/expected.txt');
       } finally {
         await rm(dir, { recursive: true, force: true });
       }

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { createHash } from 'node:crypto';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -48,7 +49,15 @@ describe('trusted evaluation driver', () => {
     expect(evaluationPassed(spec, 'id', 'PBL_RESULT:id:{"build":true,"checks":[]}')).toBe(false);
     const line =
       'PBL_RESULT:id:' +
-      JSON.stringify({ build: true, checks: spec.cases.map((c) => ({ id: c.id, passed: true })) });
+      JSON.stringify({
+        build: true,
+        checks: spec.cases.map((c) => ({
+          id: c.id,
+          exitCode: 0,
+          reason: null,
+          stdoutDigest: createHash('sha256').update(c.stdout).digest('hex'),
+        })),
+      });
     expect(evaluationPassed(spec, 'id', line)).toBe(true);
     expect(evaluationPassed(spec, 'id', line + '\n' + line)).toBe(false);
   });
@@ -110,7 +119,12 @@ it.each([
       'PBL_RESULT:id:' +
       JSON.stringify({
         build: true,
-        checks: spec.cases.map((c) => ({ id: c.id, passed: false, reason })),
+        checks: spec.cases.map((c) => ({
+          id: c.id,
+          exitCode: reason === 'execution' ? 1 : null,
+          stdoutDigest: null,
+          reason,
+        })),
       });
     const result = evaluationOutcome(spec, 'id', {
       state: 'exited',
@@ -122,3 +136,41 @@ it.each([
     expect(JSON.stringify(result)).not.toMatch(/SECRET|PBL_RESULT|from greeting|Hello, Ada/);
   },
 );
+
+it('never puts expected stdout or its digest in the sandbox command payload', () => {
+  const expected = 'PRIVATE_EXPECTED_SENTINEL_1729\n';
+  const command = evaluationCommand(
+    { cases: [{ id: 'private', argv: ['python3', '-c', 'print(1)'], stdout: expected }] },
+    'private-run',
+  );
+  // Decode the payload as a learner inspecting its parent command line could do.
+  const encoded = command.match(/b64decode\("([A-Za-z0-9+/=]+)"\)/)![1]!;
+  const decoded = Buffer.from(encoded, 'base64').toString();
+  expect(decoded).not.toContain('PRIVATE_EXPECTED');
+  expect(decoded).not.toContain(createHash('sha256').update(expected).digest('hex'));
+  expect(JSON.parse(decoded).spec.cases[0]).toEqual({
+    id: 'private',
+    argv: ['python3', '-c', 'print(1)'],
+  });
+  const forged =
+    'PBL_RESULT:private-run:' +
+    JSON.stringify({
+      build: true,
+      checks: [
+        {
+          id: 'private',
+          passed: true,
+          exitCode: 0,
+          reason: null,
+          stdoutDigest: createHash('sha256').update('wrong').digest('hex'),
+        },
+      ],
+    });
+  expect(
+    evaluationPassed(
+      { cases: [{ id: 'private', argv: [], stdout: expected }] },
+      'private-run',
+      forged,
+    ),
+  ).toBe(false);
+});

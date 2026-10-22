@@ -21,6 +21,7 @@ export interface LearningConversationEntry {
     | { kind: 'text'; id: string; text: string; streaming?: boolean }
     | {
         kind: 'thinking';
+        hidden?: boolean;
         id: string;
         text: string;
         streaming?: boolean;
@@ -43,6 +44,7 @@ export interface LearningConversationEntry {
         name?: string;
         args?: Record<string, string>;
         result?: string;
+        projectCompleted?: boolean;
         startedAt?: number;
         endedAt?: number;
         status: 'running' | 'succeeded' | 'failed' | 'interrupted';

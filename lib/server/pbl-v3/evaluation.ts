@@ -1,4 +1,5 @@
 import 'server-only';
+import { createHash } from 'node:crypto';
 import { sandboxConflict } from '@/lib/sandbox/errors';
 import type { EvaluationResult } from '@/lib/pbl/v3/domain/orchestration/types';
 import type { SandboxCommandResult } from '@/lib/sandbox/types';
@@ -9,7 +10,7 @@ export interface ProjectEvaluation {
   resources?: Record<string, string>;
   /** Deployment-owned argv, not user-provided shell text. */
   prepare?: string[];
-  /** id/label are learner-visible metadata; keep private test details in argv/stdout. */
+  /** Expected stdout stays on the host; it is never part of the execution payload. */
   cases: { id: string; label?: string; argv: string[]; stdout: string; stdin?: string }[];
 }
 const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
@@ -17,19 +18,28 @@ export function evaluationFor(project: InstalledProject, milestone: string) {
   const spec = project.evaluations[milestone];
   if (!spec?.cases.length) throw sandboxConflict('No evaluation is installed for this milestone.');
   if (!project.coursePackage) return spec;
+  const privateFiles = new Set([
+    ...Object.values(project.coursePackage.descriptor.runtime.evaluations),
+    ...project.definition.visibility.answerKeys,
+  ]);
   const resources = Object.fromEntries(
-    Object.entries(project.coursePackage.bundle.files).filter(([path]) =>
-      /^(tests|rubric)\//.test(path),
+    Object.entries(project.coursePackage.bundle.files).filter(
+      ([path]) => /^tests\//.test(path) && !privateFiles.has(path),
     ),
   );
   return { ...spec, resources };
 }
-/** The parent checks actual child output. A learner process exiting zero before executing a check cannot pass.
+/** Return observations, not a learner-controlled verdict. The host owns expected values.
  * This is learning feedback, not a hostile-code grading boundary: parent and child share the sandbox identity.
  */
 export function evaluationCommand(spec: ProjectEvaluation, requestId: string) {
-  const payload = Buffer.from(JSON.stringify({ spec, requestId })).toString('base64');
-  const script = `import base64,json,subprocess,tempfile,os
+  const execution = {
+    prepare: spec.prepare,
+    resources: spec.resources,
+    cases: spec.cases.map(({ id, argv, stdin }) => ({ id, argv, stdin })),
+  };
+  const payload = Buffer.from(JSON.stringify({ spec: execution, requestId })).toString('base64');
+  const script = `import base64,json,subprocess,tempfile,os,hashlib,resource
 cfg=json.loads(base64.b64decode(${JSON.stringify(payload)}))
 spec=cfg['spec']; results=[]; build=True; buildReason=None
 with tempfile.TemporaryDirectory(prefix='pbl-check-') as out:
@@ -38,26 +48,30 @@ with tempfile.TemporaryDirectory(prefix='pbl-check-') as out:
   target=os.path.join(resources,path); os.makedirs(os.path.dirname(target),exist_ok=True)
   with open(target,'w',encoding='utf-8') as f: f.write(text)
  def run(argv,stdin=''):
-  return subprocess.run([a.replace('{build}',out).replace('{resources}',resources) for a in argv],input=stdin,text=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=15)
+  with tempfile.TemporaryFile() as output, tempfile.TemporaryFile() as errors:
+   proc=subprocess.Popen([a.replace('{build}',out).replace('{resources}',resources) for a in argv],stdin=subprocess.PIPE,stdout=output,stderr=errors,preexec_fn=lambda: resource.setrlimit(resource.RLIMIT_FSIZE,(1048576,1048576)))
+   try: proc.communicate(input=stdin.encode('utf-8'),timeout=15)
+   except subprocess.TimeoutExpired:
+    proc.kill(); proc.communicate(); raise
+   output.seek(0); data=output.read(1048577)
+   if len(data)>1048576: return proc.returncode,None
+   text=data.decode('utf-8').replace('\\r\\n','\\n').replace('\\r','\\n')
+   return proc.returncode,hashlib.sha256(text.encode('utf-8')).hexdigest()
  try:
   if spec.get('prepare'):
-   build=run(spec['prepare']).returncode==0
+   build=run(spec['prepare'])[0]==0
    if not build: buildReason='build'
   for case in spec['cases']:
-   passed=False; reason='not_run'
+   observed=None; exitCode=None; reason='not_run'
    if build:
     try:
-     proc=run(case['argv'],case.get('stdin',''))
-     passed=proc.returncode==0 and proc.stdout==case['stdout']
-     reason=None if passed else ('execution' if proc.returncode else 'output')
+     exitCode,observed=run(case['argv'],case.get('stdin',''))
+     reason='execution' if exitCode else ('output' if observed is None else None)
     except subprocess.TimeoutExpired: reason='timeout'
-    except OSError: reason='environment'
-   results.append({'id':case['id'],'passed':passed,'reason':reason})
+    except (OSError,UnicodeError): reason='environment'
+   results.append({'id':case['id'],'stdoutDigest':observed,'exitCode':exitCode,'reason':reason})
  except subprocess.TimeoutExpired: build=False; buildReason='timeout'
  except OSError: build=False; buildReason='environment'
-print(str(sum(r['passed'] for r in results))+' / '+str(len(spec['cases']))+' checks passed')
-if not build: print('Build failed or could not complete. Run the build check for diagnostics.')
-for r in results: print(r['id']+(': passed' if r['passed'] else ': did not satisfy the project contract'))
 print('PBL_RESULT:'+cfg['requestId']+':'+json.dumps({'build':build,'buildReason':buildReason,'checks':results},separators=(',',':')))
 `;
   return `python3 -c ${quote(script)}`;
@@ -88,16 +102,23 @@ function evaluationReceipt(spec: ProjectEvaluation, id: string, output: string):
       const result = value.checks[index];
       if (
         result?.id !== c.id ||
-        typeof result.passed !== 'boolean' ||
-        (result.passed && (result.reason != null || value.build === false)) ||
+        (result.exitCode !== null && !Number.isSafeInteger(result.exitCode)) ||
+        (result.stdoutDigest !== null && !/^[a-f0-9]{64}$/.test(result.stdoutDigest ?? '')) ||
         (result.reason != null && !reasons.includes(result.reason))
       )
         throw new Error('Invalid case receipt');
+      if (result.reason == null && (result.exitCode !== 0 || !result.stdoutDigest || !value.build))
+        throw new Error('Incomplete observation');
+      const passed =
+        value.build &&
+        result.reason == null &&
+        result.exitCode === 0 &&
+        result.stdoutDigest === createHash('sha256').update(c.stdout, 'utf8').digest('hex');
       return {
         id: c.id,
         label: (c.label ?? c.id).slice(0, 160),
-        passed: result.passed,
-        ...(!result.passed && result.reason ? { reason: result.reason } : {}),
+        passed,
+        ...(!passed ? { reason: result.reason ?? 'output' } : {}),
       };
     });
     return { build: value.build, buildReason: value.buildReason ?? undefined, checks };

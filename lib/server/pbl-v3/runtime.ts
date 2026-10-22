@@ -1,3 +1,4 @@
+import { recordLearningEvidence } from './evidence';
 import { projectConversation, learningRunFailure } from './conversation';
 import 'server-only';
 import { reviewQuestion } from './review-question';
@@ -109,7 +110,7 @@ export async function fileSnapshot(service: SandboxService, row: Study) {
   const files = await readFiles(service, row);
   return { files, fingerprint: filesFingerprint(files) };
 }
-async function saveStudyCheckpoint(service: SandboxService, row: Study) {
+export async function saveStudyCheckpoint(service: SandboxService, row: Study) {
   const snapshot = await fileSnapshot(service, row);
   const previous = await service.checkpoint(requireEnvironment(row));
   const saved = await service.saveWorkspace(requireEnvironment(row), previous?.revision ?? 0);
@@ -528,7 +529,7 @@ export async function commandStudy(
       if (command.path === 'PLAN.md' && !(stage.kind === 'produce' && stage.writes === 'plan'))
         throw sandboxConflict('The approved plan is read-only during coding.');
       if (command.path === 'PLAN.md') await assertLearningPlan(store, row, command.text);
-      await service.compareAndWriteText(
+      const changed = await service.compareAndWriteText(
         requireEnvironment(row),
         command.path,
         command.text,
@@ -539,6 +540,12 @@ export async function commandStudy(
           );
         },
       );
+      if (changed)
+        await recordLearningEvidence(store.pool, row, 'learner', 'file-edit', {
+          path: command.path,
+          text: command.text,
+          previousHash: command.expectedHash,
+        });
       transition = { state: row.state, events: [] };
     } else if (command.type === 'checkpoint') {
       await saveStudyCheckpoint(service, row);

@@ -41,6 +41,7 @@ const mocked = vi.hoisted(() => ({
   inputs: [] as string[],
   objects: new Map<string, Uint8Array>(),
   responses: [] as Array<Array<Record<string, unknown>>>,
+  reportAnalysis: vi.fn(),
   modelCalls: 0,
   modelRequests: [] as ModelMessage[][],
   modelSystems: [] as (string | undefined)[],
@@ -85,6 +86,9 @@ vi.mock('@/lib/persistence/server-provider', () => ({
       }
     },
   }),
+}));
+vi.mock('@/lib/server/pbl-v3/report-analysis', () => ({
+  analyzeLearningReport: mocked.reportAnalysis,
 }));
 vi.mock('@/lib/server/agent-runtime/store', () => ({
   getAgentSessionStore: async () => mocked.agents,
@@ -307,7 +311,11 @@ vi.mock('@/lib/ai/llm', () => ({
 import { runSession, startAgentRunner } from '@/lib/server/agent-runtime/runner';
 import { ensureOwnerMergeSchema } from '@/lib/persistence/owner-merges';
 import { ensureSandboxEnvironmentSchema } from '@/lib/persistence/sandbox-environments';
-import { learningReport } from '@/lib/server/pbl-v3/report';
+import {
+  learningReport,
+  learningEvidence,
+  generateLearningReport,
+} from '@/lib/server/pbl-v3/report';
 import { installedProject } from '@/lib/server/pbl-v3/catalog';
 import * as catalog from '@/lib/server/pbl-v3/catalog';
 import { SandboxError } from '@/lib/sandbox/errors';
@@ -517,6 +525,7 @@ async function guided(role: 'teaching' | 'plan' | 'code') {
   await runTools('I checked the current part and confirm it.', async (config) => {
     await invoke(config, 'complete_stage', { studentFeedback: 'I checked the current part' });
   });
+  if ((await store.get(studyId, principal.ownerId)).state.status === 'completed') return;
   if (role !== 'teaching') {
     const row = await store.get(studyId, principal.ownerId);
     const path = role === 'plan' ? 'PLAN.md' : 'greeting.py';
@@ -622,16 +631,16 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
     if (mocked.root) await rm(mocked.root, { recursive: true, force: true });
   });
   it.each(['greeting-python-lab', 'greeting-java'])(
-    'completes two milestones and resumes optional exploration for %s',
+    'completes both seven-step milestones with a tool-completed final recap and no appended exploration for %s',
     async (projectId) => {
-      const selected = installedProject({ id: projectId, version: '1.0.0' });
+      const selected = installedProject({ id: projectId, version: '1.1.0' });
       const created = await store.create(
         {
           ownerId: principal.ownerId,
           stageId: randomUUID(),
           sceneId: 'scene',
           projectId,
-          version: '1.0.0',
+          version: '1.1.0',
         },
         startOrchestration(selected.definition),
       );
@@ -747,6 +756,7 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
         expect(request.at(-1)?.role).not.toBe('assistant');
         expect(mocked.modelSystems.at(-1)).toContain('Runtime continuation:');
         const approved = await learningView(principal, id);
+        if (approved.state.status === 'completed') return;
         expect(approved.actions).toContain('next');
         const completedPosition = approved.state.position;
         // A normal follow-up is not a request to revoke an already recorded review.
@@ -813,6 +823,7 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
           expect((await learningView(principal, id)).actions).toContain('next');
           await send('next');
         }
+        if (milestone === 1) await send('next'); // the normal decision step has no new required choices
         const oldPlan = await (
           await SandboxService.forOwner(principal)
         ).readText(initialEnv, 'PLAN.md');
@@ -851,7 +862,9 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
         await guidedStage();
       }
       const exploring = await learningView(principal, id);
-      expect(exploring.state.position.milestoneId).toBe('explore');
+      expect(exploring.state.status).toBe('completed');
+      expect(exploring.milestones).toHaveLength(2);
+      expect(exploring.milestones!.every((m) => m.stages.length === 7)).toBe(true);
       expect(exploring.actions).not.toContain('next');
       const before = await store.get(id, principal.ownerId);
       const report = await learningReport(principal, id);
@@ -880,26 +893,7 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
       await expect(
         learningReport({ ...principal, ownerId: 'someone-else' }, id),
       ).rejects.toMatchObject({ status: 404 });
-      await roleTurn('I want to explore another greeting.', async (config) => {
-        expect(config.allowedToolNames.has('complete_stage')).toBe(false);
-        expect(config.allowedToolNames.has('read_next_skill')).toBe(false);
-        const path = projectId === 'greeting-java' ? 'src/Greeting.java' : 'src/greeting.py';
-        const original = await (
-          await SandboxService.forOwner(principal)
-        ).readText(initialEnv, path);
-        await invoke(config, 'write_file', {
-          path,
-          text: original + '\n',
-          expectedHash: digest(original),
-        });
-      });
-      await send('checkpoint');
-      mocked.missing.add(initialEnv);
-      await send('prepare');
-      const restored = await learningView(principal, id);
-      expect(restored.state.position.milestoneId).toBe('explore');
-      expect(restored.environmentId).not.toBe(initialEnv);
-      expect((await learningReport(principal, id)).requiredComplete).toBe(true);
+      await expect(send('chat', { text: 'I want another stage' })).rejects.toThrow();
       const bindings = await store.roles(id);
       expect(bindings.filter((b) => b.role === 'mentor')).toHaveLength(1);
       expect(bindings.filter((b) => b.role === 'planner')).toHaveLength(2);
@@ -1141,7 +1135,11 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
 
     // The review is committed before its tool display event exists. Hiding the
     // wakeup must retain this recoverable Agent question without inventing a learner.
-    const pending = await learningReport(principal, study.id);
+    await expect(learningReport(principal, study.id)).rejects.toMatchObject({ status: 409 });
+    await expect(
+      generateLearningReport(principal, study.id, new AbortController().signal),
+    ).rejects.toMatchObject({ status: 409 });
+    const pending = await learningEvidence(principal, study.id);
     expect(pending.conversations[0]!.messages).toEqual([
       expect.objectContaining({ role: 'assistant', text: question }),
     ]);
@@ -1159,7 +1157,7 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
         result: { content: [{ type: 'text', text: JSON.stringify({ question }) }] },
       },
     });
-    const displayed = await learningReport(principal, study.id);
+    const displayed = await learningEvidence(principal, study.id);
     expect(displayed.conversations[0]!.messages).toEqual([
       expect.objectContaining({ role: 'assistant', text: question }),
     ]);
@@ -1174,7 +1172,7 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
       type: 'chat',
       text,
     });
-    const answered = await learningReport(principal, study.id);
+    const answered = await learningEvidence(principal, study.id);
     expect(answered.conversations[0]!.messages).toEqual([
       expect.objectContaining({ role: 'assistant', text: question }),
       expect.objectContaining({ role: 'user', text }),
@@ -1183,6 +1181,42 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
       learningReport({ ...principal, ownerId: 'another-owner' }, study.id),
     ).rejects.toMatchObject({ status: 404 });
     await agents.softDeleteSession(started.sessionId, principal.ownerId);
+  });
+  it('generates only after completion, saves one report and safely retries a failed analysis', async () => {
+    const { id } = await freshStudy();
+    await expect(learningReport(principal, id)).rejects.toMatchObject({ status: 409 });
+    await pool.query(
+      "UPDATE pbl_v3_studies SET state=jsonb_set(state,'{status}','\"completed\"') WHERE id=$1",
+      [id],
+    );
+    mocked.reportAnalysis.mockReset().mockRejectedValueOnce(new Error('PRIVATE MODEL FAILURE'));
+    const signal = new AbortController().signal;
+    expect((await learningReport(principal, id)).analysis?.status).toBe('not_generated');
+    expect(mocked.reportAnalysis).not.toHaveBeenCalled();
+    const failed = await generateLearningReport(principal, id, signal);
+    expect(failed.analysis?.status).toBe('failed');
+    expect(JSON.stringify(failed)).not.toContain('PRIVATE MODEL');
+    let release!: (value: { findings: never[]; omitted: boolean }) => void;
+    mocked.reportAnalysis.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    const generation = generateLearningReport(principal, id, signal);
+    await vi.waitFor(() => expect(mocked.reportAnalysis).toHaveBeenCalledTimes(2));
+    expect((await generateLearningReport(principal, id, signal)).analysis?.status).toBe(
+      'generating',
+    );
+    release({ findings: [], omitted: false });
+    const ready = await generation;
+    expect(ready.analysis?.status).toBe('ready');
+    expect(await learningReport(principal, id)).toEqual(ready);
+    expect(await generateLearningReport(principal, id, signal)).toEqual(ready);
+    expect(mocked.reportAnalysis).toHaveBeenCalledTimes(2);
+    await expect(
+      learningReport({ ...principal, ownerId: 'another-owner' }, id),
+    ).rejects.toMatchObject({ status: 404 });
   });
   it('prepares once and runs the complete learning flow with actual Python tests', async () => {
     await command('prepare');
@@ -1649,7 +1683,7 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
       expect((await agents.readEventsAfter(queued.sessionId, 0, 1000)).some(isEmptyStop)).toBe(
         true,
       );
-      const transcript = (await learningReport(principal, studyId)).conversations.flatMap(
+      const transcript = (await learningEvidence(principal, studyId)).conversations.flatMap(
         (c) => c.messages,
       );
       expect(transcript.filter((m) => m.text === 'What should greet(name) return?')).toHaveLength(
@@ -1717,7 +1751,7 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
       );
       expect((await learningView(principal, study.id)).actions).not.toContain('next');
       expect(
-        (await learningReport(principal, study.id)).conversations
+        (await learningEvidence(principal, study.id)).conversations
           .flatMap((c) => c.messages)
           .filter((m) => m.text === 'Explain the saved review.'),
       ).toHaveLength(1);
@@ -2081,6 +2115,15 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
     expect(pending.environment_id).toBe(env);
     const allocated = pending.environment_recovery!.requestId;
     expect(allocated).not.toBe(env);
+    const restore = vi.spyOn(E2BCompatibleSandboxProvider.prototype, 'importWorkspace');
+    try {
+      const inspection = await service.reconcile(allocated, false);
+      expect(inspection.workspaceReady).toBe(false);
+      await learningView(principal, study.id);
+      expect(restore).not.toHaveBeenCalled();
+    } finally {
+      restore.mockRestore();
+    }
     await study.send('prepare'); // different browser command ID after reload, same allocation
     const recovered = await store.get(study.id, principal.ownerId);
     expect(recovered.environment_id).toBe(allocated);
@@ -2257,12 +2300,53 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
       const terminal = (await send('terminal')) as { id: string };
       await send('input', { terminalId: terminal.id, data: 'echo hello\n', revision: 0 });
       expect(mocked.inputs.at(-1)).toBe('echo hello\n');
+      let unlock!: () => void, locked!: () => void;
+      const entered = new Promise<void>((resolve) => {
+        locked = resolve;
+      });
+      const lock = store.exclusive(row.id, async () => {
+        locked();
+        await new Promise<void>((resolve) => {
+          unlock = resolve;
+        });
+      });
+      await entered;
+      try {
+        await expect(
+          send('input', { terminalId: terminal.id, data: 'x', revision: 0 }),
+        ).resolves.toEqual({ accepted: true });
+        expect(mocked.inputs.at(-1)).toBe('x');
+      } finally {
+        unlock();
+        await lock;
+      }
+
       await expect(fresh.send('checkpoint')).rejects.toThrow();
       const preview = new URL(((await send('preview', { port: 8000 })) as { url: string }).url);
       await expect(
         SandboxService.previewTarget(preview.hash.slice(1), preview.host),
       ).resolves.toMatchObject({ transport: 'native' });
       await expect(send('preview', { port: 49983 })).rejects.toThrow();
+      const busyTurn = (await fresh.send('chat')) as { sessionId: string };
+      const worker = await agents.claimNextSession('preview-test-worker', process.pid, {
+        sessionId: busyTurn.sessionId,
+        leaseTtlMs: 30000,
+        maxAttempts: 5,
+      });
+      const busyView = await workbenchView(principal, row.id);
+      expect(busyView.canRun).toBe(false);
+      expect(busyView.canPreview).toBe(true);
+      await expect(
+        SandboxService.previewTarget(preview.hash.slice(1), preview.host),
+      ).resolves.toMatchObject({ transport: 'native' });
+      await expect(
+        send('input', { terminalId: terminal.id, data: 'forbidden' }),
+      ).rejects.toMatchObject({ reason: 'WORKBENCH_ACCESS_DENIED' });
+      await agents.finishSession(busyTurn.sessionId, 'preview-test-worker', {
+        status: 'succeeded',
+        expectedAttempt: worker!.attempt,
+      });
+
       const oldGrant = new URL(
         issuePreviewGrant({ ownerId: principal.ownerId, environmentId, port: 8000, epoch: 0 }).url,
       );
@@ -2419,7 +2503,7 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
   it.each(['greeting-python-lab', 'greeting-java'])(
     'runs an unregistered imported %s course from pinned resources after its scene changes',
     async (projectId) => {
-      const selected = installedProject({ id: projectId, version: '1.0.0' });
+      const selected = installedProject({ id: projectId, version: '1.1.0' });
       const bundle = packageBuiltin(selected);
       const descriptor: ProjectDescriptor = JSON.parse(bundle.files['project.json']);
       const importedId = `imported-${projectId}`;
@@ -2434,20 +2518,15 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
       const java = descriptor.runtime.profile === 'java';
       bundle.files['rubric/expected.txt'] = 'Hello, Ada!\nHello, Lin!\n';
       bundle.files['tests/private.py'] = java
-        ? 'import pathlib,subprocess,sys\nexpected=pathlib.Path(sys.argv[1]).read_text().splitlines()\nactual=[subprocess.run(["java","-cp",sys.argv[2],"Greeting",name],check=True,text=True,stdout=subprocess.PIPE).stdout.strip() for name in ["  Ada  ","Lin"]]\nassert actual==expected\nprint("private course checks passed")\n'
-        : 'import pathlib,sys\nsys.path.insert(0,str(pathlib.Path.cwd()/"src"))\nfrom greeting import greet\nexpected=pathlib.Path(sys.argv[1]).read_text().splitlines()\nassert [greet(name) for name in ["  Ada  ","Lin"]]==expected\nprint("private course checks passed")\n';
+        ? 'import subprocess,sys\nfor name in ["  Ada  ","Lin"]: print(subprocess.run(["java","-cp",sys.argv[1],"Greeting",name],check=True,text=True,stdout=subprocess.PIPE).stdout.strip())\n'
+        : 'import pathlib,sys\nsys.path.insert(0,str(pathlib.Path.cwd()/"src"))\nfrom greeting import greet\nfor name in ["  Ada  ","Lin"]: print(greet(name))\n';
       bundle.files['tests/private.json'] = JSON.stringify({
         ...(java ? { prepare: ['javac', '-d', '{build}', 'src/Greeting.java'] } : {}),
         cases: [
           {
             id: 'course-owned-private-check',
-            argv: [
-              'python3',
-              '{resources}/tests/private.py',
-              '{resources}/rubric/expected.txt',
-              ...(java ? ['{build}'] : []),
-            ],
-            stdout: 'private course checks passed\n',
+            argv: ['python3', '{resources}/tests/private.py', ...(java ? ['{build}'] : [])],
+            stdout: 'Hello, Ada!\nHello, Lin!\n',
           },
         ],
       });
@@ -2714,7 +2793,8 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
           await turn('I reviewed this section.', async (config) => {
             await invoke(config, 'complete_stage', { studentFeedback: 'I reviewed this section.' });
           });
-          await send('next');
+          if ((await store.get(created.id, principal.ownerId)).state.status !== 'completed')
+            await send('next');
         } else if (stage.kind === 'dialogue') {
           await turn('I understand the course decisions.', async (config) => {
             expect(config.systemPrompt).toContain(`PACKAGED SKILL ${key}`);

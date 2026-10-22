@@ -151,14 +151,14 @@ const greeting: InstalledProject = {
 };
 function extendedProject(language: 'Python' | 'Java'): InstalledProject {
   const java = language === 'Java';
-  const ref = { id: java ? 'greeting-java' : 'greeting-python-lab', version: '1.0.0' };
+  const ref = { id: java ? 'greeting-java' : 'greeting-python-lab', version: '1.1.0' };
   const file = java ? 'src/Greeting.java' : 'src/greeting.py';
   const definition = structuredClone(greeting.definition);
   definition.id = ref.id;
   definition.title = java ? 'A Java greeting application' : 'A Python greeting application';
   definition.language = language;
   definition.intro.say =
-    'Introduce the project: implement a greeting, then add safe whitespace handling. Explain that earlier code and one evolving PLAN.md carry into the next milestone. Optional exploration remains available after the required work.';
+    'Introduce the project: implement a greeting, then add safe whitespace handling. Explain that earlier code and one evolving PLAN.md carry into the next milestone. Complete both milestones and their reflections to open the project report.';
   const first = definition.milestones[0]!;
   first.teaching = {
     purpose: 'Connect a function input to its returned output.',
@@ -199,39 +199,13 @@ function extendedProject(language: 'Python' | 'Java'): InstalledProject {
       boundaries: [],
     },
     decisions: [],
-    stages: stages.filter((stage) => stage.kind !== 'dialogue'),
+    stages: structuredClone(stages),
     quiz: [
       {
         q: 'Why run the earlier checks after changing input handling?',
         options: ['To preserve existing behavior', 'To replace the new checks'],
         answer: 0,
         explain: 'New behavior must preserve earlier requirements.',
-      },
-    ],
-  });
-  definition.milestones.push({
-    id: 'explore',
-    type: 'task',
-    title: 'Explore your own extension',
-    optional: true,
-    decisions: [],
-    quiz: [],
-    deliverables: [],
-    tests: [],
-    testScope: 'current',
-    publicTestFeedback: {},
-    stages: [
-      {
-        kind: 'produce',
-        agent: 'coder',
-        reads: ['plan', 'code'],
-        writes: 'code',
-        reviewRequired: false,
-        exploration: {
-          introduction:
-            'Choose an extension: support another greeting style or build a small web page. Keep your existing work and return whenever you wish.',
-        },
-        studentActions: ['chat', 'edit', 'create', 'delete', 'rename', 'move', 'restore'],
       },
     ],
   });
@@ -269,8 +243,48 @@ function extendedProject(language: 'Python' | 'Java'): InstalledProject {
 }
 const pythonLab = extendedProject('Python');
 const javaLab = extendedProject('Java');
+// Existing studies resolve their original version. Only the new version is offered for new courses.
+function legacyProject(project: InstalledProject): InstalledProject {
+  const legacy = structuredClone(project);
+  legacy.ref.version = '1.0.0';
+  legacy.definition.intro.say =
+    'Introduce the project: implement a greeting, then add safe whitespace handling. Explain that earlier code and one evolving PLAN.md carry into the next milestone. Optional exploration remains available after the required work.';
+  legacy.definition.milestones[1]!.stages = legacy.definition.milestones[1]!.stages.filter(
+    (stage) => stage.kind !== 'dialogue',
+  );
+  legacy.definition.milestones.push({
+    id: 'explore',
+    type: 'task',
+    title: 'Explore your own extension',
+    optional: true,
+    decisions: [],
+    quiz: [],
+    deliverables: [],
+    tests: [],
+    testScope: 'current',
+    publicTestFeedback: {},
+    stages: [
+      {
+        kind: 'produce',
+        agent: 'coder',
+        reads: ['plan', 'code'],
+        writes: 'code',
+        reviewRequired: false,
+        exploration: {
+          introduction:
+            'Choose an extension: support another greeting style or build a small web page. Keep your existing work and return whenever you wish.',
+        },
+        studentActions: ['chat', 'edit', 'create', 'delete', 'rename', 'move', 'restore'],
+      },
+    ],
+  });
+  return legacy;
+}
 const projects = new Map(
-  [greeting, pythonLab, javaLab].map((p) => [`${p.ref.id}@${p.ref.version}`, p]),
+  [greeting, pythonLab, javaLab, legacyProject(pythonLab), legacyProject(javaLab)].map((p) => [
+    `${p.ref.id}@${p.ref.version}`,
+    p,
+  ]),
 );
 export function publicProjects() {
   return [pythonLab, javaLab, greeting].map(({ ref, definition }) => ({

@@ -93,7 +93,7 @@ Teaching requests identify the active stage and current completion receipt expli
 Earlier-stage dialogue is retained as quoted project memory, while the native message
 sequence starts at the first real student turn of the current stage. Earlier tool
 completion results cannot masquerade as the current workflow. The durable transcript,
-reports, feedback counts and student-confirmation gates are unchanged; the projection
+feedback counts and intermediate student-confirmation gates retain the same evidence; the projection
 adds no student message and does not invent a teaching result.
 
 ## Verification
@@ -127,3 +127,13 @@ targets `integration/shared-sandbox`; standalone and combined checks were repeat
 against that baseline. Teaching Skills, version-aware assessment, reports and cross-milestone recovery
 are the companion learning change; full private-course deployment and activity
 operations follow the general capability work.
+
+Terminal input uses the environment lock and freshly checks study ownership, environment
+and stage permission without waiting for the long study mutation lock or renewing the
+provider on every keystroke. The client retries only `ENVIRONMENT_BUSY`, a confirmed
+rejection before provider dispatch, with a bounded backoff. Lost acknowledgements and
+permission failures are never replayed; Stop/environment replacement still fence input.
+Existing preview grants survive ordinary model activity at an otherwise permitted code
+stage; pending review, assessments, completion and Stop still revoke access. Background
+inspection never imports a half-restored workspace; explicit Prepare/Restore owns that
+write scope.

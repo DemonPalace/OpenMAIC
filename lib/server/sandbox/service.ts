@@ -299,8 +299,8 @@ export class SandboxService {
     );
   }
 
-  async reconcile(id: string) {
-    return this.reconcileResource(id, true);
+  async reconcile(id: string, prepareWorkspace = true) {
+    return this.reconcileResource(id, prepareWorkspace);
   }
 
   private async reconcileResource(id: string, prepareWorkspace: boolean) {
@@ -673,9 +673,17 @@ export class SandboxService {
     return { id: terminal.id, state: terminal.state };
   }
 
-  async updateTerminal(id: string, terminalId: string, body: Record<string, unknown>) {
+  async updateTerminal(
+    id: string,
+    terminalId: string,
+    body: Record<string, unknown>,
+    authorize?: () => Promise<void>,
+  ) {
     await this.mutation(id, 'terminal');
-    return this.store.exclusive(id, () => this.updateTerminalUnlocked(id, terminalId, body));
+    return this.store.exclusive(id, async () => {
+      await authorize?.();
+      return this.updateTerminalUnlocked(id, terminalId, body);
+    });
   }
 
   private async updateTerminalUnlocked(

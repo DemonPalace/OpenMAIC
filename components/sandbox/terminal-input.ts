@@ -1,3 +1,4 @@
+import { SandboxRequestError } from './client';
 import { getClientTranslation } from '@/lib/i18n';
 /** Coalesce keystrokes while a remote request is in flight; never replay uncertain input. */
 export function createTerminalInput(
@@ -35,10 +36,33 @@ export function createTerminalInput(
     else resize = undefined;
     sending = true;
     try {
-      await send(body);
+      for (let attempt = 0; ; attempt++) {
+        if (stopped) return;
+        try {
+          await send(body);
+          break;
+        } catch (error) {
+          // The environment lock rejected this request before provider dispatch.
+          // A lost response (or any other error) is never safe to replay.
+          if (
+            !(error instanceof SandboxRequestError) ||
+            error.reason !== 'ENVIRONMENT_BUSY' ||
+            attempt >= 4
+          )
+            throw error;
+          await new Promise((resolve) => setTimeout(resolve, 50 * (attempt + 1)));
+        }
+      }
       if (body.action === 'input') bytes -= encoder.encode(body.data).length;
-    } catch {
-      if (!stopped) fail(getClientTranslation('sandbox.inputUnconfirmed'));
+    } catch (error) {
+      if (!stopped)
+        fail(
+          getClientTranslation(
+            error instanceof SandboxRequestError && error.reason === 'ENVIRONMENT_BUSY'
+              ? 'sandbox.inputBusy'
+              : 'sandbox.inputUnconfirmed',
+          ),
+        );
     } finally {
       sending = false;
       if (pending || resize) schedule();

@@ -1,4 +1,4 @@
-/** Student-safe report projection; never contains answer keys or provider diagnostics. */
+/** Owner-scoped, saved project report. Public evidence never contains course protocols or answer keys. */
 export interface LearningReport {
   studyId: string;
   project: { id: string; version: string; title: string };
@@ -18,6 +18,7 @@ export interface LearningReport {
     kind: string;
     detail: string;
     version?: string;
+    truncated?: boolean;
   }[];
   conversations: {
     role: string;
@@ -26,4 +27,28 @@ export interface LearningReport {
     truncated: boolean;
   }[];
   truncated: boolean;
+  facts?: {
+    learnerTurns: number;
+    assistantTurns: number;
+    decisions: number;
+    decisionChanges: number;
+    testRuns: number;
+    quizAttempts: number;
+    fileEdits: number;
+    interruptedRuns: number;
+  };
+  analysis?: {
+    status: 'not_generated' | 'generating' | 'ready' | 'failed';
+    generatedAt?: string;
+    findings: ReportFinding[];
+    omitted: boolean;
+    canRetry: boolean;
+  };
+}
+export interface ReportFinding {
+  category: 'journey' | 'strength' | 'change' | 'collaboration' | 'next';
+  title: string;
+  detail: string;
+  evidence: string[];
+  quote?: string;
 }

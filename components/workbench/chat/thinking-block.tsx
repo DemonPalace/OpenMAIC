@@ -16,6 +16,7 @@ import type { ToolStackPosition } from './tool-card';
 
 export function ThinkingBlock({
   text,
+  hidden = false,
   streaming = false,
   startedAt,
   endedAt,
@@ -23,6 +24,7 @@ export function ThinkingBlock({
   t = defaultWorkbenchTranslator,
 }: {
   text: string;
+  hidden?: boolean;
   streaming?: boolean;
   startedAt?: number | undefined;
   endedAt?: number | undefined;
@@ -31,7 +33,7 @@ export function ThinkingBlock({
 }) {
   const { expanded, toggle } = useThinkingBar();
 
-  if (!text) return null;
+  if (!text && !hidden) return null;
 
   const summary = thinkingBarSummary(
     {
@@ -40,7 +42,7 @@ export function ThinkingBlock({
     },
     t,
   );
-  const preview = thinkingBarPreview(text);
+  const preview = hidden ? '' : thinkingBarPreview(text);
 
   return (
     <div
@@ -53,7 +55,8 @@ export function ThinkingBlock({
       <button
         type="button"
         className={styles.thinking.head}
-        aria-expanded={expanded}
+        aria-expanded={!hidden && expanded}
+        disabled={hidden}
         onClick={toggle}
       >
         <span className={styles.thinking.icon} aria-hidden="true">
@@ -71,7 +74,7 @@ export function ThinkingBlock({
           {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
         </span>
       </button>
-      {expanded ? (
+      {!hidden && expanded ? (
         <div className={styles.thinking.body}>
           <pre className={styles.thinking.detail}>{text}</pre>
         </div>

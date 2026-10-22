@@ -39,6 +39,7 @@ export async function pblRequest<T>(url: string, body?: unknown): Promise<T> {
       sandboxErrorMessage(data.error),
       response.status,
       data.error?.code,
+      data.error?.reason,
     );
   return data as T;
 }
@@ -490,11 +491,7 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
                     }
                   >
                     {view.stage.kind === 'produce' && <ProductionContext view={view} />}
-                    {view.stage.kind === 'produce' && view.stage.exploration && (
-                      <p className="mb-2 rounded border p-2">
-                        {view.stage.exploration.introduction}
-                      </p>
-                    )}
+
                     {testStage && (
                       <TestEvaluation
                         view={view}

@@ -414,7 +414,8 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
     {
       kind: 'thinking',
       id: 'thought',
-      text: 'Consider the input.\nTrace the returned value.',
+      text: '',
+      hidden: true,
       streaming: true,
       startedAt: 1000,
     },
@@ -425,13 +426,14 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
   await expect(conversation.getByTestId('workbench-waiting-bar')).toHaveCount(0);
   await expect(thinking).toHaveAttribute('data-streaming', 'true');
   await expect(thinking.getByRole('button')).toHaveAttribute('aria-expanded', 'false');
-  await thinking.getByRole('button').click();
-  await expect(thinking.locator('pre')).toContainText('Consider the input.');
+  await expect(thinking.getByRole('button')).toBeDisabled();
+  await expect(thinking.locator('pre')).toHaveCount(0);
   finished.parts = [
     {
       kind: 'thinking',
       id: 'thought',
-      text: 'Consider the input.\nTrace the returned value.',
+      text: '',
+      hidden: true,
       streaming: false,
       startedAt: 1000,
       endedAt: 3000,
@@ -455,7 +457,7 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
   ];
   view.activitySequence++;
   await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
-  await expect(thinking.getByRole('button')).toHaveAttribute('aria-expanded', 'true');
+  await expect(thinking.getByRole('button')).toHaveAttribute('aria-expanded', 'false');
   await expect(thinking).not.toHaveAttribute('data-streaming', 'true');
   const tools = conversation.getByTestId('workbench-tool-group');
   await expect(tools).toBeVisible();
@@ -525,7 +527,7 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
   delete finished.failure;
   view.activitySequence++;
   await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
-  await thinking.getByRole('button').click();
+  await expect(thinking.getByRole('button')).toBeDisabled();
   await expect(thinking.getByRole('button')).toHaveAttribute('aria-expanded', 'false');
 
   await expect(page.locator('.monaco-editor .view-lines')).toContainText('Greeting plan');

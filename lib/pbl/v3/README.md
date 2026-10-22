@@ -244,8 +244,7 @@ contract; its release synchronization and runtime topology are not copied.
 | Completion | Validate artifacts and persist successful transitions before ending the role turn. Invalid artifacts can be corrected in that same turn, followed by fresh review of changed files. |
 | Tests | A host-owned parent driver runs independent child checks and requires every expected result. A student module exiting with code 0 cannot pass by suppressing assertions. |
 | Cross-milestone | The same workspace and PLAN continue; project roles change context. Checkpoints record the saved milestone/stage; recovery clears downstream gates if saved work predates current progress. |
-| Report | Owner-scoped durable facts, versions, quiz attempts and bounded conversation excerpts. No model call or live sandbox required. Viewing a report never advances progress. |
-| Optional exploration | Open-ended coding after required milestones, with no forced review/completion gate. Leaving, reading the report and returning keeps the same study. |
+| Report | Available only after the final milestone recap is completed by `complete_stage`. The report button makes one bounded analysis request; the result and its evidence are saved. Returning to the workbench and reopening reads the saved report. No live sandbox is required to read it. |
 
 Review feedback is bound to durable student messages after the pending question's
 turn in the same stage. The teaching role can assess multiple replies together and
@@ -263,9 +262,9 @@ checks before accepting the complete classroom journey.
 
 ### Installed public samples
 
-`/pbl-v3` selects `greeting-python-lab@1.0.0`, `greeting-java@1.0.0`, or the original
-`greeting-python@1.0.0`. The two new projects each contain two required milestones
-and optional exploration. They test retaining earlier behavior while adding input
+`/pbl-v3` selects `greeting-python-lab@1.1.0`, `greeting-java@1.1.0`, or the original
+`greeting-python@1.0.0`. The two current projects each contain two milestones, each with teaching, decisions,
+planning, coding, tests, quiz and recap. No exploration milestone is appended. They test retaining earlier behavior while adding input
 normalization, and keep one evolving PLAN.md. Their materials are public examples;
 no private Java course assets or answer bundles are published here.
 
@@ -287,7 +286,7 @@ pnpm exec playwright test e2e/tests/pbl-v3-workspace.spec.ts
 
 The PG suite drives actual role tools and the Pi loop, uses real local Python/Java
 execution, and covers both complete sample journeys, invalid completion and repair,
-compile gates, earlier-plan preservation, evidence reports and exploration recovery.
+compile gates, earlier-plan preservation, completion-gated reports and workspace recovery.
 Model transport and cloud provisioning are replaced by fixtures. The browser suite
 uses the real classroom entry and persisted sample document but fixtures the learning
 API; it checks rendering, report navigation and progress/file-response races.
@@ -297,9 +296,9 @@ On an authorized test installation, verify both languages through teaching, deci
 plan review, code review, tests, quiz and reflection across both milestones. Combine
 with the workbench change to exercise edit → run → stop → save → review → test →
 next milestone → expire/recover. Inspect that restored files and current gates agree;
-historical report entries should retain their original versions. Read the report
-while the sandbox is unavailable and return to optional exploration without making
-it mandatory.
+historical report entries should retain their original versions. Finish the final recap,
+open the report, return to the workbench, and reopen the same report while the sandbox
+is unavailable. Earlier milestones and an ordinary text handoff must not open a report.
 
 The report below is from the local classroom browser fixture, with saved evidence supplied by the test API.
 
@@ -326,7 +325,8 @@ runner makes at most one continuation attempt with the same real learner input a
 protocol state, then reports an explicit retryable failure if the turn is still unclosed.
 Retry and worker takeover preserve the same rule; no synthetic learner approval is added.
 Successful completion displays a localized handoff above the composer. Progression remains
-a separate learner action, with existing artifact, test and quiz checks unchanged.
+a separate learner action for intermediate stages, with existing artifact, test and quiz checks unchanged.
+The final project recap commits completion directly through its validated tool result.
 
 Assessment stages use dedicated control instructions, not the guided review question protocol.
 The task bar runs tests directly and shows a running indicator or the saved verdict without
@@ -336,3 +336,44 @@ saving, and rejects a stale request for a different pending run. The drawer show
 results. Hidden test programs, expected values and raw provider/runner tracebacks are omitted.
 A missing or invalid receipt is an evaluation error, not an implementation failure. A new
 pending run takes precedence over an earlier pass; only a saved current verdict unlocks Next.
+
+### Saved project report
+
+The report route enforces study ownership and whole-project completion for both reads
+and generation. GET never calls a model. The button's POST uses the configured,
+authorized agent model slot, makes a bounded call, validates structured findings and
+saves the completed document in PostgreSQL. Duplicate clicks share the current attempt;
+refreshing/reopening reads the saved result. Failed or abandoned attempts can be retried
+explicitly. A failed model request does not erase learning records or undo completion.
+
+The existing event and agent stores retain decisions and revisions, all test and quiz
+attempts, real learner messages and assistant replies/questions. Append-only evidence
+also records learner/assistant file edits, workbench operation admissions, complete
+reviewed source snapshots and a final source snapshot. Source snapshots retain the
+runtime's 1 MiB bound. Terminal keystrokes are not a separate learning metric; arbitrary
+shell edits are captured by the subsequent review/final snapshot, not per keystroke.
+No-op saves are not counted as edits. Code changes are compared against the preceding
+saved snapshot. Full existing dialogue is paged from its store, without taking only the
+latest 5,000 events or clipping each learner message to 8,000 characters.
+
+Counts describe recorded activity, not scores or proof of understanding. Qualitative
+findings cite saved records; strengths, corrections and collaboration claims also require
+an exact learner quote. Unknown references or invented quotes are rejected. The bounded
+analysis samples across the journey and explicitly marks omitted/shortened inputs;
+missing historical records cannot be reconstructed. Raw thinking, system stage openings,
+private course protocols, expected test answers and internal workspace fingerprints are
+excluded from the report. Versions appear as v1, v2, etc. Existing public 1.0.0 catalog
+references retain their original definitions so saved stage indexes are not silently
+reinterpreted; new sample selection uses 1.1.0.
+
+### Private evaluation material
+
+The sandbox receives only executable case inputs and observation support files. Expected
+stdout stays on the host. The runner returns a SHA-256 digest of actual stdout, exit code
+and a bounded reason for each installed case; the host compares digests against its own
+expected values. A sandbox-supplied `passed` flag is not a verdict. Evaluation descriptor
+JSON, rubric files and declared answer keys are not staged as execution resources.
+Course authors must put expected results in the host-owned case descriptor, never in
+sandbox support scripts. This removes answer disclosure through process arguments and
+staged descriptors; the cooperative shell remains unsuitable as a hostile-code exam
+boundary. PBL thinking bars show status/duration only in both streaming and replay.

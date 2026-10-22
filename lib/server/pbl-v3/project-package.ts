@@ -251,7 +251,12 @@ export function validateProjectPackage(input: unknown): {
     return bundle.files[name];
   };
   const privateBytes = names
-    .filter((name) => /^(tests|rubric)\//.test(name))
+    .filter(
+      (name) =>
+        /^tests\//.test(name) &&
+        !Object.values(config.runtime.evaluations).includes(name) &&
+        !config.definition.visibility.answerKeys.includes(name),
+    )
     .reduce((sum, name) => sum + Buffer.byteLength(bundle.files[name]), 0);
   if (privateBytes > 24 * 1024)
     return invalid('Evaluation resources exceed the supported 24 KiB budget.');
@@ -285,7 +290,12 @@ export function validateProjectPackage(input: unknown): {
     evaluations[milestone] = spec;
     const resources = Object.fromEntries(
       names
-        .filter((name) => /^(tests|rubric)\//.test(name))
+        .filter(
+          (name) =>
+            /^tests\//.test(name) &&
+            !Object.values(config.runtime.evaluations).includes(name) &&
+            !config.definition.visibility.answerKeys.includes(name),
+        )
         .map((name) => [name, bundle.files[name]]),
     );
     if (Buffer.byteLength(JSON.stringify({ ...spec, resources })) > 48 * 1024)
@@ -455,9 +465,10 @@ function oversizedTeachingPrompt(project: InstalledProject, planText: string) {
               JSON.stringify({
                 build,
                 ...(!build ? { buildReason: 'build' } : {}),
-                checks: spec.cases.map(({ id }) => ({
+                checks: spec.cases.map(({ id, stdout }) => ({
                   id,
-                  passed,
+                  exitCode: passed ? 0 : build ? 1 : null,
+                  stdoutDigest: passed ? sha256(stdout) : null,
                   ...(!passed ? { reason: build ? 'execution' : 'not_run' } : {}),
                 })),
               }),

@@ -115,13 +115,20 @@ function AgentTurn({ entry }: { entry: LearningConversationEntry }) {
             <div key={part[0].id} className="space-y-2">
               <ToolGroup nodes={part.map(toolNode)} t={t} />
               {part.some((tool) => tool.action === 'complete' && tool.status === 'succeeded') && (
-                <p className="text-foreground">{t('pblV3.journey.completionHandoff')}</p>
+                <p className="text-foreground">
+                  {t(
+                    part.some((tool) => tool.projectCompleted)
+                      ? 'pblV3.reportCopy.completed'
+                      : 'pblV3.journey.completionHandoff',
+                  )}
+                </p>
               )}
             </div>
           ) : part.kind === 'thinking' ? (
             <ThinkingBlock
               key={part.id}
               text={part.text}
+              hidden
               streaming={part.streaming}
               startedAt={part.startedAt}
               endedAt={part.endedAt}

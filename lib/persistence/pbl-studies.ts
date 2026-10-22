@@ -72,6 +72,22 @@ INSERT INTO document_asset_refs(stage_id,scope,scene_id,asset_id)
 UPDATE asset_entries e SET committed_at=COALESCE(e.committed_at,now()),expires_at=NULL,unreferenced_at=NULL
  WHERE EXISTS (SELECT 1 FROM document_asset_refs r WHERE r.asset_id=e.id AND r.scope='retained');`,
     },
+    {
+      version: 5,
+      name: 'learning-evidence-and-reports',
+      transaction: true,
+      up: `CREATE TABLE pbl_v3_evidence (
+        id BIGSERIAL PRIMARY KEY, study_id TEXT NOT NULL REFERENCES pbl_v3_studies(id),
+        milestone_id TEXT, stage_index INTEGER NOT NULL, kind TEXT NOT NULL,
+        actor TEXT NOT NULL, detail JSONB NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+      CREATE INDEX pbl_v3_evidence_study ON pbl_v3_evidence(study_id,id);
+      CREATE TABLE pbl_v3_reports (
+        study_id TEXT PRIMARY KEY REFERENCES pbl_v3_studies(id), completion_revision INTEGER NOT NULL,
+        attempt TEXT NOT NULL, status TEXT NOT NULL, document JSONB,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      );`,
+    },
   ],
 };
 

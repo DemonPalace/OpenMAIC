@@ -35,14 +35,21 @@ test('installed sample opens in the normal classroom and preserves progress afte
     environment: null as LearningView['environment'],
     recovery: null as LearningView['recovery'],
     state,
+    milestones: [
+      {
+        id: 'greeting',
+        title: 'Greeting',
+        stages: ['teaching', 'dialogue', 'plan', 'code', 'tests', 'quiz', 'recap'],
+      },
+    ],
     stage: {
       kind: 'mentor_say',
-      agent: 'mentor',
+      agent: 'discussion',
       say: 'Welcome',
       reads: [],
       studentActions: ['chat', 'next'],
     },
-    role: 'mentor',
+    role: 'discussion',
     actions: ['chat'],
     files: ['PLAN.md', 'greeting.py'],
     busy: false,
@@ -64,13 +71,36 @@ test('installed sample opens in the normal classroom and preserves progress afte
     const body = req.method() === 'POST' ? req.postDataJSON() : null;
     if (url.searchParams.has('samples')) return route.continue();
     if (body?.action === 'sample') return route.continue(); // actual course creation and persistence
-    if (url.pathname === '/api/pbl/v3/report')
+    if (url.pathname === '/api/pbl/v3/report') {
+      if (req.method() === 'POST') expect(req.headers()['content-type']).toBe('application/json');
       return route.fulfill({
         json: {
           studyId: view.id,
           project: { id: 'greeting-python-lab', version: '1.0.0', title: 'Greeting' },
+          analysis: {
+            status: 'ready',
+            omitted: false,
+            findings: [
+              {
+                category: 'journey',
+                title: 'A saved learning journey',
+                detail: 'The plan records your implementation choices.',
+                evidence: ['event:7'],
+              },
+            ],
+          },
+          facts: {
+            learnerTurns: 3,
+            assistantTurns: 3,
+            decisions: 1,
+            decisionChanges: 0,
+            testRuns: 1,
+            quizAttempts: 2,
+            fileEdits: 1,
+            interruptedRuns: 0,
+          },
           revision: view.revision,
-          requiredComplete: false,
+          requiredComplete: true,
           milestones: [
             {
               id: 'greeting',
@@ -86,7 +116,7 @@ test('installed sample opens in the normal classroom and preserves progress afte
               kind: 'artifact.recorded',
               milestoneId: 'greeting',
               detail: 'Saved plan evidence',
-              version: 'saved-version',
+              version: 'v1',
             },
           ],
           outcomes: [
@@ -102,6 +132,7 @@ test('installed sample opens in the normal classroom and preserves progress afte
           truncated: false,
         },
       });
+    }
     if (url.pathname === '/api/pbl/v3/workspace') {
       if (body?.command) {
         const command = body.command;
@@ -132,6 +163,7 @@ test('installed sample opens in the normal classroom and preserves progress afte
           planning: false,
           canManageFiles: view.actions.includes('edit'),
           canRun: view.actions.includes('edit'),
+          canPreview: view.actions.includes('edit'),
           ports: [8000],
           commands: [],
           terminals: [],
@@ -187,18 +219,8 @@ test('installed sample opens in the normal classroom and preserves progress afte
   await page.getByRole('button', { name: 'Open selected sample' }).click();
   await expect(page).toHaveURL(/\/classroom\/pbl-/, { timeout: 60000 });
   await expect(page.getByTestId('pbl-v3-workspace')).toBeVisible({ timeout: 60000 });
-  const beforeReport = calls.length;
-  await page.getByRole('button', { name: 'Learning report', exact: true }).click();
-  await expect(page.getByRole('region', { name: 'Learning report' })).toContainText(
-    'Learning is still in progress.',
-  );
-  await page.getByRole('region', { name: 'Learning report' }).locator('summary').click();
-  await expect(page.getByText('Saved plan evidence')).toBeVisible();
-  await page
-    .getByRole('region', { name: 'Learning report' })
-    .screenshot({ path: 'test-results/pbl-v3-report.png' });
-  expect(calls.length).toBe(beforeReport);
-  await page.getByRole('button', { name: 'Return to learning' }).click();
+  await expect(page.getByRole('button', { name: 'Learning report', exact: true })).toHaveCount(0);
+  await expect(page.getByText('1/7', { exact: true }).first()).toBeVisible();
   await page.getByRole('button', { name: 'Prepare project environment' }).click();
   // Hold an old progress GET until after a teaching command installs a newer revision.
   let releaseView!: () => void, viewStarted!: () => void;
@@ -239,7 +261,7 @@ test('installed sample opens in the normal classroom and preserves progress afte
   await expect(page.getByText('What should greet(name) return?', { exact: true })).toBeVisible();
   expect(calls.filter((c) => c.type === 'prepare')).toHaveLength(1);
   expect(calls.filter((c) => c.type === 'chat')).toHaveLength(1);
-  await expect(page.getByRole('button', { name: 'Continue', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /^Continue(?: to|$)/ })).toHaveCount(0);
   await page.screenshot({ path: 'test-results/pbl-v3-workspace.png', fullPage: true });
   view.roleRun = { status: 'failed', failure: 'authentication', canRetry: true };
   const learningAlert = page.getByTestId('pbl-v3-workspace').getByRole('alert');
@@ -286,6 +308,17 @@ test('installed sample opens in the normal classroom and preserves progress afte
   await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeEnabled();
   // A late read from PLAN.md must not populate or become savable as greeting.py.
   view.actions = ['chat', 'edit'];
+  view.state.introCompleted = true;
+  view.state.position.stageIndex = 3;
+  view.stage = {
+    kind: 'produce',
+    agent: 'coder',
+    writes: 'code',
+    reviewRequired: true,
+    reads: [],
+    studentActions: ['chat', 'edit', 'next'],
+  } as LearningView['stage'];
+  view.role = 'coder';
   await page.getByRole('button', { name: 'Refresh progress' }).click();
   let releasePlan!: () => void, planStarted!: () => void;
   const planGate = new Promise<void>((resolve) => {
@@ -398,6 +431,15 @@ test('installed sample opens in the normal classroom and preserves progress afte
   await frame.getByRole('button', { name: 'Try' }).click();
   await expect(frame.getByRole('button', { name: 'Clicked' })).toBeVisible();
   expect(previewOpen).toBe(true);
+  const planTab = page.getByRole('tab', { name: 'PLAN.md', exact: true });
+  await expect(planTab).toBeVisible();
+  const tabBounds = await planTab.boundingBox(),
+    stripBounds = await page.getByRole('tablist', { name: 'Open files' }).boundingBox();
+  expect(tabBounds!.x).toBeGreaterThanOrEqual(stripBounds!.x);
+  expect(tabBounds!.x + tabBounds!.width).toBeLessThanOrEqual(
+    stripBounds!.x + stripBounds!.width + 1,
+  );
+
   await page.getByRole('button', { name: 'Expand project workspace' }).click();
   await page.getByTestId('pbl-workbench-split').evaluate((el) => {
     el.scrollTop = 0;
@@ -459,11 +501,37 @@ test('installed sample opens in the normal classroom and preserves progress afte
   await expect(
     page.getByText('0/1 correct. Review your answers and try again.', { exact: true }),
   ).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Continue', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /^Continue(?: to|$)/ })).toHaveCount(0);
   await page.getByRole('radio', { name: 'Returns a value' }).check();
   await page.getByRole('button', { name: 'Submit answers' }).click();
   await expect(
     page.getByText('Quiz passed: 1/1 correct. You can continue.', { exact: true }),
   ).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Continue', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: /^Continue(?: to|$)/ })).toBeEnabled();
+  view.state.status = 'completed';
+  view.stage = {
+    kind: 'mentor_say',
+    agent: 'mentor',
+    skill: 'recap',
+    reads: [],
+    studentActions: [],
+  } as LearningView['stage'];
+  view.role = 'mentor';
+  view.actions = [];
+  view.state.position.stageIndex = 6;
+  await page.getByRole('button', { name: 'Refresh progress' }).click();
+  await page.getByRole('button', { name: 'Expand project workspace' }).click();
+  await page.getByRole('button', { name: 'Learning report', exact: true }).click();
+  const report = page.getByRole('region', { name: 'Learning report' });
+  await expect(report.getByText('A saved learning journey', { exact: true })).toBeVisible();
+  await report.getByRole('button', { name: 'Evidence 7', exact: true }).click();
+  await expect(report.getByText('Saved plan evidence')).toBeVisible();
+  await report.evaluate((el) => {
+    el.scrollTop = 0;
+  });
+  await report.screenshot({ path: 'test-results/pbl-v3-report.png' });
+  await page.getByRole('button', { name: 'Return to learning' }).click();
+  await expect(report).toHaveCount(0);
+  await page.getByRole('button', { name: 'Learning report', exact: true }).click();
+  await expect(report.getByText('A saved learning journey', { exact: true })).toBeVisible();
 });
