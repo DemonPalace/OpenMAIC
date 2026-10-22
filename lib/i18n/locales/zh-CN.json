@@ -2761,6 +2761,7 @@
       "console": "控制台",
       "terminal": "终端",
       "output": "运行与输出",
+      "buildOutput": "构建输出",
       "hideConsole": "收起控制台",
       "connected": "学习环境已连接",
       "disconnected": "学习环境未连接",

@@ -22,8 +22,13 @@ Ctrl/Cmd+S flushes pending edits; there is no manual Save or Save checkpoint but
 
 Network actions acknowledge clicks immediately with their specific pending state:
 opening, sending, submitting a decision/quiz, starting tests, entering the next step,
-reading/managing files, starting a command or connecting/stopping a terminal. The
-assistant waiting indicator appears before the teaching request returns. A pending
+reading and managing files. The
+assistant waiting indicator appears before the teaching request returns and while
+queued work has not yet produced a conversation entry. Between completed text blocks
+or tools, it remains visible until the turn settles; active thinking/tools retain
+their existing animated components. Test status starts at request submission and
+continues through execution and result collection. Failure ends the animation and
+exposes the existing retry control. A pending
 decision selection is temporary; failures restore the confirmed selection. Only
 server receipts install learning progress, outcomes and file-operation results.
 
@@ -78,12 +83,12 @@ dirty text and refuses stale saves until explicitly reloaded/discarded. Late fil
 responses cannot populate another file. No commands, terminal input or permissions
 are replayed from browser storage.
 
-Use Run & output for commands/build results and Terminal for a connected shell.
-Planning and pending guided reviews do not allow arbitrary execution. Stop terminates
-managed commands/terminals independently of the long study lock. Workspace epochs
-fence late admission after Stop. Terminal input uses the environment lock and a fresh
-owner/environment/permission check; only confirmed pre-dispatch ENVIRONMENT_BUSY is
-retried, within a finite budget. Lost acknowledgements are never replayed.
+`ACTIVITY_SHELL_ENABLED` is fixed to `false` in the v3 workbench. The current hosted
+activity hides Terminal, arbitrary command input, shell reconnect and shell Stop
+controls. Build output and the normal assessment controls remain available. There
+is no new deployment setting. Shared sandbox/PTY services and existing v3 admission,
+ownership and Stop fencing remain intact for future general-purpose workbench use.
+This visibility flag is not an authorization boundary.
 
 Managed writers must stop before a review snapshot, formal test or recovery snapshot.
 An open shell can modify files, including PLAN.md; this is a cooperative learning
@@ -99,7 +104,9 @@ Old generic or study-scoped preview tickets cannot open learning workspaces.
 The screenshot and Chromium classroom journeys use API fixtures. Deliberately held
 responses verify that selection/loading/waiting feedback precedes acknowledgement.
 Browser checks cover editable/read-only file switching without saves, stale drafts,
-scene navigation, short/narrow viewports, terminal controls and report round trips.
+scene navigation, short/narrow viewports, absence of shell controls and report round trips.
+Held test-admission and collection responses, queued turns, completed-tool gaps and
+text-stream gaps verify continuing animation and its removal on completion/failure.
 Real PostgreSQL/local-Python tests cover file admission, evaluation locks, repair,
 terminal ownership/Stop fencing, recovery and generic sandbox compatibility.
 

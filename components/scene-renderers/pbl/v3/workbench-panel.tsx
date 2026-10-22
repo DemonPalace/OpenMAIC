@@ -27,6 +27,10 @@ import type { LearningWorkbench } from '@/lib/pbl/v3/workbench';
 import { ProjectTerminal } from '@/components/sandbox/project-terminal';
 import { sandboxErrorMessage } from '@/lib/sandbox/error-message';
 import { SandboxRequestError } from '@/components/sandbox/client';
+// The current hosted activity does not expose learner shell controls.
+// Keep the existing workbench capability available for a later general v3 release.
+const ACTIVITY_SHELL_ENABLED = false;
+
 export async function workbenchRequest<T>(url: string, body?: unknown): Promise<T> {
   const response = await fetch(url, {
     headers: { 'content-type': 'application/json', 'x-openmaic-sandbox': '1' },
@@ -390,8 +394,8 @@ export function LearningWorkbenchPanel({
                   </div>
                 ))}
               </div>
-              {editor.loading ? (
-                <PendingAction action="read" />
+              {operation || editor.loading ? (
+                <PendingAction action={operation ?? 'read'} />
               ) : (
                 <span
                   role="status"
@@ -460,124 +464,137 @@ export function LearningWorkbenchPanel({
           </Panel>
         </Group>
       </div>
-      <div
-        className="shrink-0 border-t bg-muted/10"
-        style={{ height: consoleOpen ? '38%' : undefined }}
-      >
-        <div className="flex flex-wrap items-center gap-1 border-b px-2 py-1">
-          <button
-            className={button}
-            aria-pressed={consoleOpen && consoleTab === 'output'}
-            onClick={() => {
-              setConsoleOpen(true);
-              setConsoleTab('output');
-            }}
-          >
-            {t('pblV3.ide.output')}
-          </button>
-          <button
-            className={button}
-            aria-pressed={consoleOpen && consoleTab === 'terminal'}
-            onClick={() => {
-              setConsoleOpen(true);
-              setConsoleTab('terminal');
-            }}
-          >
-            <Terminal size={13} />
-            {t('pblV3.ide.terminal')}
-          </button>
-
-          <PendingAction action={operation} />
-          <button
-            className={`${button} ml-auto`}
-            disabled={!view.environmentId || operation === 'stop'}
-            onClick={() => void run('stop')}
-          >
-            <Square size={12} />
-            {t('pblV3.workbench.stop')}
-          </button>
-          {consoleOpen && (
+      {(ACTIVITY_SHELL_ENABLED || showEvaluation) && (
+        <div
+          className="shrink-0 border-t bg-muted/10"
+          style={{ height: consoleOpen ? '38%' : undefined }}
+        >
+          <div className="flex flex-wrap items-center gap-1 border-b px-2 py-1">
             <button
               className={button}
-              aria-label={t('pblV3.ide.hideConsole')}
-              onClick={() => setConsoleOpen(false)}
-            >
-              <X size={13} />
-            </button>
-          )}
-        </div>
-        <div hidden={!consoleOpen} className="h-[calc(100%_-_38px)] overflow-auto p-2">
-          <div hidden={consoleTab !== 'output'} className="space-y-2">
-            <p className="text-xs text-muted-foreground">{t('pblV3.workbench.executionNotice')}</p>
-            <form
-              className="flex gap-2"
-              onSubmit={(e) => {
-                e.preventDefault();
-                if (!disabled && !dirty && work?.canRun && shell.trim())
-                  void run('run', { text: shell });
+              aria-pressed={consoleOpen && consoleTab === 'output'}
+              onClick={() => {
+                setConsoleOpen(true);
+                setConsoleTab('output');
               }}
             >
-              <input
-                aria-label={t('pblV3.workbench.command')}
-                placeholder="python3 src/app.py"
-                className="min-w-0 flex-1 rounded border bg-background px-2 font-mono text-xs"
-                value={shell}
-                onChange={(e) => setShell(e.target.value)}
-              />
+              {t(ACTIVITY_SHELL_ENABLED ? 'pblV3.ide.output' : 'pblV3.ide.buildOutput')}
+            </button>
+            {ACTIVITY_SHELL_ENABLED && (
               <button
                 className={button}
-                disabled={disabled || dirty || !work?.canRun || !shell.trim()}
+                aria-pressed={consoleOpen && consoleTab === 'terminal'}
+                onClick={() => {
+                  setConsoleOpen(true);
+                  setConsoleTab('terminal');
+                }}
               >
-                <Play size={13} />
-                {t('pblV3.workbench.run')}
+                <Terminal size={13} />
+                {t('pblV3.ide.terminal')}
               </button>
-            </form>
-            {work?.commands.map((c) => (
-              <details key={c.id} open={['starting', 'running', 'unknown'].includes(c.state)}>
-                <summary className="text-xs">
-                  {t(`pblV3.workbench.commandStates.${c.state}`)}
-                </summary>
-                <pre className="max-h-48 overflow-auto whitespace-pre-wrap font-mono text-xs">
-                  {c.stdout}
-                  {'\n'}
-                  {c.stderr}
-                </pre>
-              </details>
-            ))}
-            {children}
+            )}
+
+            {ACTIVITY_SHELL_ENABLED && (
+              <button
+                className={`${button} ml-auto`}
+                disabled={!view.environmentId || operation === 'stop'}
+                onClick={() => void run('stop')}
+              >
+                <Square size={12} />
+                {t('pblV3.workbench.stop')}
+              </button>
+            )}
+            {consoleOpen && (
+              <button
+                className={button}
+                aria-label={t('pblV3.ide.hideConsole')}
+                onClick={() => setConsoleOpen(false)}
+              >
+                <X size={13} />
+              </button>
+            )}
           </div>
-          <div hidden={consoleTab !== 'terminal'}>
-            <button
-              className={button}
-              disabled={disabled || dirty || !work?.canRun || !!terminal}
-              onClick={() => void run('terminal')}
-            >
-              {t('pblV3.workbench.openTerminal')}
-            </button>
-            {!terminal &&
-              work?.terminals
-                .filter((t) => t.state === 'running')
-                .map((item) => (
-                  <button
-                    key={item.id}
-                    className={button}
-                    disabled={!work.canRun}
-                    onClick={() => setTerminal(item.id)}
+          <div hidden={!consoleOpen} className="h-[calc(100%_-_38px)] overflow-auto p-2">
+            <div hidden={consoleTab !== 'output'} className="space-y-2">
+              {ACTIVITY_SHELL_ENABLED && (
+                <>
+                  <p className="text-xs text-muted-foreground">
+                    {t('pblV3.workbench.executionNotice')}
+                  </p>
+                  <form
+                    className="flex gap-2"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      if (!disabled && !dirty && work?.canRun && shell.trim())
+                        void run('run', { text: shell });
+                    }}
                   >
-                    {t('sandbox.reconnect')}
-                  </button>
-                ))}
-            {terminal && work?.canRun && (
-              <ProjectTerminal
-                key={`${view.environmentId}:${terminal}`}
-                environmentId={view.environmentId!}
-                terminalId={terminal}
-                transport={transport}
-              />
+                    <input
+                      aria-label={t('pblV3.workbench.command')}
+                      placeholder="python3 src/app.py"
+                      className="min-w-0 flex-1 rounded border bg-background px-2 font-mono text-xs"
+                      value={shell}
+                      onChange={(e) => setShell(e.target.value)}
+                    />
+                    <button
+                      className={button}
+                      disabled={disabled || dirty || !work?.canRun || !shell.trim()}
+                    >
+                      <Play size={13} />
+                      {t('pblV3.workbench.run')}
+                    </button>
+                  </form>
+                  {work?.commands.map((c) => (
+                    <details key={c.id} open={['starting', 'running', 'unknown'].includes(c.state)}>
+                      <summary className="text-xs">
+                        {t(`pblV3.workbench.commandStates.${c.state}`)}
+                      </summary>
+                      <pre className="max-h-48 overflow-auto whitespace-pre-wrap font-mono text-xs">
+                        {c.stdout}
+                        {'\n'}
+                        {c.stderr}
+                      </pre>
+                    </details>
+                  ))}
+                </>
+              )}
+              {children}
+            </div>
+            {ACTIVITY_SHELL_ENABLED && (
+              <div hidden={consoleTab !== 'terminal'}>
+                <button
+                  className={button}
+                  disabled={disabled || dirty || !work?.canRun || !!terminal}
+                  onClick={() => void run('terminal')}
+                >
+                  {t('pblV3.workbench.openTerminal')}
+                </button>
+                {!terminal &&
+                  work?.terminals
+                    .filter((t) => t.state === 'running')
+                    .map((item) => (
+                      <button
+                        key={item.id}
+                        className={button}
+                        disabled={!work.canRun}
+                        onClick={() => setTerminal(item.id)}
+                      >
+                        {t('sandbox.reconnect')}
+                      </button>
+                    ))}
+                {terminal && work?.canRun && (
+                  <ProjectTerminal
+                    key={`${view.environmentId}:${terminal}`}
+                    environmentId={view.environmentId!}
+                    terminalId={terminal}
+                    transport={transport}
+                  />
+                )}
+              </div>
             )}
           </div>
         </div>
-      </div>
+      )}
       <footer
         role="status"
         data-testid="pbl-edit-access"

@@ -94,6 +94,11 @@ function AgentTurn({ entry }: { entry: LearningConversationEntry }) {
   const [copied, setCopied] = useState(false);
   const role = entry.speaker === 'user' ? 'mentor' : entry.speaker;
   const Icon = icons[role];
+  // Keep the turn visibly alive between text blocks and after completed tools.
+  // Thinking and running tools already carry their own animated status.
+  const hasActiveIndicator = entry.parts.some((part) =>
+    part.kind === 'tool' ? part.status === 'running' : part.kind === 'thinking' && part.streaming,
+  );
   const copyText = entry.parts.flatMap((p) => (p.kind === 'text' ? [p.text] : [])).join('\n\n');
   return (
     <article
@@ -140,7 +145,7 @@ function AgentTurn({ entry }: { entry: LearningConversationEntry }) {
             </div>
           ) : null,
         )}
-        {entry.status === 'running' && entry.parts.length === 0 && <WaitingBar t={t} />}
+        {entry.status === 'running' && !hasActiveIndicator && <WaitingBar t={t} />}
         {(entry.status === 'failed' ||
           entry.status === 'cancelled' ||
           entry.status === 'interrupted') && (
@@ -218,12 +223,11 @@ export function LearningConversation({
             <AgentTurn key={entry.id} entry={entry} />
           ),
         )}
-        {(requesting || (view.busy && !view.conversation)) &&
-          !entries.some((e) => e.status === 'running') && (
-            <AgentTurn
-              entry={{ id: 'queued', speaker: view.role ?? 'mentor', status: 'running', parts: [] }}
-            />
-          )}
+        {(requesting || view.busy) && !entries.some((e) => e.status === 'running') && (
+          <AgentTurn
+            entry={{ id: 'queued', speaker: view.role ?? 'mentor', status: 'running', parts: [] }}
+          />
+        )}
       </ConversationContent>
       <ConversationScrollButton aria-label={t('pblV3.journey.latest')} />
     </Conversation>

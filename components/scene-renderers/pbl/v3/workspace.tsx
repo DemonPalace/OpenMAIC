@@ -465,13 +465,33 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
                   <button
                     className={button}
                     disabled={disabled || !!view.evaluation}
+                    aria-busy={pendingAction === 'compile'}
                     onClick={() => void command('compile')}
                   >
+                    {pendingAction === 'compile' && (
+                      <LoaderCircle size={13} className="animate-spin" aria-hidden="true" />
+                    )}
                     {t('pblV3.build')}
                   </button>
                 )}
                 {view.evaluation && view.stage.kind !== 'check' && (
                   <>
+                    {(['starting', 'running'].includes(view.evaluation.state) ||
+                      pendingAction === 'collect') && (
+                      <span
+                        role="status"
+                        aria-busy="true"
+                        data-testid="pbl-build-status"
+                        className="inline-flex items-center gap-1.5 text-xs text-muted-foreground"
+                      >
+                        <LoaderCircle size={13} className="animate-spin" aria-hidden="true" />
+                        {t(
+                          pendingAction === 'collect'
+                            ? 'pblV3.activity.collect'
+                            : 'pblV3.activity.build',
+                        )}
+                      </span>
+                    )}
                     <button
                       className={button}
                       disabled={disabled}
@@ -528,13 +548,19 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
                   <TaskDock
                     key={`${view.id}:${view.state.introCompleted}:${view.state.position.milestoneIndex}:${view.state.position.stageIndex}`}
                     view={view}
-                    working={testStage && !!view.evaluation && !resultUnavailable}
+                    working={
+                      testStage &&
+                      (pendingAction === 'evaluate' ||
+                        pendingAction === 'collect' ||
+                        (!!view.evaluation && !resultUnavailable))
+                    }
                     summary={
                       testStage ? (
                         <TestEvaluation
                           view={view}
                           mode="summary"
                           collectionFailed={resultUnavailable}
+                          pendingAction={pendingAction}
                         />
                       ) : undefined
                     }
@@ -572,11 +598,15 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
                             <LoaderCircle size={13} className="animate-spin" aria-hidden="true" />
                           )}
                           {t(
-                            resultUnavailable
-                              ? 'pblV3.testResult.retryCollect'
-                              : view.evaluation
-                                ? 'pblV3.testResult.running'
-                                : 'pblV3.runTests',
+                            pendingAction === 'evaluate'
+                              ? 'pblV3.testResult.running'
+                              : pendingAction === 'collect'
+                                ? 'pblV3.testResult.collecting'
+                                : resultUnavailable
+                                  ? 'pblV3.testResult.retryCollect'
+                                  : view.evaluation
+                                    ? 'pblV3.testResult.running'
+                                    : 'pblV3.runTests',
                           )}
                         </button>
                       ) : (
@@ -612,6 +642,7 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
                         view={view}
                         mode="details"
                         collectionFailed={resultUnavailable}
+                        pendingAction={pendingAction}
                       />
                     )}
                     {view.decisions.map((decision) => (

@@ -27,7 +27,7 @@ The configured sandbox template must have Python 3. Follow the teaching sections
 record a decision, review the plan and implementation, run and collect tests,
 complete the quiz, and reflect with the mentor. Use **Continue** to confirm stage
 progression. Confirming a plan or code stage also saves a durable checkpoint before
-advancing. Use **Save checkpoint** to save additional work between these boundaries.
+advancing. The current learner UI does not expose a manual checkpoint control.
 
 A PBL scene selects `{ projectV3: { id, version } }`. The server resolves that
 reference against installed content. The scene never supplies model credentials,
@@ -75,7 +75,7 @@ Short containers scroll a minimum usable workbench; narrow containers stack IDE 
 assistant. Expanding and returning preserves the mounted editor and chat drafts.
 File switches preserve unsaved buffers. Unsaved files block execution and teaching
 handoffs until saved or explicitly discarded; changing environments preserves drafts
-but disables stale writes. Save files before running or checkpointing. Browser drafts
+but disables stale writes. Pending edits must finish saving before execution or an automatic recovery snapshot. Browser drafts
 survive scene return and same-tab refresh; closing the tab, clearing browser storage
 or using another browser is not a save. If storage is unavailable, a visible warning
 asks the learner to save or copy their work before refreshing or leaving.
@@ -266,8 +266,10 @@ question, while the server enforces fresh replies, artifact versions and stage
 boundaries. Retries and assistant messages do not create student feedback.
 
 The source set, stage locks, writer-idle checks and ordinary sandbox restrictions
-remain the shared contract above. The merged workbench supplies file management, shell, terminal, preview and
-checkpoint UI. Both the shared workspace contract and workbench are now in
+remain the shared contract above. The merged workbench supplies file management and
+execution/recovery primitives. The current activity hides learner shell controls and
+removes manual checkpoint and application-preview UI; automatic recovery snapshots
+remain internal. Both the shared workspace contract and workbench are now in
 `integration/shared-sandbox`. This learning change retains their access, version and
 recovery boundaries while adding the teaching journey. Repeat combined real-provider
 checks before accepting the complete classroom journey.

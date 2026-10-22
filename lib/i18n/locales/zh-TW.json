@@ -2761,6 +2761,7 @@
       "console": "Console",
       "terminal": "Terminal",
       "output": "Run & output",
+      "buildOutput": "建置輸出",
       "hideConsole": "Hide console",
       "connected": "Environment connected",
       "disconnected": "Environment unavailable",

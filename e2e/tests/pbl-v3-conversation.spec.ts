@@ -141,6 +141,10 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
   let collections = 0;
   let failCollection = true;
   let testRun = 0;
+  let evaluateGate: Promise<void> | null = null;
+  let evaluateEntered = () => {};
+  let collectGate: Promise<void> | null = null;
+  let collectEntered = () => {};
   await page.route('**/api/pbl/v3**', async (route) => {
     const command =
       route.request().method() === 'POST' ? route.request().postDataJSON()?.command : undefined;
@@ -167,6 +171,12 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
       return route.fulfill({ json: { view } });
     }
     if (command?.type === 'evaluate') {
+      if (evaluateGate) {
+        const gate = evaluateGate;
+        evaluateGate = null;
+        evaluateEntered();
+        await gate;
+      }
       testRun++;
       view.evaluation = {
         id: `test-run-${testRun}`,
@@ -179,6 +189,12 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
       return route.fulfill({ json: { view } });
     }
     if (command?.type === 'collect') {
+      if (collectGate) {
+        const gate = collectGate;
+        collectGate = null;
+        collectEntered();
+        await gate;
+      }
       collections++;
       expect(command.evaluationId).toBe(view.evaluation?.id);
       if (failCollection) {
@@ -570,7 +586,21 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
       part.status = 'succeeded';
       part.endedAt = 5000;
     }
+  // Completed tools do not mean the Agent turn is finished. Keep a live tail
+  // while the next model response is pending, preserving the earlier output.
+  view.activitySequence++;
+  await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
+  await expect(conversation.getByTestId('workbench-waiting-bar')).toHaveCount(1);
   finished.parts.push(...originalParts);
+  view.activitySequence++;
+  await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
+  await expect(conversation.getByText('Where does the value go?', { exact: true })).toBeVisible();
+  await expect(conversation.getByTestId('workbench-waiting-bar')).toHaveCount(1);
+  // Queued work still needs an indicator when all projected turns are settled.
+  finished.status = 'succeeded';
+  view.activitySequence++;
+  await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
+  await expect(conversation.getByTestId('workbench-waiting-bar')).toHaveCount(1);
   finished.status = 'succeeded';
   view.busy = false;
   view.activitySequence++;
@@ -593,6 +623,8 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
   await expect(firstToolToggle).toHaveAttribute('aria-expanded', 'false');
   await toolGroupToggle.click();
   await expect(tools).toHaveAttribute('data-open', 'false');
+  finished.status = 'running';
+  view.busy = true;
   view.conversation![1]!.parts.push({
     kind: 'text',
     id: 'streaming',
@@ -602,6 +634,7 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
   view.activitySequence++;
   await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
   await expect(conversation.getByText('A partial explanation', { exact: true })).toHaveCount(1);
+  await expect(conversation.getByTestId('workbench-waiting-bar')).toHaveCount(1);
   const partial = view.conversation![1]!.parts.at(-1)!;
   if (partial.kind === 'text') {
     partial.text = 'A completed explanation';
@@ -611,7 +644,9 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
   await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
   await expect(conversation.getByText('A completed explanation', { exact: true })).toHaveCount(1);
   await expect(conversation.getByText('A partial explanation', { exact: true })).toHaveCount(0);
+  await expect(conversation.getByTestId('workbench-waiting-bar')).toHaveCount(1);
   finished.status = 'cancelled';
+  view.busy = false;
   view.activitySequence++;
   await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
   await expect(conversation.getByRole('status')).toContainText('This teaching turn was cancelled.');
@@ -686,7 +721,22 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
       greens.includes(await runTests.evaluate((el) => getComputedStyle(el).backgroundColor)),
     )
     .toBe(true);
+  let releaseEvaluate = () => {};
+  evaluateGate = new Promise<void>((resolve) => {
+    releaseEvaluate = resolve;
+  });
+  const evaluateStarted = new Promise<void>((resolve) => {
+    evaluateEntered = resolve;
+  });
   await runTests.click();
+  await evaluateStarted;
+  expect(view.evaluation).toBeNull();
+  await expect(summary).toHaveAttribute('data-state', 'running');
+  await expect(summary).toHaveAttribute('aria-busy', 'true');
+  await expect(summary.locator('.animate-spin')).toHaveCount(1);
+  await expect(task.getByRole('button', { name: 'Running tests…', exact: true })).toBeDisabled();
+  releaseEvaluate();
+  await expect.poll(() => testRun).toBe(1);
   await expect(summary).toHaveAttribute('data-state', 'running');
   await expect(summary.locator('.animate-spin')).toHaveCount(1);
   await expect(task.getByRole('button', { name: 'Running tests…', exact: true })).toBeDisabled();
@@ -700,8 +750,21 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
   await expect(retryResult).toBeEnabled();
   await expect(summary).toHaveAttribute('data-state', 'unavailable');
   expect(collections).toBe(1); // Failed collection cannot create an automatic retry loop.
+  let releaseCollect = () => {};
+  collectGate = new Promise<void>((resolve) => {
+    releaseCollect = resolve;
+  });
+  const collectStarted = new Promise<void>((resolve) => {
+    collectEntered = resolve;
+  });
   await retryResult.click();
+  await collectStarted;
+  await expect(summary).toHaveAttribute('data-state', 'collecting');
+  await expect(summary.locator('.animate-spin')).toHaveCount(1);
+  releaseCollect();
   await expect(summary).toHaveAttribute('data-state', 'failed');
+  await expect(summary).toHaveAttribute('aria-busy', 'false');
+  await expect(summary.locator('.animate-spin')).toHaveCount(0);
   await expect(summary).toContainText('1/2 passed');
   await expect(
     task.getByRole('button', { name: 'Continue to Check your understanding', exact: true }),

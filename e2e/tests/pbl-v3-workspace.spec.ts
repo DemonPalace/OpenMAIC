@@ -59,7 +59,7 @@ test('installed sample opens in the normal classroom and preserves progress afte
     roleRun: null as LearningView['roleRun'],
     decisions: [],
     questions: [] as LearningView['questions'],
-    evaluation: null,
+    evaluation: null as LearningView['evaluation'],
   };
   let failPreparation = false;
   let file = 'Write your plan here.';
@@ -507,9 +507,8 @@ test('installed sample opens in the normal classroom and preserves progress afte
   await page.locator('.monaco-editor .view-lines .view-line').first().click();
   await page.keyboard.press('ControlOrMeta+A');
   await page.keyboard.type('Unsaved learner work');
-  await page.getByRole('button', { name: 'Run & output', exact: true }).click();
-  await page.getByLabel('Project command', { exact: true }).fill('python3 src/new.py');
-  await expect(page.getByRole('button', { name: 'Run command', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Run & output', exact: true })).toHaveCount(0);
+  await expect(page.getByLabel('Project command', { exact: true })).toHaveCount(0);
   await page.getByRole('tab', { name: 'greeting.py', exact: true }).click();
   await expect(page.locator('.monaco-editor .view-lines')).toHaveText('print("Saved code")');
   await page.getByRole('tab', { name: 'new.py ●', exact: true }).click();
@@ -542,9 +541,30 @@ test('installed sample opens in the normal classroom and preserves progress afte
     'aria-selected',
     'true',
   );
-  await page.getByLabel('Project command', { exact: true }).fill('python3 src/moved.py');
-  await page.getByRole('button', { name: 'Run command', exact: true }).click();
-  await expect.poll(() => workCalls.some((c) => c.action === 'run')).toBe(true);
+  // Hiding shell controls must not remove trusted course build feedback.
+  view.actions.push('compile');
+  await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Build output', exact: true })).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Build / check syntax', exact: true }),
+  ).toBeVisible();
+  view.evaluation = { id: 'course-build', state: 'running', stdout: '', stderr: '' };
+  view.revision++;
+  await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
+  await expect(page.getByTestId('pbl-build-status').locator('.animate-spin')).toHaveCount(1);
+  view.evaluation.state = 'exited';
+  view.revision++;
+  await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
+  await expect(page.getByTestId('pbl-build-status')).toHaveCount(0);
+  view.evaluation = null;
+  // The current activity exposes no shell or arbitrary-command controls.
+  await expect(page.getByRole('button', { name: 'Terminal', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Open terminal', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Run command', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Stop commands and close terminals' })).toHaveCount(
+    0,
+  );
+  expect(workCalls.some((c) => ['run', 'terminal', 'stop'].includes(c.action))).toBe(false);
   await expect(page.getByRole('button', { name: 'Project application', exact: true })).toHaveCount(
     0,
   );
@@ -553,7 +573,6 @@ test('installed sample opens in the normal classroom and preserves progress afte
   await page
     .getByTestId('pbl-v3-workspace')
     .screenshot({ path: 'test-results/pbl-v3-workbench.png' });
-  await page.getByRole('button', { name: 'Stop commands and close terminals' }).click();
   view.questions = [
     { q: 'What does return do?', options: ['Returns a value', 'Prints a value'] },
     {
