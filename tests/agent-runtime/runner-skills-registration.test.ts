@@ -404,20 +404,8 @@ describe('skills runner registration', () => {
     );
   });
 
-  it('loads the default course skill for a plain opening request', async () => {
-    // runner-default-course-skill.test.ts pins when the default applies.
+  it('sends a plain text prompt when the message names no skill', async () => {
     const { promptedWith } = await runToBuildAgent({ prompt: 'Just help me out' });
-
-    const group = promptedWith as Array<{ role?: string; details?: { skill?: string } }>;
-    expect(group.map((message) => message.role)).toEqual(['user', 'assistant', 'toolResult']);
-    expect(group[2]!.details?.skill).toBe('stage-design');
-  });
-
-  it('sends a plain text prompt when the message names no skill and no default applies', async () => {
-    const { promptedWith } = await runToBuildAgent({
-      prompt: 'Just help me out',
-      existingCourse: true,
-    });
 
     expect(promptedWith).toBe('Just help me out');
   });

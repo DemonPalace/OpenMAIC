@@ -68,12 +68,8 @@ import { buildSkillEditTools, SKILL_EDIT_TOOL_NAMES } from './skill-edit-tools';
 import { buildWebSearchTool, resolveWebSearchCapability, searchPromptBlock } from './web-search';
 import {
   buildSkillPreload,
-  defaultCourseSkill,
-  openingRequestOf,
   preloadConstraintTarget,
   preloadUserMessage,
-  type DurableTurnSource,
-  type OpeningRequest,
   type SkillPreload,
 } from './skill-preload';
 import { listSessionScopeMaterials } from './material-resolver';
@@ -1316,29 +1312,6 @@ export async function runSession(ctx: RunContext, meta: ClaimedAgentSession): Pr
       if (locale) messageLocales.set(message.seq, locale);
     };
     loggedMessages.forEach(rememberLocale);
-    // The session's opening request. The default course skill is decided by
-    // its facts alone, so the prompt path and the resume repair below read the
-    // same record (skill-preload.ts `defaultCourseSkill`). The prior-run scan
-    // stops at the first completed message, so a resume pays little for it.
-    const openingRequest = await (async (): Promise<OpeningRequest | null> => {
-      if (meta.existingCourse || meta.skillId) return null;
-      const firstRunSeq =
-        recovery.firstRunSeq ??
-        (historyMessages.length > 0
-          ? ((await readPriorRunRecord(store, id)).firstRunSeq ?? undefined)
-          : undefined);
-      return openingRequestOf(loggedMessages, firstRunSeq, meta.prompt);
-    })();
-    const defaultSkillFor = (turn: DurableTurnSource): LoadedSkill | null =>
-      openingRequest
-        ? defaultCourseSkill({
-            turn,
-            opening: openingRequest,
-            existingCourse: meta.existingCourse,
-            frozenSkillId: meta.skillId,
-            skills: installedSkills,
-          })
-        : null;
     // Resolve the classrooms each pending message named against the owner's
     // library BEFORE the prompt is built: the run must be told the course's
     // current name (reference semantics), and the same resolved refs feed the
@@ -1866,25 +1839,11 @@ export async function runSession(ctx: RunContext, meta: ClaimedAgentSession): Pr
         // `skillId` from the URL, and its prompt text contains no handle at
         // all. On later runs the skill is already in the transcript, so the
         // transcript dedupe (not a special case) keeps it to one load.
-        //
-        // Without a frozen skill, a plain opening request takes the default
-        // course skill through the same entry (`defaultCourseSkill`).
-        const defaultSkill = defaultSkillFor({
-          path: 'prompt',
-          ...(plannedStart.durableMessageSeq !== undefined
-            ? { durableMessageSeq: plannedStart.durableMessageSeq }
-            : {}),
-          startsTranscript: plan.kind === 'start',
-        });
         const preload = await buildSkillPreload({
           text: plannedStart.text,
           skills: installedSkills,
           transcript: modelMessages,
-          ...(plan.kind === 'start' && requestedSkill
-            ? { forced: [requestedSkill] }
-            : defaultSkill
-              ? { forced: [defaultSkill] }
-              : {}),
+          ...(plan.kind === 'start' && requestedSkill ? { forced: [requestedSkill] } : {}),
           model: {
             api: driver.piModel.api,
             provider: driver.piModel.provider,
@@ -1933,21 +1892,13 @@ export async function runSession(ctx: RunContext, meta: ClaimedAgentSession): Pr
         // Delivery carries NO user message — the follow-up cursor is the count
         // of `user` messages in the transcript, and moving it would mark a
         // real user message delivered and drop it.
-        const resumedMessage = loggedMessages.findLast(
-          (message) => message.seq <= deliveredThrough,
-        );
-        const resumedTurnText = resumedMessage?.text ?? meta.prompt;
-        // The default course skill is re-decided from the same durable record,
-        // so a load cut off part-way is completed exactly as it began.
-        const resumedDefault = defaultSkillFor({
-          path: 'resume',
-          ...(resumedMessage ? { deliveredMessageSeq: resumedMessage.seq } : {}),
-        });
+        const resumedTurnText =
+          loggedMessages.findLast((message) => message.seq <= deliveredThrough)?.text ??
+          meta.prompt;
         const repair = await buildSkillPreload({
           text: resumedTurnText,
           skills: installedSkills,
           transcript: modelMessages,
-          ...(resumedDefault ? { forced: [resumedDefault] } : {}),
           model: {
             api: driver.piModel.api,
             provider: driver.piModel.provider,

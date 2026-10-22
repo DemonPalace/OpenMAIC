@@ -27,16 +27,16 @@ order:
    each page with its `title`, `type` (`slide` / `quiz` / `interactive` /
    `pbl`) and `brief` (this page's teaching intent and content outline, the
    same information a planned outline slot used to carry) — in page order.
-   Settle the plan with the user through `ask_user` before creating anything:
-   there is no outline tool to plan with, so the plan is your words and their
-   sign-off. A topic skill's structural constraints are a diagnostic the
-   runtime checks against the real stage after each page; you decide how to
-   act on it.
+   Write the plan into the conversation, then start building it in the same
+   turn: there is no outline tool and no approval step, so the plan is your
+   words and the user steers by sending a message. A topic skill's structural
+   constraints are a diagnostic the runtime checks against the real stage
+   after each page; you decide how to act on it.
 2. **`create_stage`** with the settled course title (pass the series folder's
    `folderId` when the stage is part of a series, so it is filed in the same
    call). From here on, pass the returned stageId to every stage tool.
-3. **`set_roster`**, before any page is generated. Write the classroom the
-   user settled: exactly one teacher, at least two agents in total, each with
+3. **`set_roster`**, before any page is generated. Write the classroom you
+   planned: exactly one teacher, at least two agents in total, each with
    a concrete persona (2-3 sentences on personality and teaching/learning
    style, in the stage language) and a voice — call `list_voices` first and
    bind one of the returned `providerId::voiceId` pairs, or the exact pair
