@@ -12,6 +12,7 @@ import {
   LoaderCircle,
 } from 'lucide-react';
 import { useTheme } from '@/lib/hooks/use-theme';
+import { hasEditorDraft, useStudyDraft } from './use-project-drafts';
 import { WorkbenchSplit } from './workbench-split';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useI18n } from '@/lib/hooks/use-i18n';
@@ -50,15 +51,19 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
   const [view, setView] = useState<LearningView | null>(null),
     [error, setError] = useState(''),
     [pending, setPending] = useState(false);
-  const [showWorkspace, setShowWorkspace] = useState(true),
-    [showAssistant, setShowAssistant] = useState(true);
+  const storageError = useCallback(() => setError(t('pblV3.draftStorageUnavailable')), [t]);
+  const {
+    text,
+    setText,
+    quizAnswers,
+    setQuizAnswers,
+    showWorkspace,
+    setShowWorkspace,
+    showAssistant,
+    setShowAssistant,
+  } = useStudyDraft(view?.id, storageError);
   const [sent, setSent] = useState(0);
-  const [text, setText] = useState('');
   const [dirtyFiles, setDirtyFiles] = useState(false);
-  const [quizAnswers, setQuizAnswers] = useState<{ key: string; values: number[] }>({
-    key: '',
-    values: [],
-  });
   const answerKey = `${view?.id}:${view?.state.position.milestoneId}:${view?.state.position.stageIndex}`;
   const answers = quizAnswers.key === answerKey ? quizAnswers.values : [];
   const retry = useRef<{
@@ -88,7 +93,13 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
     setPending(true);
     setError('');
     try {
-      setView(await pblRequest<LearningView>('/api/pbl/v3', { action: 'open', stageId, sceneId }));
+      const opened = await pblRequest<LearningView>('/api/pbl/v3', {
+        action: 'open',
+        stageId,
+        sceneId,
+      });
+      setDirtyFiles(hasEditorDraft(opened.id));
+      setView(opened);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -150,7 +161,7 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
         setPending(false);
       }
     },
-    [view, updateView, refresh, t],
+    [view, updateView, refresh, t, setText],
   );
   // Polling observes execution; a separate, idempotent command commits the verdict.
   // Collect terminal test runs automatically, including after refresh. A failed
@@ -560,7 +571,15 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
                     {view.actions.includes('quiz') && (
                       <button
                         className={button}
-                        disabled={disabled || answers.length !== view.questions.length}
+                        disabled={
+                          disabled ||
+                          view.questions.some(
+                            (question, index) =>
+                              !Number.isInteger(answers[index]) ||
+                              answers[index]! < 0 ||
+                              answers[index]! >= question.options.length,
+                          )
+                        }
                         onClick={() => void command('quiz', { answers })}
                       >
                         {t('pblV3.submitQuiz')}

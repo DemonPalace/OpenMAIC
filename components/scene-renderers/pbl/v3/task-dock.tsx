@@ -61,10 +61,16 @@ export function TaskDock({
         className={`h-1.5 w-1.5 shrink-0 rounded-full ${running ? 'animate-pulse bg-primary' : ready ? 'bg-primary' : 'bg-muted-foreground'}`}
       />
       <span className="shrink-0 text-muted-foreground">
-        M{view.state.position.milestoneIndex + 1} ·{' '}
-        <span>
-          {progress.current}/{progress.total}
-        </span>
+        M{view.state.position.milestoneIndex + 1}
+        {progress.total > 0 && (
+          <>
+            {' '}
+            ·{' '}
+            <span>
+              {progress.current}/{progress.total}
+            </span>
+          </>
+        )}
       </span>
       <strong className="shrink-0">{t(`pblV3.journey.steps.${step}`)}</strong>
       <span
@@ -98,7 +104,13 @@ export function TaskDock({
             <Settings size={16} className="text-muted-foreground" />
             <h4 className="font-semibold">{t('pblV3.journey.taskTitle')}</h4>
             <span className="min-w-0 flex-1 text-xs text-muted-foreground">
-              M{view.state.position.milestoneIndex + 1} · {progress.current}/{progress.total}
+              M{view.state.position.milestoneIndex + 1}
+              {progress.total > 0 && (
+                <>
+                  {' '}
+                  · {progress.current}/{progress.total}
+                </>
+              )}
             </span>
             <button
               type="button"

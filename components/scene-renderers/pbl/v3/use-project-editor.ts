@@ -1,20 +1,26 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { readEditorDraft, saveEditorDraft, type EditorBuffer } from './use-project-drafts';
+import { getClientTranslation } from '@/lib/i18n';
 import type { LearningView } from '@/lib/pbl/v3/types';
 
-type Buffer = { text: string; saved: string; hash: string; environment: string };
 export function useProjectEditor(
   view: LearningView,
   read: (path: string) => Promise<{ text: string; hash: string }>,
   onSave: (path: string, text: string, hash: string) => Promise<boolean>,
   onError: (error: string) => void,
 ) {
-  const [path, setPath] = useState('PLAN.md');
-  const [tabs, setTabs] = useState(['PLAN.md']);
-  const [buffers, setBuffers] = useState<Record<string, Buffer>>({});
+  const [initial] = useState(() => readEditorDraft(view.id));
+  const [path, setPath] = useState(initial.path);
+  const [tabs, setTabs] = useState(initial.tabs.length ? initial.tabs : ['PLAN.md']);
+  const [buffers, setBuffers] = useState<Record<string, EditorBuffer>>(initial.buffers);
   const [loading, setLoading] = useState(false);
   const sequence = useRef(0);
   const current = useRef({ view, buffers, read, onError, onSave, path });
+  useEffect(() => {
+    if (!saveEditorDraft(view.id, { path, tabs, buffers }))
+      onError(getClientTranslation('pblV3.draftStorageUnavailable'));
+  }, [view.id, path, tabs, buffers, onError]);
   current.current = { view, buffers, read, onError, onSave, path };
   const dirty = (name: string) => !!buffers[name] && buffers[name].text !== buffers[name].saved;
   const load = useCallback(async () => {
@@ -80,6 +86,17 @@ export function useProjectEditor(
     const buffer = buffers[path];
     if (!buffer || buffer.environment !== view.environmentId || !view.files.includes(path)) return;
     if (await onSave(path, buffer.text, buffer.hash)) {
+      const cached = readEditorDraft(view.id);
+      const submitted = cached.buffers[path];
+      if (
+        submitted?.environment === buffer.environment &&
+        submitted.hash === buffer.hash &&
+        submitted.text === buffer.text
+      ) {
+        // Do not resurrect an acknowledged save on scene return or erase a newer draft.
+        delete cached.buffers[path];
+        saveEditorDraft(view.id, cached);
+      }
       // A late save may mark this submitted version saved, never overwrite a newer local edit.
       setBuffers((previous) =>
         previous[path]

@@ -1,6 +1,7 @@
 import {
   isExplorationStage,
   type StageDefinition,
+  type ProjectDefinition,
 } from '@/lib/pbl/v3/domain/project/project-schema';
 import type { Study, RoleBinding } from './store';
 
@@ -45,5 +46,20 @@ export function succeededWithoutTeachingReceipt(
     (stage.kind === 'mentor_say' || (stage.kind === 'produce' && !isExplorationStage(stage))) &&
     !hasStageCompletion(row, stage, binding) &&
     binding.guided?.pending?.runId !== `${key}:${latestUserSeq}`
+  );
+}
+
+/** Shared by tool completion and the teaching handoff; future release boundaries stay open. */
+export function isFinalProjectRecap(
+  project: ProjectDefinition,
+  position: { milestoneIndex: number; stageIndex: number },
+  stage: StageDefinition,
+): boolean {
+  return (
+    stage.kind === 'mentor_say' &&
+    stage.agent === 'mentor' &&
+    position.milestoneIndex === project.milestones.length - 1 &&
+    position.stageIndex === project.milestones[position.milestoneIndex]!.stages.length - 1 &&
+    project.completionMode !== 'awaiting_more_milestones'
   );
 }

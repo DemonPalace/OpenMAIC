@@ -9,8 +9,9 @@ import { isExplorationStage } from '@/lib/pbl/v3/domain/project/project-schema';
 import type { CollectedMilestoneState } from '@/lib/pbl/v3/domain/orchestration/types';
 import { projectArtifacts } from '@/lib/pbl/v3/domain/orchestration/artifacts';
 import { buildSystemPrompt } from '@/lib/pbl/v3/domain/orchestration/prompts';
+import { isFinalProjectRecap } from './stage-progress';
 import { stageStep } from '@/lib/pbl/v3/presentation';
-import { teachingRules, interactionRules, assessmentRules } from './skills';
+import { teachingRules, interactionRules, assessmentRules, decisionRules } from './skills';
 
 export interface TeachingSkill {
   content: Record<string, string>;
@@ -75,6 +76,10 @@ function buildTeachingPrompt({
   pendingReview,
   pendingRun = null,
 }: TeachingPromptInput) {
+  const finalRecap = isFinalProjectRecap(definition, { milestoneIndex, stageIndex }, stage);
+  const confirmation = finalRecap
+    ? 'The final recap complete_stage tool completes the project and reveals the report button. Do not ask for another Continue click or append another milestone.'
+    : 'The learner uses the task bar above the chat input to enter the next step.';
   const exploring = isExplorationStage(stage);
   const guided = (stage.kind === 'produce' && !exploring) || stage.kind === 'mentor_say';
   const repairing = stage.kind === 'check' && stage.checker === 'tests' && !!collected.remediation;
@@ -114,8 +119,7 @@ function buildTeachingPrompt({
               ? 'next_milestone'
               : 'project_complete',
           completionRecorded,
-          confirmation:
-            'The learner uses the task bar above the chat input to enter the next step.',
+          confirmation,
         },
         milestone: { id: milestone.id, title: milestone.title },
         goal: milestone.goal ?? milestone.title,
@@ -199,8 +203,9 @@ function buildTeachingPrompt({
     '\n' +
     teachingRules +
     (stage.kind === 'check' ? assessmentRules : interactionRules) +
+    (stage.kind === 'dialogue' ? '\n' + decisionRules : '') +
     (completionRecorded
-      ? '\nThe current stage is ALREADY complete for the recorded evidence. Answer any follow-up directly and point to the task-bar Continue action. Do not restart teaching, invent a new required question, or require complete_stage again just because the learner sent another message. Actual artifact changes invalidate the affected review and require reviewing that new version before completion.'
+      ? '\nThe current stage is ALREADY complete for the recorded evidence. Answer any follow-up directly. Do not restart teaching, invent a new required question, or require complete_stage again just because the learner sent another message. Actual artifact changes invalidate the affected review and require reviewing that new version before completion.'
       : '') +
     (stage.kind === 'mentor_say' || stage.kind === 'dialogue'
       ? '\nThe current classroom stage is read-only: the learner can discuss concepts or record offered decisions, but cannot edit files or run commands. Ask for conceptual explanations and predicted results. Never require an edit, terminal action or newly executed output to finish this stage. Implementation and test execution belong to their dedicated stages; use only recorded evidence during reflection.'
@@ -208,7 +213,8 @@ function buildTeachingPrompt({
         ? '\nPlanning permits changes to PLAN.md only. Source editing, commands and terminals are unavailable. Review the plan and the learner’s reasoning; do not require code implementation or execution for plan approval.'
         : '') +
     (guided
-      ? '\nThe current teachingContext is authoritative. Earlier stages do not complete this stage. If completionRecorded is true, answer follow-ups without reopening completed sections and point to the task-bar Continue action. Otherwise, when activeSection is null, begin with read_next_skill. Never tell the learner to Continue before complete_stage succeeds for the current stage and evidence. Use read_next_skill to open one section at a time. After delivering a section use request_skill_review and wait for a NEW student reply. currentReview records the question and count of eligible replies; their full text remains in the current-stage learner messages. Assess those actual replies, combining them when needed. Supply studentFeedback as an explanation of how those replies answer the question; quoting or summarizing is allowed, but never invent a reply. If understanding is missing, clarify rather than advance. A short confirmation is sufficient only when the question asks for confirmation. Once final feedback is sufficient, use complete_stage as the last action instead of adding more questions. A completed tool is only a completion signal; the learner separately confirms progression.'
+      ? '\nThe current teachingContext is authoritative. Earlier stages do not complete this stage. If completionRecorded is true, answer follow-ups without reopening completed sections and follow learningRoadmap.confirmation. Otherwise, when activeSection is null, begin with read_next_skill. Never tell the learner to Continue before complete_stage succeeds for the current stage and evidence. Use read_next_skill to open one section at a time. After delivering a section use request_skill_review and wait for a NEW student reply. currentReview records the question and count of eligible replies; their full text remains in the current-stage learner messages. Assess those actual replies, combining them when needed. Supply studentFeedback as an explanation of how those replies answer the question; quoting or summarizing is allowed, but never invent a reply. If understanding is missing, clarify rather than advance. A short confirmation is sufficient only when the question asks for confirmation. Once final feedback is sufficient, use complete_stage as the last action instead of adding more questions. ' +
+        confirmation
       : exploring
         ? '\nThis is optional, ongoing exploration. Discuss the learner’s goal, inspect current files, make focused changes and explain how to verify them. There is no fixed review sequence or completion signal. Preserve existing work; viewing the report never ends exploration.'
         : repairing

@@ -2813,6 +2813,7 @@
       "fileEdits": "Recorded file edits",
       "interruptedRuns": "Interrupted or failed assistant runs",
       "completed": "Project completed. You can open your learning report."
-    }
+    },
+    "draftStorageUnavailable": "Browser draft storage is unavailable. This page keeps your text; save files to the workspace and copy unsent text before leaving the page."
   }
 }

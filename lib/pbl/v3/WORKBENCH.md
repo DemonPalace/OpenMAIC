@@ -13,7 +13,13 @@ open-file drafts. Use **Run & output** for commands and build results, **Termina
 for the connected shell, and **Preview port** to open the application beside code
 as an editor tab. Hiding these panes retains their state; Stop explicitly ends the
 managed execution. Save files before checkpointing, running or handing work back
-to the teaching assistant. Save before navigating away from the scene.
+to the teaching assistant. Dirty file tabs, unsent chat, quiz selections and pane
+visibility survive scene return and same-tab refresh in study-scoped browser storage.
+Clean files reload from the server. This does not save files into the sandbox or
+create a checkpoint; save or copy work before closing the tab or clearing storage.
+Unavailable browser storage keeps drafts in memory for scene return and displays
+a warning before refresh/leaving. Environment replacement preserves dirty text and
+keeps stale saves blocked. No commands, terminal input or permissions are replayed.
 
 Test and quiz actions appear in the current-task drawer above the conversation composer.
 Teaching and reflection show a non-expandable status strip.

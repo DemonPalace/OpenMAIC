@@ -4,6 +4,8 @@ For the dedicated classroom file, execution and recovery controls, see
 [Learning workbench and recovery](WORKBENCH.md).
 For self-contained `.maic.zip` delivery, see
 [Project packages, permissions and verification](PROJECT-PACKAGES.md).
+For the pre-course scope audit and its verification boundaries, see
+[Course readiness checklist](READINESS.md).
 
 This slice opens an installed programming project in the normal classroom, runs
 four teaching roles in the existing Agent runner, and persists learning progress
@@ -36,13 +38,15 @@ A PBL project remains a scene inside an OpenMAIC course. Neighboring slides, qui
 and other scenes provide course teaching; this change does not embed another
 OpenMAIC course inside the project. Native workspace expansion retains the same
 component instance and returns to the host layout without resetting a draft reply.
-Scene re-entry reloads durable study state; unsent drafts are not durable records.
+Scene re-entry reloads durable study state. Dirty file tabs, the unsent reply, quiz
+choices and pane visibility are retained per study in tab-local browser storage;
+these drafts are not submitted learning records or durable checkpoints.
 
 The teaching panel uses the host's existing OpenPBL-derived chat skin, Markdown
 renderer and sticky scrolling, with four role identities and ordered turn parts.
 Existing runner event snapshots update replies through the learning poll; no second
 stream, runner or chat database is introduced. The host's ThinkingBlock, WaitingBar,
-ToolGroup and ToolCard render real reasoning (when supplied by the model), pre-content
+ToolGroup and ToolCard render thinking status without reasoning text, pre-content
 waiting, ordered calls, disclosure details and elapsed times inside OpenPBL-style
 role turns. Text snapshots replace earlier snapshots; completed thoughts stop timing
 when prose or a tool takes over. Terminal and interrupted turns settle on replay.
@@ -69,7 +73,10 @@ Short containers scroll a minimum usable workbench; narrow containers stack IDE 
 assistant. Expanding and returning preserves the mounted editor and chat drafts.
 File switches preserve unsaved buffers. Unsaved files block execution and teaching
 handoffs until saved or explicitly discarded; changing environments preserves drafts
-but disables stale writes. Scene navigation/reload still requires saving work first.
+but disables stale writes. Save files before running or checkpointing. Browser drafts
+survive scene return and same-tab refresh; closing the tab, clearing browser storage
+or using another browser is not a save. If storage is unavailable, a visible warning
+asks the learner to save or copy their work before refreshing or leaving.
 All controls use the existing workspace routes, permissions and version checks.
 When teaching input is blocked, the composer explains the pending request, active
 reply, unavailable environment, unsaved files or unfinished opening. Environment

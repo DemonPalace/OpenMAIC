@@ -12,7 +12,7 @@ import type { LearningWorkbench } from '@/lib/pbl/v3/workbench';
 import { ProjectTerminal } from '@/components/sandbox/project-terminal';
 import { sandboxErrorMessage } from '@/lib/sandbox/error-message';
 import { SandboxRequestError } from '@/components/sandbox/client';
-async function request<T>(url: string, body?: unknown): Promise<T> {
+export async function workbenchRequest<T>(url: string, body?: unknown): Promise<T> {
   const response = await fetch(url, {
     headers: { 'content-type': 'application/json', 'x-openmaic-sandbox': '1' },
     ...(body ? { method: 'POST', body: JSON.stringify(body) } : {}),
@@ -23,6 +23,7 @@ async function request<T>(url: string, body?: unknown): Promise<T> {
       sandboxErrorMessage(data.error),
       response.status,
       data.error?.code,
+      data.error?.reason,
     );
   return data;
 }
@@ -70,7 +71,7 @@ export function LearningWorkbenchPanel({
   const editor = useProjectEditor(
     view,
     (path) =>
-      request<{ text: string; hash: string }>(
+      workbenchRequest<{ text: string; hash: string }>(
         `/api/pbl/v3?id=${encodeURIComponent(view.id)}&file=${encodeURIComponent(path)}`,
       ),
     onSave,
@@ -105,7 +106,7 @@ export function LearningWorkbenchPanel({
   const refresh = useCallback(async () => {
     if (!view.environment?.ready) return;
     const id = view.environmentId;
-    const next = await request<LearningWorkbench>(
+    const next = await workbenchRequest<LearningWorkbench>(
       `/api/pbl/v3/workspace?id=${encodeURIComponent(view.id)}`,
     );
     if (current.current.environmentId === id)
@@ -141,7 +142,7 @@ export function LearningWorkbenchPanel({
     setError('');
     try {
       const selected = current.current;
-      const result = await request<unknown>('/api/pbl/v3/workspace', {
+      const result = await workbenchRequest<unknown>('/api/pbl/v3/workspace', {
         studyId: selected.id,
         command: {
           id: crypto.randomUUID(),
@@ -192,7 +193,7 @@ export function LearningWorkbenchPanel({
         body: { action: 'input'; data: string } | { action: 'resize'; cols: number; rows: number },
       ) => {
         const latest = current.current;
-        return request('/api/pbl/v3/workspace', {
+        return workbenchRequest('/api/pbl/v3/workspace', {
           studyId: latest.id,
           command: {
             id: crypto.randomUUID(),

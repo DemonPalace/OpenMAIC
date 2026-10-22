@@ -198,13 +198,14 @@ test('installed sample opens in the normal classroom and preserves progress afte
       }
       if (command.type === 'save') file = command.text;
       if (command.type === 'quiz') {
-        const passed = command.answers[0] === 0;
+        const passed =
+          command.answers.length === 2 && command.answers.every((answer: number) => answer === 0);
         view.state.collected.greeting.quiz = {
           id: command.id,
           attempt: (view.state.collected.greeting.quiz?.attempt ?? 0) + 1,
           passed,
-          score: passed ? 1 : 0,
-          total: 1,
+          score: passed ? 2 : 1,
+          total: 2,
           wrong: passed ? [] : [0],
         };
         view.actions = passed ? ['quiz', 'next'] : ['quiz'];
@@ -477,7 +478,13 @@ test('installed sample opens in the normal classroom and preserves progress afte
   await expect(page.locator('iframe[title="Project application"]')).toHaveCount(0);
   await page.getByRole('button', { name: 'Save checkpoint', exact: true }).click();
   await expect.poll(() => calls.some((c) => c.type === 'checkpoint')).toBe(true);
-  view.questions = [{ q: 'What does return do?', options: ['Returns a value', 'Prints a value'] }];
+  view.questions = [
+    { q: 'What does return do?', options: ['Returns a value', 'Prints a value'] },
+    {
+      q: 'When do editor changes reach the workspace?',
+      options: ['After saving', 'While typing only'],
+    },
+  ];
   view.actions = ['quiz'];
   view.stage = {
     kind: 'check',
@@ -487,10 +494,17 @@ test('installed sample opens in the normal classroom and preserves progress afte
   view.state.position.stageIndex = 5;
   await page.getByRole('button', { name: 'Refresh progress' }).click();
   await page.getByRole('button', { name: /Current task details/ }).click();
+  // Selecting the last question first must not count sparse array slots as answers.
+  await page.getByRole('radio', { name: 'After saving' }).check();
+  await expect(page.getByRole('button', { name: 'Submit answers' })).toBeDisabled();
+  await page.reload();
+  await page.getByRole('button', { name: /Current task details/ }).click();
+  await expect(page.getByRole('radio', { name: 'After saving' })).toBeChecked();
+  await expect(page.getByRole('button', { name: 'Submit answers' })).toBeDisabled();
   await page.getByRole('radio', { name: 'Prints a value' }).check();
   await page.getByRole('button', { name: 'Submit answers' }).click();
   await expect(
-    page.getByText('0/1 correct. Review your answers and try again.', { exact: true }),
+    page.getByText('1/2 correct. Review your answers and try again.', { exact: true }),
   ).toBeVisible();
   await page.reload();
   // The drawer closes on reload; its recorded quiz result remains available on reopening.
@@ -499,13 +513,13 @@ test('installed sample opens in the normal classroom and preserves progress afte
     { timeout: 15000 },
   );
   await expect(
-    page.getByText('0/1 correct. Review your answers and try again.', { exact: true }),
+    page.getByText('1/2 correct. Review your answers and try again.', { exact: true }),
   ).toBeVisible();
   await expect(page.getByRole('button', { name: /^Continue(?: to|$)/ })).toHaveCount(0);
   await page.getByRole('radio', { name: 'Returns a value' }).check();
   await page.getByRole('button', { name: 'Submit answers' }).click();
   await expect(
-    page.getByText('Quiz passed: 1/1 correct. You can continue.', { exact: true }),
+    page.getByText('Quiz passed: 2/2 correct. You can continue.', { exact: true }),
   ).toBeVisible();
   await expect(page.getByRole('button', { name: /^Continue(?: to|$)/ })).toBeEnabled();
   view.state.status = 'completed';

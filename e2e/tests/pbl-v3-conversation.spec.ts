@@ -57,7 +57,7 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
         type: 'pbl',
         title: 'Practice project',
         order: 1,
-        content: { type: 'pbl', projectV3: { id: 'greeting-python-lab', version: '1.0.0' } },
+        content: { type: 'pbl', projectV3: { id: 'greeting-python-lab', version: '1.1.0' } },
         actions: [],
       },
     ],
@@ -103,7 +103,7 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
         id: 'normalize',
         title: 'Extend the greeting',
         optional: false,
-        stages: ['teaching', 'plan', 'code', 'tests', 'quiz', 'recap'],
+        stages: ['teaching', 'dialogue', 'plan', 'code', 'tests', 'quiz', 'recap'],
       },
     ],
     role: 'discussion',
@@ -252,10 +252,10 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
           environmentId: view.environmentId,
           revision: view.revision,
           epoch: 0,
-          canEdit: false,
+          canEdit: view.actions.includes('edit'),
           canManageFiles: false,
           canRun: false,
-          planning: false,
+          planning: view.stage.kind === 'produce' && view.stage.writes === 'plan',
           ports: [],
           commands: [],
           terminals: [],
@@ -383,6 +383,38 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
   ).toBeVisible();
   await details.getByRole('button', { name: 'Close task details' }).click({ timeout: 7000 });
   await expect(details).toHaveCount(0);
+  view.actions = ['chat', 'edit'];
+  view.revision++;
+  await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
+  const planEditor = page.locator('.monaco-editor textarea').first();
+  await expect(page.locator('.monaco-editor .view-lines')).toContainText('Greeting plan');
+  await expect(planEditor).toBeEditable();
+  await page.locator('.monaco-editor .view-lines .view-line').first().click();
+  await page.keyboard.press('End');
+  await page.keyboard.type('My unsaved plan across scenes');
+  await expect(page.locator('.monaco-editor .view-lines')).toContainText(
+    'My unsaved plan across scenes',
+  );
+  const draftText = await page.locator('.monaco-editor .view-lines').textContent();
+  await expect(
+    page
+      .getByTestId('pbl-ide')
+      .getByText('Unsaved changes. Save or discard before switching files or running commands.', {
+        exact: true,
+      }),
+  ).toBeVisible();
+  const beforeDraftReturn = openings;
+  view.needsOpening = true;
+  await page.getByTestId('scene-title').filter({ hasText: 'Course overview' }).click();
+  await page.getByTestId('scene-title').filter({ hasText: 'Practice project' }).click();
+  await expect(page.locator('.monaco-editor .view-lines')).toHaveText(draftText!);
+  expect(openings).toBe(beforeDraftReturn);
+  view.needsOpening = false;
+  view.revision++;
+  await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
+  page.once('dialog', (dialog) => dialog.accept());
+  await page.getByRole('button', { name: 'Discard changes and reload', exact: true }).click();
+  await expect(page.locator('.monaco-editor .view-lines')).toContainText('Greeting plan');
   view.stage = originalStage;
   view.role = 'discussion';
   view.task = originalTask;
@@ -393,7 +425,7 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
   view.state.position = { milestoneIndex: 1, milestoneId: 'normalize', stageIndex: 2 };
   view.revision++;
   await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
-  await expect(task.getByText('3/6', { exact: true })).toBeVisible();
+  await expect(task.getByText('3/7', { exact: true })).toBeVisible();
   view.state.position = { milestoneIndex: 0, milestoneId: 'greeting', stageIndex: 0 };
   view.revision++;
   await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
@@ -540,10 +572,15 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
   });
   await page.screenshot({ path: 'test-results/pbl-v3-conversation.png' });
   await page.getByRole('button', { name: 'Return to classroom layout' }).click();
+  await page.getByRole('button', { name: 'Toggle code workspace', exact: true }).click();
   await page.getByTestId('scene-title').filter({ hasText: 'Course overview' }).click();
   await expect(page.getByTestId('pbl-v3-workspace')).toHaveCount(0);
   await page.getByTestId('scene-title').filter({ hasText: 'Practice project' }).click();
   await expect(page.getByText('Return sends a value to the caller.')).toBeVisible();
+  await expect(page.getByLabel('Your message', { exact: true })).toHaveValue('My draft answer');
+  await expect(
+    page.getByRole('button', { name: 'Toggle code workspace', exact: true }),
+  ).toHaveAttribute('aria-pressed', 'false');
   await page.reload();
   // The host may select its first scene on reload; select the same installed PBL again.
   await page.getByTestId('scene-title').filter({ hasText: 'Practice project' }).click();
@@ -554,6 +591,7 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
   );
   await expect(page.getByTestId('workbench-tool-group')).toHaveAttribute('data-open', 'false');
   await expect(page.getByTestId('workbench-waiting-bar')).toHaveCount(0);
+  await expect(page.getByLabel('Your message', { exact: true })).toHaveValue('My draft answer');
   // The test control and verdict stay outside the drawer. Execution is not
   // progression: automatic collection must first save the server verdict.
   view.stage = {
@@ -636,9 +674,23 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
   await expect(task.getByText('6/7', { exact: true })).toBeVisible();
   await expect(summary).toHaveCount(0);
 
+  await page.setViewportSize({ width: 850, height: 480 });
+  await page.getByRole('button', { name: 'Expand project workspace' }).click();
+  await expect(page.getByLabel('Your message', { exact: true })).toBeInViewport();
+  await task.getByRole('button', { name: /Current task details/ }).click();
+  await expect(details.getByRole('button', { name: 'Close task details' })).toBeInViewport();
+  await page.keyboard.press('Escape');
+  await expect(details).toHaveCount(0);
+  await expect(task.getByRole('button', { name: /Current task details/ })).toBeFocused();
+  await page.getByRole('button', { name: 'Return to classroom layout' }).click();
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole('button', { name: 'Expand project workspace' }).click();
-  await expect(page.getByLabel('Your message', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Your message', { exact: true })).toBeInViewport();
+  const splitSize = await page.getByTestId('pbl-workbench-split').evaluate((el) => ({
+    height: el.clientHeight,
+    contents: el.firstElementChild!.getBoundingClientRect().height,
+  }));
+  expect(splitSize.contents).toBeLessThanOrEqual(splitSize.height + 1);
   await page.getByTestId('pbl-v3-frame').evaluate((el) => {
     el.scrollTop = 0;
   });

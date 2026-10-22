@@ -291,6 +291,13 @@ const SHIPPED: readonly (readonly [
     true,
     '7ea873bfa8467cdee69fa265661802fc4517323d0ea91cc5ecabea331a52549f',
   ],
+  [
+    'pbl-v3',
+    5,
+    'learning-evidence-and-reports',
+    true,
+    '2e38e3513ae71c4102122b3b4a6136ad27a4e504b6c041d37102df782787ff01',
+  ],
 ];
 
 /**

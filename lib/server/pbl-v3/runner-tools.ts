@@ -43,7 +43,7 @@ import { PROJECT_LIMITS } from '@/lib/pbl/v3/package-policy';
 import { isExplorationStage } from '@/lib/pbl/v3/domain/project/project-schema';
 import { GuidedSkillReview } from './guided-review';
 import { currentTeachingContext, type TeachingHistoryWindow } from './teaching-context';
-import { hasStageCompletion } from './stage-progress';
+import { hasStageCompletion, isFinalProjectRecap } from './stage-progress';
 
 /** Reserved server-created IDs route to a real role binding; a missing binding fails closed. */
 export async function teachingRunnerConfig(input: {
@@ -496,12 +496,7 @@ export async function teachingRunnerConfig(input: {
               };
             }
           }
-          const finalRecap =
-            stage.kind === 'mentor_say' &&
-            stage.agent === 'mentor' &&
-            current.state.position.milestoneIndex === project.definition.milestones.length - 1 &&
-            current.state.position.stageIndex === milestone.stages.length - 1 &&
-            project.definition.completionMode !== 'awaiting_more_milestones';
+          const finalRecap = isFinalProjectRecap(project.definition, current.state.position, stage);
           if (finalRecap) {
             evidence = {
               files: await readFiles(

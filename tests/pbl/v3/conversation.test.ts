@@ -2,6 +2,13 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('server-only', () => ({}));
 import { projectConversation, learningRunFailure } from '@/lib/server/pbl-v3/conversation';
 import { stageSkill, interactionRules } from '@/lib/server/pbl-v3/skills';
+import { installedProject } from '@/lib/server/pbl-v3/catalog';
+import { renderTeachingPrompt } from '@/lib/server/pbl-v3/teaching-prompt';
+import { isFinalProjectRecap } from '@/lib/server/pbl-v3/stage-progress';
+import {
+  startOrchestration,
+  allowedStudentActions,
+} from '@/lib/pbl/v3/domain/orchestration/transition';
 import type { PersistedAgentSessionEvent } from '@openmaic/storage';
 import type { StageDefinition } from '@/lib/pbl/v3/domain/project/project-schema';
 
@@ -343,6 +350,68 @@ describe('student conversation projection', () => {
   });
 });
 describe('general teaching protocols', () => {
+  const definition = installedProject({ id: 'greeting-python-lab', version: '1.1.0' }).definition;
+  function prompt(milestoneIndex: number, stageIndex: number) {
+    const milestone = definition.milestones[milestoneIndex]!;
+    const stage = milestone.stages[stageIndex]!;
+    return renderTeachingPrompt({
+      definition,
+      milestone,
+      stage,
+      role: 'agent' in stage ? stage.agent : 'discussion',
+      stageKey: `${milestone.id}:${stageIndex}`,
+      packaged: false,
+      skill: { ...stageSkill(stage), documents: [] },
+      collected: startOrchestration(definition).state.collected[milestone.id]!,
+    }).systemPrompt;
+  }
+  it('gives decision discussion neutral options and keeps a decision-free milestone immediately continuable', () => {
+    const noDecisions = structuredClone(definition);
+    noDecisions.milestones[0]!.decisions = [];
+    const { state } = startOrchestration(noDecisions);
+    state.position.stageIndex = 1;
+    expect(allowedStudentActions(noDecisions, state)).toContain('next');
+    const discussion = prompt(0, 1);
+    expect(discussion).toContain('trade-offs neutrally');
+    expect(discussion).toContain(
+      'Only a learner submission through the project controls records a decision',
+    );
+    expect(discussion).toContain('no offered decisions');
+    expect(discussion).not.toMatch(/rubricPreferences|answerKeys|correctOption/);
+  });
+  it('aligns the final recap handoff with the same project boundary used by complete_stage', () => {
+    const lastIndex = definition.milestones.length - 1;
+    expect(
+      isFinalProjectRecap(
+        definition,
+        { milestoneIndex: 0, stageIndex: 6 },
+        definition.milestones[0]!.stages[6]!,
+      ),
+    ).toBe(false);
+    expect(prompt(0, 6)).toContain(
+      'The learner uses the task bar above the chat input to enter the next step.',
+    );
+    expect(
+      isFinalProjectRecap(
+        definition,
+        { milestoneIndex: lastIndex, stageIndex: 6 },
+        definition.milestones[lastIndex]!.stages[6]!,
+      ),
+    ).toBe(true);
+    expect(prompt(lastIndex, 6)).toContain(
+      'The final recap complete_stage tool completes the project and reveals the report button.',
+    );
+    expect(prompt(lastIndex, 6)).not.toContain(
+      'The learner uses the task bar above the chat input to enter the next step.',
+    );
+    expect(
+      isFinalProjectRecap(
+        { ...definition, completionMode: 'awaiting_more_milestones' },
+        { milestoneIndex: lastIndex, stageIndex: 6 },
+        definition.milestones[lastIndex]!.stages[6]!,
+      ),
+    ).toBe(false);
+  });
   it('does not mistake a named pre-decision skill for mentor reflection', () => {
     const skill = stageSkill({
       kind: 'mentor_say',
