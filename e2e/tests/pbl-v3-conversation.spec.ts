@@ -531,8 +531,7 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
     {
       kind: 'thinking',
       id: 'thought',
-      text: '',
-      hidden: true,
+      text: 'Inspect the input.\nConsider the return value.',
       streaming: true,
       startedAt: 1000,
     },
@@ -543,14 +542,18 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
   await expect(conversation.getByTestId('workbench-waiting-bar')).toHaveCount(0);
   await expect(thinking).toHaveAttribute('data-streaming', 'true');
   await expect(thinking.getByRole('button')).toHaveAttribute('aria-expanded', 'false');
-  await expect(thinking.getByRole('button')).toBeDisabled();
+  await expect(thinking.getByRole('button')).toBeEnabled();
+  await expect(thinking.getByRole('button')).toContainText('Consider the return value.');
   await expect(thinking.locator('pre')).toHaveCount(0);
+  await thinking.getByRole('button').click();
+  await expect(thinking.locator('pre')).toContainText(
+    'Inspect the input.\nConsider the return value.',
+  );
   finished.parts = [
     {
       kind: 'thinking',
       id: 'thought',
-      text: '',
-      hidden: true,
+      text: 'Inspect the input.\nConsider the return value and output.',
       streaming: false,
       startedAt: 1000,
       endedAt: 3000,
@@ -561,6 +564,7 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
       action: 'read',
       status: 'running',
       args: { path: 'src/main.py' },
+      progress: { kind: 'read', text: 'Reading the full file', percent: 50, data: { lines: 60 } },
       startedAt: 3000,
     },
     {
@@ -574,23 +578,36 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
   ];
   view.activitySequence++;
   await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
-  await expect(thinking.getByRole('button')).toHaveAttribute('aria-expanded', 'false');
+  await expect(thinking.getByRole('button')).toHaveAttribute('aria-expanded', 'true');
+  await expect(thinking.locator('pre')).toContainText('Consider the return value and output.');
   await expect(thinking).not.toHaveAttribute('data-streaming', 'true');
+  await thinking.getByRole('button').click();
   const tools = conversation.getByTestId('workbench-tool-group');
   await expect(tools).toBeVisible();
   await expect(tools.getByTestId('workbench-tool-card')).toHaveCount(2);
   await tools.getByTestId('workbench-tool-card').first().getByRole('button').click();
   await expect(tools.locator('pre').first()).toContainText('src/main.py');
+  await expect(tools.getByText('Reading the full file', { exact: true })).toBeVisible();
+  await expect(tools.locator('pre').last()).toContainText('60');
   for (const part of finished.parts)
     if (part.kind === 'tool') {
       part.status = 'succeeded';
       part.endedAt = 5000;
+      if (part.id === 'read') {
+        part.result =
+          Array.from({ length: 55 }, (_, index) => `Line ${index + 1}`).join('\n') +
+          '\n<img src=x onerror="window.toolPayloadExecuted=true">';
+        part.display = { received: 'Complete structured display', nested: { count: 55 } };
+      }
     }
   // Completed tools do not mean the Agent turn is finished. Keep a live tail
   // while the next model response is pending, preserving the earlier output.
   view.activitySequence++;
   await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
   await expect(conversation.getByTestId('workbench-waiting-bar')).toHaveCount(1);
+  await expect(tools.locator('[data-scroll="true"]')).toContainText('Line 55');
+  await expect(tools.getByText('Complete structured display', { exact: false })).toBeVisible();
+  await expect(tools.locator('img')).toHaveCount(0);
   finished.parts.push(...originalParts);
   view.activitySequence++;
   await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
@@ -607,15 +624,12 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
   await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
   await expect(conversation.getByTestId('workbench-waiting-bar')).toHaveCount(0);
   await expect(conversation.getByText('Where does the value go?', { exact: true })).toBeVisible();
-  // Settled tools auto-fold independently of their card details. Reopen the
-  // group before addressing its inert descendants, as a learner would.
-  await expect(tools).toHaveAttribute('data-open', 'false');
+  // OpenPBL groups stay open after settlement, until the learner folds them.
+  await expect(tools).toHaveAttribute('data-open', 'true');
   const toolGroupToggle = tools.getByRole('button', {
     name: '2 tool calls · Completed',
     exact: true,
   });
-  await toolGroupToggle.click();
-  await expect(tools).toHaveAttribute('data-open', 'true');
   const firstToolToggle = tools.getByTestId('workbench-tool-card').first().getByRole('button');
   await expect(firstToolToggle).toHaveAttribute('aria-expanded', 'true');
   await expect(tools.locator('pre').first()).toContainText('src/main.py');
@@ -623,6 +637,7 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
   await expect(firstToolToggle).toHaveAttribute('aria-expanded', 'false');
   await toolGroupToggle.click();
   await expect(tools).toHaveAttribute('data-open', 'false');
+  await expect(tools.getByTestId('workbench-tool-card')).toHaveCount(0);
   finished.status = 'running';
   view.busy = true;
   view.conversation![1]!.parts.push({
@@ -663,7 +678,7 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
   delete finished.failure;
   view.activitySequence++;
   await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
-  await expect(thinking.getByRole('button')).toBeDisabled();
+  await expect(thinking.getByRole('button')).toBeEnabled();
   await expect(thinking.getByRole('button')).toHaveAttribute('aria-expanded', 'false');
 
   await expect(page.locator('.monaco-editor .view-lines')).toContainText('Greeting plan');
@@ -693,7 +708,7 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
     'aria-expanded',
     'false',
   );
-  await expect(page.getByTestId('workbench-tool-group')).toHaveAttribute('data-open', 'false');
+  await expect(page.getByTestId('workbench-tool-group')).toHaveAttribute('data-open', 'true');
   await expect(page.getByTestId('workbench-waiting-bar')).toHaveCount(0);
   await expect(page.getByLabel('Your message', { exact: true })).toHaveValue('My draft answer');
   // The test control and verdict stay outside the drawer. Execution is not

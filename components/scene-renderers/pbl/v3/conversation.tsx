@@ -18,9 +18,8 @@ import {
 import { TextBlock } from '@/components/workbench/chat/text-block';
 import { ThinkingBlock } from '@/components/workbench/chat/thinking-block';
 import { WaitingBar } from '@/components/workbench/chat/waiting-bar';
-import { ToolGroup } from '@/components/workbench/chat/tool-group';
+import { ToolActivity } from './tool-activity';
 import { UserBubble } from '@/components/workbench/chat/user-bubble';
-import type { ChatNode } from '@/lib/workbench/session-store';
 import { useI18n } from '@/lib/hooks/use-i18n';
 import type { LearningView } from '@/lib/pbl/v3/types';
 import type { LearningConversationEntry } from '@/lib/pbl/v3/conversation';
@@ -51,32 +50,6 @@ const icons = {
 };
 type Part = LearningConversationEntry['parts'][number];
 type ToolPart = Extract<Part, { kind: 'tool' }>;
-const toolNames = {
-  read: 'read_file',
-  write: 'write_file',
-  build: 'run_build',
-  collect: 'collect_build',
-  review: 'request_skill_review',
-  complete: 'complete_stage',
-  list: 'list_files',
-  manage: 'manage_file',
-  skill: 'read_next_skill',
-};
-function toolNode(part: ToolPart): ChatNode {
-  return {
-    key: part.id,
-    kind: 'tool',
-    text: '',
-    toolName: part.name ?? toolNames[part.action],
-    toolState:
-      part.status === 'running' ? 'running' : part.status === 'succeeded' ? 'done' : 'failed',
-    toolDetails: { interrupted: part.status === 'interrupted' },
-    toolArgs: part.args,
-    toolResultText: part.result,
-    toolStartedAt: part.startedAt,
-    toolEndedAt: part.endedAt,
-  };
-}
 // Keep the OpenPBL turn order. Only adjacent tool calls form a group; prose/thinking splits it.
 function groupParts(parts: Part[]) {
   const groups: (Part | ToolPart[])[] = [];
@@ -118,7 +91,7 @@ function AgentTurn({ entry }: { entry: LearningConversationEntry }) {
         {groupParts(entry.parts).map((part) =>
           Array.isArray(part) ? (
             <div key={part[0].id} className="space-y-2">
-              <ToolGroup nodes={part.map(toolNode)} t={t} />
+              <ToolActivity tools={part} t={t} />
               {part.some((tool) => tool.action === 'complete' && tool.status === 'succeeded') && (
                 <p className="text-foreground">
                   {t(
@@ -133,7 +106,6 @@ function AgentTurn({ entry }: { entry: LearningConversationEntry }) {
             <ThinkingBlock
               key={part.id}
               text={part.text}
-              hidden
               streaming={part.streaming}
               startedAt={part.startedAt}
               endedAt={part.endedAt}

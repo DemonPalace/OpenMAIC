@@ -47,13 +47,15 @@ these drafts are not submitted learning records or durable checkpoints.
 The teaching panel uses the host's existing OpenPBL-derived chat skin, Markdown
 renderer and sticky scrolling, with four role identities and ordered turn parts.
 Existing runner event snapshots update replies through the learning poll; no second
-stream, runner or chat database is introduced. The host's ThinkingBlock, WaitingBar,
-ToolGroup and ToolCard render thinking status without reasoning text, pre-content
-waiting, ordered calls, disclosure details and elapsed times inside OpenPBL-style
-role turns. Text snapshots replace earlier snapshots; completed thoughts stop timing
+stream, runner or chat database is introduced. The host's ThinkingBlock and WaitingBar
+and the OpenPBL-derived PBL tool cards render a one-line thinking
+preview, expandable full thinking text, pre-content waiting, ordered calls and elapsed
+times inside role turns. Tool groups start open and remain under manual fold control;
+each tool card starts folded. Text snapshots replace earlier snapshots; completed thoughts stop timing
 when prose or a tool takes over. Terminal and interrupted turns settle on replay.
-Tool details include project files and structured build outcomes; credentials, raw
-provider errors, hashes and teaching protocol bodies stay out of the display payload.
+Tool cards show the full emitted input, output, progress and display payloads, including
+failed results and loaded teaching sections, as plain text. Payloads are not interpreted
+as HTML or Markdown, filtered by tool name, or truncated by the PBL projection.
 Recent conversations span the current milestone roles and project mentor; older
 records remain available in the report. Explicit sends re-anchor the conversation;
 reading older messages does not force scrolling to the bottom.
@@ -402,4 +404,5 @@ JSON, rubric files and declared answer keys are not staged as execution resource
 Course authors must put expected results in the host-owned case descriptor, never in
 sandbox support scripts. This removes answer disclosure through process arguments and
 staged descriptors; the cooperative shell remains unsuitable as a hostile-code exam
-boundary. PBL thinking bars show status/duration only in both streaming and replay.
+boundary. PBL thinking bars retain the full emitted text in both streaming and replay; their
+compact preview expands in place, matching OpenPBL.

@@ -2864,6 +2864,13 @@
       "operation": "正在处理工作区操作，完成后即可编辑。",
       "request": "正在处理学习操作，返回结果后即可编辑。",
       "loading": "正在同步文件和编辑权限，请稍候。"
+    },
+    "toolDetails": {
+      "input": "参数",
+      "progress": "进度",
+      "output": "输出",
+      "display": "展示",
+      "stopped": "已停止"
     }
   }
 }

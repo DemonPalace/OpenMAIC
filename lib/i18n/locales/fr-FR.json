@@ -2864,6 +2864,13 @@
       "operation": "A workspace operation is being processed. Edit after it settles.",
       "request": "A learning operation is being processed. Editing resumes after the response.",
       "loading": "Synchronizing this file and its permissions. Please wait."
+    },
+    "toolDetails": {
+      "input": "Input",
+      "progress": "Progress",
+      "output": "Output",
+      "display": "Display",
+      "stopped": "Stopped"
     }
   }
 }

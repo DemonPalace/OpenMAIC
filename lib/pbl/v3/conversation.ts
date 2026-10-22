@@ -2,7 +2,7 @@ import type { AgentRole } from './domain/project/project-schema';
 
 export type LearningRunFailure = 'authentication' | 'timeout' | 'incomplete' | 'unavailable';
 
-/** Learner-owned conversation, with explicit display fields rather than raw runner payloads. */
+/** Learner-owned conversation with OpenPBL thinking and full tool activity. */
 export interface LearningConversationEntry {
   id: string;
   at?: number;
@@ -21,7 +21,6 @@ export interface LearningConversationEntry {
     | { kind: 'text'; id: string; text: string; streaming?: boolean }
     | {
         kind: 'thinking';
-        hidden?: boolean;
         id: string;
         text: string;
         streaming?: boolean;
@@ -40,10 +39,13 @@ export interface LearningConversationEntry {
           | 'complete'
           | 'list'
           | 'manage'
-          | 'skill';
+          | 'skill'
+          | 'tool';
         name?: string;
-        args?: Record<string, string>;
-        result?: string;
+        args?: unknown;
+        result?: unknown;
+        display?: unknown;
+        progress?: { kind?: string; text?: string; percent?: number; data?: unknown };
         projectCompleted?: boolean;
         startedAt?: number;
         endedAt?: number;
