@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 vi.mock('@/lib/i18n', () => ({ getClientTranslation: (key: string) => key }));
 import { useProjectEditor } from '@/components/scene-renderers/pbl/v3/use-project-editor';
+import { SandboxRequestError } from '@/components/sandbox/client';
 import {
   readEditorDraft,
   useStudyDraft,
@@ -167,14 +168,18 @@ describe('study-scoped local drafts', () => {
     expect(save).toHaveBeenCalledTimes(1);
     expect(editor.anyDirty).toBe(false);
   });
-  it('retains rejected edits without a retry loop and retries the same submission before newer typing', async () => {
+  it.each([
+    new Error('Connection interrupted'),
+    new SandboxRequestError('Response lost', 503, 'SANDBOX_UNAVAILABLE'),
+    new SandboxRequestError('Unclassified conflict', 409, 'SANDBOX_CONFLICT'),
+  ])('retains uncertain edits and replays the same submission: %s', async (failure) => {
     const id = `failure-${sequence++}`;
     await mount(createElement(Editor, { value: view(id) }));
     vi.useFakeTimers();
-    save.mockRejectedValueOnce(new Error('Connection interrupted'));
+    save.mockRejectedValueOnce(failure);
     await act(async () => editor.edit('Submitted edit'));
     await act(async () => vi.advanceTimersByTimeAsync(750));
-    expect(editor.saveError).toBe('Connection interrupted');
+    expect(editor.saveError).toBe(failure.message);
     const request = save.mock.calls[0]?.[3];
     await act(async () => editor.edit('A newer edit'));
     await act(async () => vi.advanceTimersByTimeAsync(10000));
@@ -186,6 +191,43 @@ describe('study-scoped local drafts', () => {
     expect(save.mock.calls[2]?.slice(0, 3)).toEqual(['PLAN.md', 'A newer edit', 'b'.repeat(64)]);
     expect(editor.anyDirty).toBe(false);
   });
+  it.each(['PROGRESS_CHANGED', 'WORKSPACE_FILE_CONFLICT'])(
+    'starts a fresh request after a definitive %s rejection without rebasing the file hash',
+    async (reason) => {
+      const id = `conflict-${sequence++}`;
+      let revision = 1;
+      save.mockImplementationOnce(async (_path, _text, _hash, request) => {
+        request.revision ??= revision;
+        throw new SandboxRequestError('Changed elsewhere', 409, 'SANDBOX_CONFLICT', reason);
+      });
+      await mount(createElement(Editor, { value: view(id) }));
+      vi.useFakeTimers();
+      await act(async () => editor.edit('Rejected draft'));
+      await act(async () => vi.advanceTimersByTimeAsync(750));
+      const rejected = { ...save.mock.calls[0]![3] };
+      await act(async () => editor.edit('Newer retained draft'));
+      revision = 2;
+      await act(async () =>
+        root!.render(createElement(Editor, { value: { ...view(id), revision } })),
+      );
+      await act(async () => vi.advanceTimersByTimeAsync(10000));
+      expect(save).toHaveBeenCalledTimes(1);
+      expect(editor.buffer?.text).toBe('Newer retained draft');
+      save.mockImplementationOnce(async (_path, _text, _hash, request) => {
+        request.revision ??= revision;
+        return { hash: 'b'.repeat(64) };
+      });
+      await act(async () => editor.save());
+      expect(save.mock.calls[1]?.slice(0, 3)).toEqual([
+        'PLAN.md',
+        'Newer retained draft',
+        'a'.repeat(64),
+      ]);
+      expect(save.mock.calls[1]?.[3]).toMatchObject({ revision: 2 });
+      expect(save.mock.calls[1]?.[3].id).not.toBe(rejected.id);
+      expect(editor.anyDirty).toBe(false);
+    },
+  );
   it('ignores read-only editor changes and reflects saved Agent changes without writing them back', async () => {
     const id = `readonly-${sequence++}`;
     const value = view(id);

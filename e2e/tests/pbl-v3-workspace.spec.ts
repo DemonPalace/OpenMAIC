@@ -65,6 +65,8 @@ test('installed sample opens in the normal classroom and preserves progress afte
   let file = 'Write your plan here.';
   const savedFiles = new Map<string, { text: string; hash: string }>();
   let rejectAutosave = false;
+  let conflictAutosaveProgress = false;
+  const saveAttempts: { id: string; revision: number; text: string; expectedHash: string }[] = [];
   let readGate: Promise<void> | null = null,
     chatGate: Promise<void> | null = null,
     createGate: Promise<void> | null = null;
@@ -199,6 +201,17 @@ test('installed sample opens in the normal classroom and preserves progress afte
       });
     }
     if (body?.command) {
+      if (body.command.type === 'save') {
+        saveAttempts.push(body.command);
+        if (conflictAutosaveProgress) {
+          conflictAutosaveProgress = false;
+          view.revision++;
+          return route.fulfill({
+            status: 409,
+            json: { error: { code: 'SANDBOX_CONFLICT', reason: 'PROGRESS_CHANGED' } },
+          });
+        }
+      }
       if (body.command.type === 'save' && rejectAutosave)
         return route.fulfill({ status: 503, json: { error: { code: 'SANDBOX_UNAVAILABLE' } } });
       expect(body.command.revision).toBe(view.revision);
@@ -472,6 +485,33 @@ test('installed sample opens in the normal classroom and preserves progress afte
     text: 'print("Saved code")',
     expectedHash: 'c'.repeat(64),
   });
+  const saved = page
+    .getByTestId('pbl-ide')
+    .getByRole('status')
+    .filter({ hasText: /^Saved$/ });
+  await expect(saved).toBeVisible();
+  conflictAutosaveProgress = true;
+  await page.locator('.monaco-editor .view-lines .view-line').first().click();
+  await page.keyboard.press('ControlOrMeta+A');
+  await page.keyboard.insertText('print("A retained draft")');
+  const retrySave = page.getByRole('button', { name: 'Save failed · Retry', exact: true });
+  await expect(retrySave).toBeVisible();
+  const rejectedSave = saveAttempts.at(-1)!;
+  expect(rejectedSave.revision).toBe(view.revision - 1);
+  await page.locator('.monaco-editor .view-lines .view-line').first().click();
+  await page.keyboard.press('ControlOrMeta+A');
+  await page.keyboard.insertText('print("Saved code after retry")');
+  await expect(page.locator('.monaco-editor .view-lines')).toHaveText(
+    'print("Saved code after retry")',
+  );
+  await retrySave.click();
+  await expect(saved).toBeVisible();
+  expect(saveAttempts.at(-1)).toMatchObject({
+    revision: rejectedSave.revision + 1,
+    text: 'print("Saved code after retry")',
+    expectedHash: rejectedSave.expectedHash,
+  });
+  expect(saveAttempts.at(-1)!.id).not.toBe(rejectedSave.id);
   const savesBeforeSwitching = calls.filter((c) => c.type === 'save').length;
   for (let i = 0; i < 2; i++) {
     await page.getByRole('tab', { name: 'PLAN.md', exact: true }).click();
@@ -482,7 +522,9 @@ test('installed sample opens in the normal classroom and preserves progress afte
     );
     await page.keyboard.press('Escape');
     await page.getByRole('tab', { name: 'greeting.py', exact: true }).click();
-    await expect(page.locator('.monaco-editor .view-lines')).toHaveText('print("Saved code")');
+    await expect(page.locator('.monaco-editor .view-lines')).toHaveText(
+      'print("Saved code after retry")',
+    );
   }
   await expect(page.getByRole('tab', { name: /●/ })).toHaveCount(0);
   expect(calls.filter((c) => c.type === 'save')).toHaveLength(savesBeforeSwitching);
@@ -495,7 +537,9 @@ test('installed sample opens in the normal classroom and preserves progress afte
     'The assistant is working',
   );
   await expect(page.getByTestId('pbl-edit-access')).toHaveCount(0);
-  await expect(page.locator('.monaco-editor .view-lines')).toHaveText('print("Saved code")');
+  await expect(page.locator('.monaco-editor .view-lines')).toHaveText(
+    'print("Saved code after retry")',
+  );
   const lockMessage = page.locator('.monaco-editor-overlaymessage');
   await expect.poll(() => lockMessage.evaluate((el) => getComputedStyle(el).opacity)).toBe('1');
   await expect(lockMessage).toBeInViewport();
@@ -530,7 +574,9 @@ test('installed sample opens in the normal classroom and preserves progress afte
   await expect
     .poll(async () => (await page.locator('.monaco-editor').boundingBox())!.width)
     .toBeGreaterThan(editorWidth);
-  await expect(page.locator('.monaco-editor .view-lines')).toHaveText('print("Saved code")');
+  await expect(page.locator('.monaco-editor .view-lines')).toHaveText(
+    'print("Saved code after retry")',
+  );
   await expect(page.locator('.monaco-editor textarea').first()).toBeEditable();
   await showFiles.click();
   await expect(hideFiles).toBeVisible();
@@ -566,7 +612,9 @@ test('installed sample opens in the normal classroom and preserves progress afte
   await expect(page.getByRole('button', { name: 'Run & output', exact: true })).toHaveCount(0);
   await expect(page.getByLabel('Project command', { exact: true })).toHaveCount(0);
   await page.getByRole('tab', { name: 'greeting.py', exact: true }).click();
-  await expect(page.locator('.monaco-editor .view-lines')).toHaveText('print("Saved code")');
+  await expect(page.locator('.monaco-editor .view-lines')).toHaveText(
+    'print("Saved code after retry")',
+  );
   await page.getByRole('tab', { name: 'new.py ●', exact: true }).click();
   await expect(page.locator('.monaco-editor .view-lines')).toHaveText('Unsaved learner work');
   await page.getByRole('button', { name: 'Expand project workspace' }).click();

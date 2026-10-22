@@ -2195,6 +2195,59 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
     ).rejects.toThrow('changed');
     expect(await service.readText(ordinary.id, 'main.py')).toBe('new content');
   });
+  it('allows a fresh save after progress rejection while preserving file conflicts and successful receipts', async () => {
+    const study = await freshStudy();
+    let row = await store.get(study.id, principal.ownerId);
+    row.state.status = 'waiting_for_student';
+    row.state.position.stageIndex = 3;
+    row.state.milestones[0].status = 'active';
+    row.state.milestones[0].stageIndex = 3;
+    row = await store.transaction((db) => store.commit(db, row, { state: row.state, events: [] }));
+    const service = await SandboxService.forOwner(principal);
+    const path = 'greeting.py';
+    const original = await service.readText(row.environment_id!, path);
+    const stale = {
+      id: randomUUID(),
+      revision: row.revision,
+      type: 'save',
+      path,
+      text: 'Learner draft',
+      expectedHash: digest(original),
+    };
+    row = await store.transaction((db) => store.commit(db, row, { state: row.state, events: [] }));
+    await expect(commandStudy(principal, study.id, stale)).rejects.toMatchObject({
+      status: 409,
+      reason: 'PROGRESS_CHANGED',
+    });
+    expect(
+      (
+        await pool.query('SELECT 1 FROM pbl_v3_commands WHERE study_id=$1 AND id=$2', [
+          study.id,
+          stale.id,
+        ])
+      ).rowCount,
+    ).toBe(0);
+    expect(await service.readText(row.environment_id!, path)).toBe(original);
+    const fresh = { ...stale, id: randomUUID(), revision: row.revision };
+    await commandStudy(principal, study.id, fresh);
+    expect(await service.readText(row.environment_id!, path)).toBe('Learner draft');
+    const revision = (await store.get(study.id, principal.ownerId)).revision;
+    await expect(commandStudy(principal, study.id, fresh)).resolves.toBeDefined();
+    expect((await store.get(study.id, principal.ownerId)).revision).toBe(revision);
+    await writeFile(join(mocked.root, row.environment_id!, path), 'Another writer');
+    for (let attempt = 0; attempt < 2; attempt++)
+      await expect(
+        commandStudy(principal, study.id, {
+          ...fresh,
+          id: randomUUID(),
+          revision,
+          text: 'Retained newer draft',
+          expectedHash: digest('Learner draft'),
+        }),
+      ).rejects.toMatchObject({ status: 409, reason: 'WORKSPACE_FILE_CONFLICT' });
+    expect(await service.readText(row.environment_id!, path)).toBe('Another writer');
+    expect((await store.get(study.id, principal.ownerId)).revision).toBe(revision);
+  });
   it('invalidates stored evidence before an ambiguous learner edit without losing the written content', async () => {
     const study = await freshStudy();
     const completed = await store.get(studyId, principal.ownerId);

@@ -394,7 +394,10 @@ export class SandboxService {
     return this.store.exclusive(id, async () => {
       const current = await this.readText(id, path);
       if (createHash('sha256').update(current).digest('hex') !== expectedHash)
-        throw sandboxConflict('The file changed since it was read. Reload before saving.');
+        throw sandboxConflict(
+          'The file changed since it was read. Reload before saving.',
+          'WORKSPACE_FILE_CONFLICT',
+        );
       if (current === text) return false;
       // Durable evidence is invalidated under the same lock, before a possibly ambiguous write.
       await beforeWrite?.();

@@ -353,7 +353,7 @@ export async function commandStudy(
       // Remote operation retries below reuse the original environment / command ID.
     } else {
       if (row.revision !== command.revision && !alreadyStarted && !collecting)
-        throw sandboxConflict('Progress changed. Refresh before submitting.');
+        throw sandboxConflict('Progress changed. Refresh before submitting.', 'PROGRESS_CHANGED');
     }
     if (row.state.status === 'completed') throw sandboxConflict('This project is completed.');
     if (alreadyStarted) return { alreadyStarted: true };

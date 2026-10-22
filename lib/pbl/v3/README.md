@@ -87,6 +87,10 @@ survive scene return and same-tab refresh; closing the tab, clearing browser sto
 or using another browser is not a save. If storage is unavailable, a visible warning
 asks the learner to save or copy their work before refreshing or leaving.
 All controls use the existing workspace routes, permissions and version checks.
+An explicit progress conflict refreshes the study and retains the draft for a new
+save request. Confirmed file conflicts also discard the rejected request identity,
+but never replace the draft's observed hash: concurrent file changes still require
+reconciliation. Unknown save outcomes retain the exact request for explicit retry.
 When teaching input is blocked, the composer explains the pending request, active
 reply, unavailable environment, unsaved files or unfinished opening. Environment
 restoration and failed-opening retries are available beside the draft. These
@@ -101,8 +105,8 @@ After environment preparation and each confirmed stage transition, the active ro
 opens the stage once through the existing runner. Durable stage-entry events supply
 conversation dividers on replay. Opening wakeups are explicitly system-originated:
 they are not shown as learner messages and cannot count as review feedback. Reloads
-reuse the current role; a failed opening uses the normal retry path. Existing sessions
-retain their history and position when the old separate intro gate is folded away.
+reuse the current role and its saved history and position; a failed opening uses
+the normal retry path.
 The scene uses OpenPBL's blue-gray/green palette in dark mode and its light counterpart,
 scoped to the workbench and following the host theme. Project web applications and
 their API contracts remain later content-specific integration work.

@@ -181,6 +181,8 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
           setText((current) => (current === request.payload.text ? '' : current));
         return true;
       } catch (e) {
+        if (e instanceof SandboxRequestError && e.status === 409 && e.reason === 'PROGRESS_CHANGED')
+          retry.current = null;
         setError((e as Error).message);
         await refresh().catch(() => {});
         return false;
@@ -442,17 +444,28 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
                   )
                     throw new Error(t('pblV3.workbench.staleBuffer'));
                   request.revision ??= selected.revision;
-                  const result = await pblRequest<{ view: LearningView }>('/api/pbl/v3', {
-                    studyId: selected.id,
-                    command: {
-                      id: request.id,
-                      revision: request.revision,
-                      type: 'save',
-                      path,
-                      text,
-                      expectedHash: hash,
-                    },
-                  });
+                  let result: { view: LearningView };
+                  try {
+                    result = await pblRequest('/api/pbl/v3', {
+                      studyId: selected.id,
+                      command: {
+                        id: request.id,
+                        revision: request.revision,
+                        type: 'save',
+                        path,
+                        text,
+                        expectedHash: hash,
+                      },
+                    });
+                  } catch (error) {
+                    if (
+                      error instanceof SandboxRequestError &&
+                      error.status === 409 &&
+                      error.reason === 'PROGRESS_CHANGED'
+                    )
+                      await refresh().catch(() => {});
+                    throw error;
+                  }
                   updateView(result.view);
                   return {
                     hash: Array.from(new Uint8Array(digest), (b) =>

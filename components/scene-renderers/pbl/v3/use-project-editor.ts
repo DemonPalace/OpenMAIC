@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { readEditorDraft, saveEditorDraft, type EditorBuffer } from './use-project-drafts';
 import { getClientTranslation } from '@/lib/i18n';
 import type { LearningView } from '@/lib/pbl/v3/types';
+import { SandboxRequestError } from '@/components/sandbox/client';
 
 export type FileSaveReceipt = { hash: string };
 export type FileSaveRequest = { id: string; revision?: number };
@@ -154,6 +155,14 @@ export function useProjectEditor(
               : previous;
           });
         } catch (error) {
+          // A confirmed precondition rejection did not write this draft. Unknown outcomes
+          // still replay the exact request; fresh attempts retain the observed file hash.
+          if (
+            error instanceof SandboxRequestError &&
+            error.status === 409 &&
+            ['PROGRESS_CHANGED', 'WORKSPACE_FILE_CONFLICT'].includes(error.reason ?? '')
+          )
+            retrySave.current = null;
           if (mounted.current) {
             failed.current = true;
             setSaveError((error as Error).message);
