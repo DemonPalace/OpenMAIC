@@ -50,6 +50,7 @@ test('installed sample opens in the normal classroom and preserves progress afte
       studentActions: ['chat', 'next'],
     },
     role: 'discussion',
+    needsOpening: true,
     actions: ['chat'],
     files: ['PLAN.md', 'greeting.py'],
     busy: false,
@@ -190,6 +191,10 @@ test('installed sample opens in the normal classroom and preserves progress afte
         view.environmentId = '12345678-1234-1234-1234-123456789012';
         view.environment = { state: 'running', ready: true };
       }
+      if (command.type === 'begin') {
+        view.needsOpening = false;
+        view.messages.push({ role: 'assistant', text: 'Welcome to your greeting project.' });
+      }
       if (command.type === 'chat') {
         view.messages.push(
           { role: 'user', text: command.text },
@@ -222,7 +227,18 @@ test('installed sample opens in the normal classroom and preserves progress afte
   await expect(page.getByTestId('pbl-v3-workspace')).toBeVisible({ timeout: 60000 });
   await expect(page.getByRole('button', { name: 'Learning report', exact: true })).toHaveCount(0);
   await expect(page.getByText('1/7', { exact: true }).first()).toBeVisible();
-  await page.getByRole('button', { name: 'Prepare project environment' }).click();
+  await expect(page.getByText('Welcome to your greeting project.', { exact: true })).toBeVisible();
+  expect(calls.filter((c) => c.type === 'prepare')).toHaveLength(1);
+  expect(calls.filter((c) => c.type === 'begin')).toHaveLength(1);
+  expect(calls.filter((c) => c.type === 'chat' || c.type === 'next')).toHaveLength(0);
+  expect(view.state.position).toEqual({
+    milestoneIndex: 0,
+    milestoneId: 'greeting',
+    stageIndex: 0,
+  });
+  await expect(page.getByRole('button', { name: 'Retry project setup', exact: true })).toHaveCount(
+    0,
+  );
   // Hold an old progress GET until after a teaching command installs a newer revision.
   let releaseView!: () => void, viewStarted!: () => void;
   const viewGate = new Promise<void>((resolve) => {
@@ -277,16 +293,15 @@ test('installed sample opens in the normal classroom and preserves progress afte
   expect(calls.filter((c) => c.type === 'chat')).toHaveLength(1);
   await page.getByLabel('Your message').fill('Continue after restoring my environment.');
   view.environment = { state: 'destroyed', ready: false };
+  failPreparation = true;
   await page.getByRole('button', { name: 'Refresh progress' }).click();
-  await expect(page.getByText('The environment is unavailable.', { exact: false })).toBeVisible();
+  await expect(page.getByTestId('pbl-environment-setup')).toContainText('could not be prepared');
   const blocked = page.getByTestId('pbl-input-blocked');
-  await expect(blocked).toContainText('Restore it to send; your draft is kept.');
+  await expect(blocked).toContainText('retry above; your draft is kept.');
   await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeDisabled();
   const submitted = calls.filter((c) => c.type === 'chat').length;
   await page.getByLabel('Your message').press('Enter');
   expect(calls.filter((c) => c.type === 'chat')).toHaveLength(submitted);
-  failPreparation = true;
-  await blocked.getByRole('button', { name: 'Restore learning environment', exact: true }).click();
   await expect(
     page
       .getByRole('alert')
@@ -295,10 +310,10 @@ test('installed sample opens in the normal classroom and preserves progress afte
   await expect(page.getByLabel('Your message')).toHaveValue(
     'Continue after restoring my environment.',
   );
-  await expect(
-    blocked.getByRole('button', { name: 'Restore learning environment', exact: true }),
-  ).toBeEnabled();
-  await blocked.getByRole('button', { name: 'Restore learning environment', exact: true }).click();
+  const attempts = calls.filter((c) => c.type === 'prepare').length;
+  await page.getByRole('button', { name: 'Refresh progress' }).click();
+  expect(calls.filter((c) => c.type === 'prepare')).toHaveLength(attempts);
+  await page.getByRole('button', { name: 'Retry project setup', exact: true }).click();
   await expect(blocked).toHaveCount(0);
   await expect(page.getByLabel('Your message')).toHaveValue(
     'Continue after restoring my environment.',
@@ -523,6 +538,7 @@ test('installed sample opens in the normal classroom and preserves progress afte
   ).toBeVisible();
   await expect(page.getByRole('button', { name: /^Continue(?: to|$)/ })).toBeEnabled();
   view.state.status = 'completed';
+  view.environment = { state: 'destroyed', ready: false };
   view.stage = {
     kind: 'mentor_say',
     agent: 'mentor',
@@ -534,6 +550,8 @@ test('installed sample opens in the normal classroom and preserves progress afte
   view.actions = [];
   view.state.position.stageIndex = 6;
   await page.getByRole('button', { name: 'Refresh progress' }).click();
+  await expect(page.getByTestId('pbl-environment-setup')).toHaveCount(0);
+  expect(calls.filter((c) => c.type === 'prepare')).toHaveLength(attempts + 1);
   await page.getByRole('button', { name: 'Expand project workspace' }).click();
   await page.getByRole('button', { name: 'Learning report', exact: true }).click();
   const report = page.getByRole('region', { name: 'Learning report' });

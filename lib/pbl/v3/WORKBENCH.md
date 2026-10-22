@@ -24,6 +24,12 @@ keeps stale saves blocked. No commands, terminal input or permissions are replay
 Test and quiz actions appear in the current-task drawer above the conversation composer.
 Teaching and reflection show a non-expandable status strip.
 
+The hosted classroom prepares the installed project's environment automatically on
+entry, then opens its teaching step. The learner sees setup status and only needs a
+retry button if preparation fails. Existing ready workspaces are reused; completed
+projects can reopen their reports without starting a sandbox. Setup and recovery
+retain the existing durable allocation identity, project files and checkpoint rules.
+
 ## Controls and boundaries
 
 - Read and edit project text files. Create, rename/move and delete files only under
@@ -141,5 +147,5 @@ rejection before provider dispatch, with a bounded backoff. Lost acknowledgement
 permission failures are never replayed; Stop/environment replacement still fence input.
 Existing preview grants survive ordinary model activity at an otherwise permitted code
 stage; pending review, assessments, completion and Stop still revoke access. Background
-inspection never imports a half-restored workspace; explicit Prepare/Restore owns that
+inspection never imports a half-restored workspace; scoped entry setup or an explicit retry owns that
 write scope.

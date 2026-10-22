@@ -20,7 +20,9 @@ Use the application's existing configuration:
 - A configured shared sandbox provider and durable checkpoint storage.
 - Explicit single-user installation mode, or a host-verified user with `sandbox:use`.
 
-Open `/pbl-v3`, choose a Java or Python sample, then prepare its project environment.
+Open `/pbl-v3` and choose a Java or Python sample. Entering the project automatically
+prepares its hosted environment and opens the first teaching step. There is no
+learner setup click or deployment choice. Setup failure offers an explicit retry.
 The configured sandbox template must have Python 3. Follow the teaching sections,
 record a decision, review the plan and implementation, run and collect tests,
 complete the quiz, and reflect with the mentor. Use **Continue** to confirm stage
@@ -175,13 +177,16 @@ bundles currently retain the English fallback for these additions.
   feedback or changes the learning revision. Closed/hidden workspaces do not get
   an indefinite keepalive. Provider uncertainty leaves progress readable and does
   not authorize another allocation.
-- **Prepare project environment** reconciles an expired environment and restores
+- Entry setup automatically reconciles an unavailable environment and restores
   the latest checkpoint into a new allocation for the same study/workspace. Its
   allocation ID is durable before provisioning, so retries reuse it. Old role
   grants and pending evaluations cannot carry over to the replacement. Restored
   files are checked against plan content and code/test fingerprints; stale
   dependent evidence is cleared and the active milestone returns to the earliest
-  affected step. With no checkpoint, starter files are restored and the UI says so.
+  affected step. Setup runs once per observed environment on entry; failures require
+  **Retry project setup**, rather than an unbounded background retry. An already-ready
+  environment is reused. Completed projects do not prepare a sandbox merely to read
+  a report. With no checkpoint, starter files are restored and the UI says so.
   Work after the last successful checkpoint cannot be recovered.
 - Discussion at the decision stage is optional. Submitted decisions remain
   mandatory, and a running role still blocks progression.

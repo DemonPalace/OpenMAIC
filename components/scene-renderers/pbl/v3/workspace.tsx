@@ -163,6 +163,31 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
     },
     [view, updateView, refresh, t, setText],
   );
+  const [preparationFailed, setPreparationFailed] = useState(false);
+  const preparationAttempt = useRef('');
+  const prepare = useCallback(
+    async (repeat = false) => {
+      setPreparationFailed(false);
+      if (!(await command('prepare', {}, repeat))) setPreparationFailed(true);
+    },
+    [command],
+  );
+  useEffect(() => {
+    if (
+      !view ||
+      pending ||
+      view.busy ||
+      view.environment?.ready ||
+      view.state.status === 'completed'
+    )
+      return;
+    const key = `${view.id}:${view.environmentId ?? 'new'}`;
+    if (preparationAttempt.current === key) return;
+    // One automatic attempt per observed environment on entry. Failed/uncertain
+    // preparation needs an explicit retry; the server retains allocation identity.
+    preparationAttempt.current = key;
+    void prepare();
+  }, [view, pending, prepare]);
   // Polling observes execution; a separate, idempotent command commits the verdict.
   // Collect terminal test runs automatically, including after refresh. A failed
   // collection offers a manual retry instead of an unbounded request loop.
@@ -310,7 +335,7 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
           className="flex shrink-0 items-center gap-2 border-b bg-destructive/10 p-2 text-xs"
         >
           <p className="flex-1">{error}</p>
-          {retry.current && (
+          {retry.current && retry.current.type !== 'prepare' && (
             <button
               className={button}
               disabled={pending}
@@ -324,18 +349,27 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
       {!view && <p className="p-4">{t('pblV3.loading')}</p>}
       {view && (
         <>
-          {!view.environment?.ready && (
-            <div className="flex shrink-0 flex-wrap items-center gap-2 border-b bg-muted/30 px-3 py-2 text-xs">
+          {!view.environment?.ready && view.state.status !== 'completed' && (
+            <div
+              role="status"
+              data-testid="pbl-environment-setup"
+              className="flex shrink-0 flex-wrap items-center gap-2 border-b bg-muted/30 px-3 py-2 text-xs"
+            >
+              {!preparationFailed && (
+                <LoaderCircle size={14} className="animate-spin" aria-hidden="true" />
+              )}
               <p className="flex-1">
-                {t(view.environmentId ? 'pblV3.environmentUnavailable' : 'pblV3.environmentNotice')}
+                {t(preparationFailed ? 'pblV3.environmentUnavailable' : 'pblV3.environmentNotice')}
               </p>
-              <button
-                className={button}
-                disabled={pending || view.busy}
-                onClick={() => void command('prepare')}
-              >
-                {t('pblV3.prepare')}
-              </button>
+              {preparationFailed && (
+                <button
+                  className={button}
+                  disabled={pending || view.busy}
+                  onClick={() => void prepare(retry.current?.type === 'prepare')}
+                >
+                  {t('pblV3.prepare')}
+                </button>
+              )}
             </div>
           )}
           {view.recovery?.progressReset && (
@@ -603,15 +637,6 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
                         className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground"
                       >
                         <p className="min-w-0 flex-1">{t(`pblV3.inputBlocked.${blockedReason}`)}</p>
-                        {blockedReason === 'environment' && (
-                          <button
-                            type="button"
-                            className={button}
-                            onClick={() => void command('prepare')}
-                          >
-                            {t('pblV3.recoverEnvironment')}
-                          </button>
-                        )}
                         {blockedReason === 'opening' && (
                           <button
                             type="button"
