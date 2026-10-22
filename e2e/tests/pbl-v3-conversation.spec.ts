@@ -474,6 +474,22 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
   await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
   await expect(conversation.getByTestId('workbench-waiting-bar')).toHaveCount(0);
   await expect(conversation.getByText('Where does the value go?', { exact: true })).toBeVisible();
+  // Settled tools auto-fold independently of their card details. Reopen the
+  // group before addressing its inert descendants, as a learner would.
+  await expect(tools).toHaveAttribute('data-open', 'false');
+  const toolGroupToggle = tools.getByRole('button', {
+    name: '2 tool calls · Completed',
+    exact: true,
+  });
+  await toolGroupToggle.click();
+  await expect(tools).toHaveAttribute('data-open', 'true');
+  const firstToolToggle = tools.getByTestId('workbench-tool-card').first().getByRole('button');
+  await expect(firstToolToggle).toHaveAttribute('aria-expanded', 'true');
+  await expect(tools.locator('pre').first()).toContainText('src/main.py');
+  await firstToolToggle.press('Enter');
+  await expect(firstToolToggle).toHaveAttribute('aria-expanded', 'false');
+  await toolGroupToggle.click();
+  await expect(tools).toHaveAttribute('data-open', 'false');
   view.conversation![1]!.parts.push({
     kind: 'text',
     id: 'streaming',
@@ -511,7 +527,6 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
   await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
   await thinking.getByRole('button').click();
   await expect(thinking.getByRole('button')).toHaveAttribute('aria-expanded', 'false');
-  await tools.getByTestId('workbench-tool-card').first().getByRole('button').press('Enter');
 
   await expect(page.locator('.monaco-editor .view-lines')).toContainText('Greeting plan');
   await page.getByLabel('Your message', { exact: true }).fill('My draft answer');
