@@ -113,10 +113,23 @@ and recovery still come from the existing backend.
 `teaching-sections.ts` adapts the general OpenPBL pre-decision, PLAN and implementation
 review sections. Project names, language-specific assumptions and legacy tool calls
 are removed; project teaching materials still come from the installed catalog.
-Shared rules preserve one disclosed step per reply, direct help before further
+Shared rules preserve ordered section disclosure, direct help before further
 questioning, meaningful rather than keyword-based feedback, non-repetitive review,
-and fresh approval after a changed artifact. The existing guided-review receipts
-still enforce ordering, real new student messages and current artifact versions.
+and fresh approval after a changed artifact. The project welcome stays inside the first milestone's first step: greeting, project
+and milestone overview, a compact seven-step/Agent explanation, then a readiness
+question. Lesson resources are withheld until a real later reply indicates readiness;
+background questions keep the welcome pending. It never becomes a step zero, and
+existing started lessons do not replay the welcome when instructions change.
+
+Guided-review receipts keep ordered disclosure and current artifact versions. New
+questions require real later learner feedback, but an answer that already covers a
+subsequent section can be credited with `reuseFeedback`. The stored coverage points
+to an actual same-stage learner message and the validated artifact digest. It cannot
+bypass a new unanswered question, reuse another stage's reply, or approve changed
+files. Correct answers and explicit confident understanding are accepted without
+extra knowledge questions when no factual error or unresolved concern remains.
+Current-version plan/code approval is still needed; an already explicit approval
+need not be solicited twice.
 The role receives the current/next learning step and remaining section boundaries.
 Only a successful `complete_stage` receipt and valid stage evidence authorize
 Continue; an ordinary follow-up message does not revoke a completed review. File
@@ -262,7 +275,7 @@ Review feedback is bound to durable student messages after the pending question'
 turn in the same stage. The teaching role can assess multiple replies together and
 quote or summarize them in `studentFeedback`; literal substring matching is not an
 authorization check. The role still assesses whether the answer addresses the
-question, while the server enforces fresh replies, artifact versions and stage
+question, while the server enforces real feedback or validated prior coverage, artifact versions and stage
 boundaries. Retries and assistant messages do not create student feedback.
 
 The source set, stage locks, writer-idle checks and ordinary sandbox restrictions

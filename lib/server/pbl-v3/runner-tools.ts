@@ -74,7 +74,14 @@ export async function teachingRunnerConfig(input: {
     final: progression.at(-1)!,
     digest: digest(JSON.stringify([project.ref, bound.stage_key, progression, skill.content])),
   };
-  const review = new GuidedSkillReview(protocol, bound.guided ?? undefined);
+  const review = new GuidedSkillReview(
+    protocol,
+    bound.guided ?? undefined,
+    row.state.position.milestoneIndex === 0 &&
+      row.state.position.stageIndex === 0 &&
+      stage.kind === 'mentor_say' &&
+      stage.skill !== 'recap',
+  );
   const runId = `${bound.stage_key}:${latest?.seq ?? 0}`;
   review.beginRun(
     bound.stage_key,
@@ -360,28 +367,50 @@ export async function teachingRunnerConfig(input: {
     tools.push(
       tool(
         'read_next_skill',
-        'Read the current or next teaching section. Omit studentFeedback to reread; to advance, explain how the actual student responses answer the pending review. Quotes and summaries are allowed.',
-        Type.Object({ studentFeedback: Type.Optional(Type.String({ maxLength: 2000 })) }),
+        'Read the current or next teaching section. Omit studentFeedback to reread; to advance, explain how the actual student responses answer the pending review. Quotes and summaries are allowed. While welcome is pending, actual later readiness feedback starts A without advancing sections. Set reuseFeedback only when earlier verified learner replies already satisfy the current section; explain the coverage and do not ask again.',
+        Type.Object({
+          studentFeedback: Type.Optional(Type.String({ maxLength: 2000 })),
+          reuseFeedback: Type.Optional(Type.Boolean()),
+        }),
         async (current, p, _callId, signal) => {
           const reread = !!review.state.activeFile && !p.studentFeedback;
-          const next = reread
-            ? review.state.activeFile
-            : protocol.progression[
-                review.state.reviewedFiles.length + (review.state.activeFile ? 2 : 1)
-              ];
+          const startingTeaching =
+            review.state.welcome === 'pending' && !!review.state.activeFile && !!p.studentFeedback;
+          const next =
+            reread || startingTeaching
+              ? review.state.activeFile
+              : protocol.progression[
+                  review.state.reviewedFiles.length + (review.state.activeFile ? 2 : 1)
+                ];
           if (!next)
             throw sandboxConflict(
               'All sections are open; request final feedback and complete the review.',
             );
           // Opening/rereading trusted protocol content does not need a cloud
           // request. Only advancing past a delivered review validates files.
-          if (!reread)
+          if (startingTeaching)
+            review.startTeaching(p.studentFeedback, await fingerprint(current, signal));
+          else if (!reread)
             review.advance(
               next,
               p.studentFeedback,
               review.state.activeFile ? await fingerprint(current, signal) : digest('no-workspace'),
+              p.reuseFeedback,
             );
-          return { value: teachingSection({ skill, stage, milestone }, next) };
+          return {
+            value: teachingSection(
+              {
+                skill,
+                stage,
+                milestone,
+                definition: project.definition,
+                welcome: review.state.welcome,
+                welcomePresented:
+                  review.state.welcome === 'pending' ? !!review.state.pending : undefined,
+              },
+              next,
+            ),
+          };
         },
       ),
     );
@@ -411,13 +440,16 @@ export async function teachingRunnerConfig(input: {
     tools.push(
       tool(
         'complete_stage',
-        'Call only when teachingContext.activeSection equals finalSection and the learner has answered its recorded question. Otherwise use read_next_skill, deliver that section and request_skill_review first. Signal completion after the final student review. In studentFeedback, explain how the actual student responses answer the pending review; quotes and summaries are allowed. The server validates the current artifact. The final project recap finishes the project immediately; other stages wait for the student to click Continue.',
-        Type.Object({ studentFeedback: Type.String({ minLength: 1, maxLength: 2000 }) }),
+        'Call only when teachingContext.activeSection equals finalSection and the learner has answered its recorded question. Otherwise use read_next_skill, deliver that section and request_skill_review first. When goals and any required current-version approval are already satisfied by verified learner replies, use reuseFeedback rather than repeat a question. Signal completion after the final student review. In studentFeedback, explain how the actual student responses answer the pending review; quotes and summaries are allowed. The server validates the current artifact. The final project recap finishes the project immediately; other stages wait for the student to click Continue.',
+        Type.Object({
+          studentFeedback: Type.String({ minLength: 1, maxLength: 2000 }),
+          reuseFeedback: Type.Optional(Type.Boolean()),
+        }),
         async (current, p, _callId, signal) => {
           // Reject an out-of-order model action before any remote file access.
           review.assertCompletable();
           const hash = await fingerprint(current, signal);
-          review.assertComplete(p.studentFeedback, hash);
+          review.assertComplete(p.studentFeedback, hash, p.reuseFeedback);
           await assertBuilt(store, current, hash);
           let transition: EngineTransition = { state: current.state, events: [] };
           let evidence: Record<string, unknown> | undefined;
@@ -553,6 +585,8 @@ export async function teachingRunnerConfig(input: {
   const currentPromptInput = (): TeachingPromptInput => ({
     ...promptInput,
     completionRecorded,
+    welcome: review.state.welcome,
+    welcomePresented: review.state.welcome === 'pending' ? !!review.state.pending : undefined,
     activeSection: review.state.activeFile,
     reviewedSectionCount: review.state.reviewedFiles.length,
     pendingReview: review.state.pending
@@ -676,6 +710,6 @@ export function prepareTeachingContinuation(agent: Agent): boolean {
   if (!removed || !messages.length) return false;
   agent.state.messages = messages;
   agent.state.systemPrompt +=
-    '\nRuntime continuation: your preceding text reply ended without a committed teaching receipt. Complete the unfinished work for the SAME real learner input using the authoritative live state. If the reply answers the current question, open the next section with read_next_skill; deliver it and record its focused question using request_skill_review. If clarification is still needed, record that question instead. Only after the final section has a real new answer may complete_stage commit completion. Do not claim a Continue button exists before that succeeds. Never invent a student response or repeat already demonstrated reasoning as a new quiz.';
+    '\nRuntime continuation: your preceding text reply ended without a committed teaching receipt. Complete the unfinished work for the SAME real learner input using the authoritative live state. If the reply answers the current question, open the next section with read_next_skill; read it before speaking and check whether earlier verified same-version learner replies already cover its goal. Use reuseFeedback to continue covered sections without another question; otherwise record its necessary question using request_skill_review and wait. While welcome is pending, only a real readiness reply may start the A lesson. After the final goal and any required current-version approval are satisfied by actual learner feedback, complete_stage may commit completion. Do not claim a Continue button exists before that succeeds. Never invent a student response or repeat already demonstrated reasoning as a new quiz.';
   return true;
 }

@@ -11,7 +11,13 @@ import { projectArtifacts } from '@/lib/pbl/v3/domain/orchestration/artifacts';
 import { buildSystemPrompt } from '@/lib/pbl/v3/domain/orchestration/prompts';
 import { isFinalProjectRecap } from './stage-progress';
 import { stageStep } from '@/lib/pbl/v3/presentation';
-import { teachingRules, interactionRules, assessmentRules, decisionRules } from './skills';
+import {
+  teachingRules,
+  interactionRules,
+  assessmentRules,
+  decisionRules,
+  projectWelcomeRules,
+} from './skills';
 
 export interface TeachingSkill {
   content: Record<string, string>;
@@ -30,6 +36,8 @@ export interface TeachingPromptInput {
   planText?: string;
   activeSection?: string | null;
   completionRecorded?: boolean;
+  welcome?: 'pending' | 'ready';
+  welcomePresented?: boolean;
   milestoneIndex?: number;
   stageIndex?: number;
   automaticEntry?: boolean;
@@ -43,15 +51,36 @@ export interface TeachingPromptInput {
 
 /** The same course section representation is validated and returned by read_next_skill. */
 export function teachingSection(
-  { skill, stage, milestone }: Pick<TeachingPromptInput, 'skill' | 'stage' | 'milestone'>,
+  {
+    skill,
+    stage,
+    milestone,
+    definition,
+    welcome,
+    welcomePresented,
+  }: Pick<TeachingPromptInput, 'skill' | 'stage' | 'milestone'> &
+    Partial<Pick<TeachingPromptInput, 'definition' | 'welcome' | 'welcomePresented'>>,
   section: string,
 ) {
+  if (welcome === 'pending')
+    return {
+      section,
+      welcomePresented: welcomePresented ?? false,
+      instruction: projectWelcomeRules,
+      referenceMaterials: [],
+      project: { title: definition?.title, overview: definition?.intro.say },
+      milestone: { title: milestone.title, goal: milestone.goal ?? milestone.title },
+      steps: milestone.stages.map(stageStep),
+      delivery:
+        'Welcome only. Record the readiness question, then wait; read_next_skill with actual later readiness feedback starts teaching in this same section.',
+    };
   return {
     section,
     instruction: skill.content[section],
+    ...(section === skill.progression[1] ? { teaching: milestone.teaching } : {}),
     referenceMaterials: skill.documents,
     delivery:
-      'After delivering this section, put its single open question in request_skill_review. The tool displays the question and records the wait for a real learner reply. Do not end with only a question in ordinary text: that does not create a review receipt. Do not proceed to another section in this turn.',
+      'Platform pacing policy takes precedence over any course instruction to repeat a covered question. Check earlier learner replies before asking. If this section is already satisfied by verified same-version feedback, use reuseFeedback with a concrete explanation to continue without another question. Otherwise record one necessary question with request_skill_review and wait for a real reply. Explicit confident understanding is sufficient absent unresolved errors; never invent learner feedback.',
     goal: milestone.goal ?? milestone.title,
     stage: stage.kind === 'mentor_say' ? stage.say : stage.kind === 'produce' ? stage.writes : '',
   };
@@ -69,6 +98,8 @@ function buildTeachingPrompt({
   planText,
   activeSection = null,
   completionRecorded = false,
+  welcome,
+  welcomePresented,
   milestoneIndex = definition.milestones.findIndex((item) => item.id === milestone.id),
   stageIndex = milestone.stages.indexOf(stage),
   automaticEntry = false,
@@ -99,9 +130,9 @@ function buildTeachingPrompt({
     buildSystemPrompt({
       role: role,
       seed: {
-        referenceMaterials: skill.documents,
+        referenceMaterials: welcome === 'pending' ? [] : skill.documents,
         ...(!guided && packaged ? { teachingInstructions: skill.content } : {}),
-        ...seed,
+        ...(welcome === 'pending' ? {} : seed),
         projectContext: { title: definition.title, language: definition.language },
         stageEntry: {
           automatic: automaticEntry,
@@ -128,9 +159,13 @@ function buildTeachingPrompt({
               teachingContext: {
                 stageKey: stageKey,
                 completionRecorded,
+                welcome,
+                welcomePresented,
                 activeSection: activeSection || null,
                 nextSection:
-                  skill.progression[reviewedSectionCount + (activeSection ? 2 : 1)] ?? null,
+                  welcome === 'pending' && activeSection
+                    ? activeSection
+                    : (skill.progression[reviewedSectionCount + (activeSection ? 2 : 1)] ?? null),
                 finalSection: skill.progression.at(-1)!,
               },
             }
@@ -184,7 +219,7 @@ function buildTeachingPrompt({
         ...(repairing
           ? { testFeedback: collected.tests?.publicFeedback, remediation: collected.remediation }
           : {}),
-        ...(stage.kind === 'mentor_say'
+        ...(stage.kind === 'mentor_say' && welcome !== 'pending'
           ? { instruction: stage.say, teaching: milestone.teaching }
           : {}),
         ...(stage.kind === 'produce'
@@ -203,6 +238,7 @@ function buildTeachingPrompt({
     '\n' +
     teachingRules +
     (stage.kind === 'check' ? assessmentRules : interactionRules) +
+    (welcome === 'pending' ? '\n' + projectWelcomeRules : '') +
     (stage.kind === 'dialogue' ? '\n' + decisionRules : '') +
     (completionRecorded
       ? '\nThe current stage is ALREADY complete for the recorded evidence. Answer any follow-up directly. Do not restart teaching, invent a new required question, or require complete_stage again just because the learner sent another message. Actual artifact changes invalidate the affected review and require reviewing that new version before completion.'
@@ -213,7 +249,7 @@ function buildTeachingPrompt({
         ? '\nPlanning permits changes to PLAN.md only. Source editing, commands and terminals are unavailable. Review the plan and the learner’s reasoning; do not require code implementation or execution for plan approval.'
         : '') +
     (guided
-      ? '\nThe current teachingContext is authoritative. Earlier stages do not complete this stage. If completionRecorded is true, answer follow-ups without reopening completed sections and follow learningRoadmap.confirmation. Otherwise, when activeSection is null, begin with read_next_skill. Never tell the learner to Continue before complete_stage succeeds for the current stage and evidence. Use read_next_skill to open one section at a time. After delivering a section use request_skill_review and wait for a NEW student reply. currentReview records the question and count of eligible replies; their full text remains in the current-stage learner messages. Assess those actual replies, combining them when needed. Supply studentFeedback as an explanation of how those replies answer the question; quoting or summarizing is allowed, but never invent a reply. If understanding is missing, clarify rather than advance. A short confirmation is sufficient only when the question asks for confirmation. Once final feedback is sufficient, use complete_stage as the last action instead of adding more questions. ' +
+      ? '\nThe current teachingContext is authoritative. Earlier stages do not complete this stage. If completionRecorded is true, answer follow-ups without reopening the review. When activeSection is null, read_next_skill first. While welcome is pending, deliver only the welcome and readiness discussion; a later explicit readiness reply opens A via read_next_skill with studentFeedback, without changing the step. Otherwise read sections in order. New unanswered goals require one request_skill_review and real new feedback; already satisfied goals may reuse verified same-version learner feedback using reuseFeedback, including answers that anticipated the next section. State exactly what prior reply covers the goal; never reuse assistant reasoning as learner evidence. A correct answer or clear confident understanding suffices when no error or question remains. Do not add another example or boundary question merely to prolong review. Actual current-version plan/code approval is still required, but an already explicit same-version approval need not be repeated. Only complete_stage records completion; then follow learningRoadmap.confirmation. ' +
         confirmation
       : exploring
         ? '\nThis is optional, ongoing exploration. Discuss the learner’s goal, inspect current files, make focused changes and explain how to verify them. There is no fixed review sequence or completion signal. Preserve existing work; viewing the report never ends exploration.'
@@ -241,10 +277,15 @@ export function teachingLiveContext(input: TeachingPromptInput): string {
   return JSON.stringify({
     stageKey: input.stageKey,
     completionRecorded: input.completionRecorded ?? false,
+    welcome: input.welcome,
+    welcomePresented: input.welcomePresented,
     activeSection: input.activeSection || null,
     nextSection:
-      input.skill.progression[(input.reviewedSectionCount ?? 0) + (input.activeSection ? 2 : 1)] ??
-      null,
+      (input.welcome === 'pending' && input.activeSection
+        ? input.activeSection
+        : input.skill.progression[
+            (input.reviewedSectionCount ?? 0) + (input.activeSection ? 2 : 1)
+          ]) ?? null,
     finalSection: input.skill.progression.at(-1)!,
     currentReview: teachingReview(input.pendingReview),
   });
@@ -262,7 +303,9 @@ export function renderTeachingPrompt(input: TeachingPromptInput) {
   const sections =
     (input.stage.kind === 'produce' && !isExplorationStage(input.stage)) ||
     input.stage.kind === 'mentor_say'
-      ? input.skill.progression.slice(1).map((section) => teachingSection(input, section))
+      ? input.skill.progression
+          .slice(1)
+          .map((section) => teachingSection({ ...input, welcome: undefined }, section))
       : [];
   const sectionBytes = sections.length ? Buffer.byteLength(JSON.stringify(sections)) : 0;
   return {

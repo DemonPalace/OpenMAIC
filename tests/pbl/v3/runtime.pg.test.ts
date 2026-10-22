@@ -440,13 +440,34 @@ async function invoke(
   return tool.execute(randomUUID(), args);
 }
 async function guided(role: 'teaching' | 'plan' | 'code') {
+  const current = await store.get(studyId, principal.ownerId);
+  const welcome =
+    role === 'teaching' &&
+    current.state.position.milestoneIndex === 0 &&
+    current.state.position.stageIndex === 0;
+  if (welcome)
+    await runTools('Please introduce this project.', async (config) => {
+      const opening = await invoke(config, 'read_next_skill');
+      expect(JSON.stringify(opening)).toContain('Welcome only');
+      await invoke(config, 'request_skill_review', {
+        question: 'Any process questions? Ready to begin?',
+      });
+    });
   const parts = role === 'teaching' ? 3 : 4;
   for (let index = 0; index < parts; index++)
     await runTools(
-      index === 0 ? 'Please start.' : 'I checked the current part and understand it.',
+      index === 0
+        ? welcome
+          ? 'Ready, please begin teaching.'
+          : 'Please start.'
+        : 'I checked the current part and understand it.',
       async (config) => {
         await invoke(config, 'read_next_skill', {
-          ...(index ? { studentFeedback: 'I checked the current part' } : {}),
+          ...(index
+            ? { studentFeedback: 'I checked the current part' }
+            : welcome
+              ? { studentFeedback: 'The learner explicitly asks to begin teaching.' }
+              : {}),
         });
         if (index === 0 && role !== 'teaching') {
           const path = role === 'plan' ? 'PLAN.md' : 'greeting.py';
@@ -687,15 +708,32 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
         repairEmptyPlan = false,
       ) => {
         const stage = (await learningView(principal, id)).stage;
+        const position = (await learningView(principal, id)).state.position;
+        const welcome = position.milestoneIndex === 0 && position.stageIndex === 0;
+        if (welcome)
+          await roleTurn('Introduce the project.', async (config) => {
+            expect(JSON.stringify(await invoke(config, 'read_next_skill'))).toContain(
+              'Welcome only',
+            );
+            await invoke(config, 'request_skill_review', { question: 'Ready to begin?' });
+          });
         const parts = stage.kind === 'produce' ? 4 : 3;
         for (let part = 0; part < parts; part++)
           await roleTurn(
-            part ? 'I checked this part and understand it.' : 'Please begin.',
+            part
+              ? 'I checked this part and understand it.'
+              : welcome
+                ? 'Ready, please begin teaching.'
+                : 'Please begin.',
             async (config) => {
               const section = await invoke(
                 config,
                 'read_next_skill',
-                part ? { studentFeedback: 'I checked this part' } : {},
+                part
+                  ? { studentFeedback: 'I checked this part' }
+                  : welcome
+                    ? { studentFeedback: 'The learner is ready to begin teaching.' }
+                    : {},
               );
               expect(JSON.stringify(section)).not.toContain('PBL_RESULT');
               if (part === 0 && write && !repairEmptyPlan) {
@@ -939,6 +977,95 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
       ).rejects.toThrow();
     });
   });
+  it('persists a welcome inside the first step, waits through process questions, then credits anticipated understanding', async () => {
+    const original = studyId;
+    const study = await freshStudy();
+    studyId = study.id;
+    try {
+      const opening = (await study.send('begin')) as { sessionId: string };
+      const claimed = await agents.claimNextSession('welcome-worker', process.pid, {
+        sessionId: opening.sessionId,
+        leaseTtlMs: 10000,
+        maxAttempts: 5,
+      });
+      const config = await teachingRunnerConfig({
+        sessionId: opening.sessionId,
+        ownerId: principal.ownerId,
+        workerId: 'welcome-worker',
+        attempt: claimed!.attempt,
+        signal: new AbortController().signal,
+      });
+      const result = await invoke(config, 'read_next_skill');
+      const welcome = JSON.stringify(result);
+      expect(welcome).toContain('Welcome only');
+      expect(welcome).toContain('how learning works');
+      expect(config.systemPrompt).not.toContain('"teaching":{');
+      await expect(
+        invoke(config, 'read_next_skill', {
+          studentFeedback: 'An automatic entry is not readiness.',
+        }),
+      ).rejects.toThrow();
+      await invoke(config, 'request_skill_review', {
+        question: 'Any process questions? Ready to begin?',
+      });
+      await agents.finishSession(opening.sessionId, 'welcome-worker', {
+        status: 'succeeded',
+        expectedAttempt: claimed!.attempt,
+      });
+      expect((await store.binding(opening.sessionId))?.guided?.welcome).toBe('pending');
+      await runTools('Will an Agent help with the implementation?', async (next) => {
+        expect(next.liveContext()).toContain('"welcomePresented":true');
+        expect(JSON.stringify(await invoke(next, 'read_next_skill'))).toContain('Welcome only');
+        await invoke(next, 'request_skill_review', {
+          question: 'Yes, you work together and review it. Ready to start?',
+        });
+      });
+      const before = await learningView(principal, study.id);
+      expect(before.state.position.stageIndex).toBe(0);
+      expect(before.actions).not.toContain('next');
+      expect((await store.binding(opening.sessionId))?.guided?.welcome).toBe('pending');
+      await runTools('Ready, please begin the lesson.', async (next) => {
+        const lesson = JSON.stringify(
+          await invoke(next, 'read_next_skill', {
+            studentFeedback: 'The learner explicitly asks to begin.',
+          }),
+        );
+        expect(lesson).not.toContain('Welcome only');
+        expect(next.liveContext()).toContain('"welcome":"ready"');
+        expect(next.liveContext()).toContain('"activeSection":"A-teach.md"');
+        await expect(
+          invoke(next, 'read_next_skill', {
+            studentFeedback: 'Readiness is not understanding.',
+            reuseFeedback: true,
+          }),
+        ).rejects.toThrow();
+        await invoke(next, 'request_skill_review', { question: 'Explain returning a value.' });
+      });
+      await runTools(
+        'Return sends the value to the caller; printing does not. I also understand the consequences and am ready to continue.',
+        async (next) => {
+          await invoke(next, 'read_next_skill', {
+            studentFeedback: 'The reply explains the concept and its consequences.',
+          });
+          await invoke(next, 'read_next_skill', {
+            studentFeedback: 'The same correct answer already covers the reflection goal.',
+            reuseFeedback: true,
+          });
+          await invoke(next, 'complete_stage', {
+            studentFeedback:
+              'The learner already explained the goal and confirms understanding without unresolved errors.',
+            reuseFeedback: true,
+          });
+        },
+      );
+      const finished = await learningView(principal, study.id);
+      expect(finished.state.position.stageIndex).toBe(0);
+      expect(finished.actions).toContain('next');
+    } finally {
+      studyId = original;
+    }
+  });
+
   it('accepts wrapped and multi-message review feedback from durable student turns', async () => {
     const original = studyId;
     studyId = (await freshStudy()).id;
@@ -946,6 +1073,16 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
     const first = 'The caller receives the return value.';
     const second = 'Printing only displays the value.';
     try {
+      await runTools('Introduce the project.', async (config) => {
+        await invoke(config, 'read_next_skill');
+        await invoke(config, 'request_skill_review', { question: 'Ready to begin teaching?' });
+      });
+      await runTools('Ready to begin.', async (config) => {
+        await invoke(config, 'read_next_skill', { studentFeedback: 'The learner is ready.' });
+        await invoke(config, 'request_skill_review', {
+          question: 'Any question about the concept?',
+        });
+      });
       await runTools('Please start.', async (config) => {
         await invoke(config, 'read_next_skill');
         await invoke(config, 'request_skill_review', { question: 'Compare return and print.' });
@@ -1220,7 +1357,7 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
   });
   it('prepares once and runs the complete learning flow with actual Python tests', async () => {
     await command('prepare');
-    await guided('teaching'); // project opening and concepts share the first step
+    await guided('teaching'); // project welcome waits for readiness inside the first step
     await expect(command('next')).rejects.toThrow('not available');
     await command('decide', { decisionId: 'format', chosen: 'format' });
     await command('next');
@@ -1512,13 +1649,13 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
     await runSession({ running: new Map(), shuttingDown: false }, retried!);
     const settled = await agents.getSession(queued.sessionId);
     expect(settled?.status, settled?.error).toBe('succeeded');
-    expect((await store.binding(queued.sessionId))?.guided?.activeFile).toBe('B-dialogue.md');
+    expect((await store.binding(queued.sessionId))?.guided?.activeFile).toBe('A-teach.md');
     expect(await agents.listUserMessages(queued.sessionId)).toEqual(inputs);
     expect(mocked.modelRequests[retryRequestIndex]?.at(-1)).toMatchObject({
       role: 'user',
       content: reply,
     });
-    expect(mocked.modelSystems.at(-1)).toContain('\"activeSection\":\"B-dialogue.md\"');
+    expect(mocked.modelSystems.at(-1)).toContain('\"activeSection\":\"A-teach.md\"');
     expect(mocked.modelSystems.at(-1)).toContain('Authoritative live teaching state');
     expect((await learningView(principal, study.id)).actions).not.toContain('next');
     studyId = original;
@@ -1650,7 +1787,7 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
       await runSession({ running: new Map(), shuttingDown: false }, next!);
       expect(mocked.modelCalls - nextCalls).toBe(1);
       expect((await agents.getSession(queued.sessionId))?.status).toBe('succeeded');
-      expect((await store.binding(queued.sessionId))?.guided?.activeFile).toBe('B-dialogue.md');
+      expect((await store.binding(queued.sessionId))?.guided?.activeFile).toBe('A-teach.md');
       const replayed = await learningView(principal, studyId);
       expect(
         replayed.conversation?.filter((entry) => !entry.boundary && entry.speaker !== 'user'),
@@ -1770,7 +1907,7 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
       });
       expect(resumed.isTurnComplete()).toBe(false);
       await invoke(resumed, 'read_next_skill', { studentFeedback: 'Please start.' });
-      expect((await store.binding(queued.sessionId))?.guided?.activeFile).toBe('B-dialogue.md');
+      expect((await store.binding(queued.sessionId))?.guided?.activeFile).toBe('A-teach.md');
       await agents.finishSession(queued.sessionId, handle.workerId, {
         status: 'succeeded',
         expectedAttempt: next!.attempt,
@@ -2775,6 +2912,15 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
             oversizedPlanSaveChecked = true;
           }
           const teaching = descriptor.teaching.find((binding) => binding.stage === key)!;
+          const welcome =
+            row.state.position.milestoneIndex === 0 && row.state.position.stageIndex === 0;
+          if (welcome)
+            await turn('Introduce the project.', async (config) => {
+              const opening = JSON.stringify(await invoke(config, 'read_next_skill'));
+              expect(opening).not.toContain(`PACKAGED SKILL ${key}`);
+              expect(config.systemPrompt).not.toContain(`PACKAGED REFERENCE ${key}`);
+              await invoke(config, 'request_skill_review', { question: 'Ready to begin?' });
+            });
           for (let part = 0; part < teaching.sections.length; part++) {
             if (part === 1 && !longReplyChecked) {
               const longReply = 'My explanation of this course section. '.repeat(1500);
@@ -2784,57 +2930,70 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
               });
               longReplyChecked = true;
             }
-            await turn(part ? 'I reviewed this section.' : 'Please start.', async (config) => {
-              const section = await invoke(config, 'read_next_skill', {
-                ...(part ? { studentFeedback: 'I reviewed this section.' } : {}),
-              });
-              expect(JSON.stringify(section)).toContain(`PACKAGED SKILL ${key}`);
-              expect(config.systemPrompt).toContain(`PACKAGED REFERENCE ${key}`);
-              if (part === 0 && stage.kind === 'produce') {
-                const path =
-                  stage.writes === 'plan'
-                    ? 'PLAN.md'
-                    : java
-                      ? 'src/Greeting.java'
-                      : 'src/greeting.py';
-                const original = await service.readText(environmentId, path);
-                if (stage.writes === 'plan' && !oversizedPlanWriteChecked) {
-                  const oversized = original + '\n' + 'Learner plan '.repeat(4000);
-                  await expect(
-                    invoke(config, 'write_file', {
-                      path,
-                      text: oversized,
-                      expectedHash: digest(original),
-                    }),
-                  ).rejects.toMatchObject({ code: 'PBL_PROMPT_SIZE' });
-                  expect(await service.readText(environmentId, path)).toBe(original);
-                  oversizedPlanWriteChecked = true;
-                }
-                await invoke(config, 'write_file', {
-                  path,
-                  text:
-                    stage.writes === 'plan'
-                      ? original +
-                        `\n## ${milestone.title}\nImplement and review the current task.\n`
-                      : java
-                        ? 'public class Greeting { public static String greet(String name) { return "Hello, " + name.trim() + "!"; } public static void main(String[] args) { System.out.println(greet(args[0])); } }'
-                        : 'def greet(name):\n    return f"Hello, {name.strip()}!"\n',
-                  expectedHash: digest(original),
+            await turn(
+              part
+                ? 'I reviewed this section.'
+                : welcome
+                  ? 'Ready, begin teaching.'
+                  : 'Please start.',
+              async (config) => {
+                const section = await invoke(config, 'read_next_skill', {
+                  ...(part
+                    ? { studentFeedback: 'I reviewed this section.' }
+                    : welcome
+                      ? { studentFeedback: 'The learner is ready to begin.' }
+                      : {}),
                 });
-                if (stage.compileBeforeReview) {
-                  await invoke(config, 'run_build');
-                  await invoke(config, 'collect_build');
+                expect(JSON.stringify(section)).toContain(`PACKAGED SKILL ${key}`);
+                if (welcome && part === 0)
+                  expect(JSON.stringify(section)).toContain(`PACKAGED REFERENCE ${key}`);
+                else expect(config.systemPrompt).toContain(`PACKAGED REFERENCE ${key}`);
+                if (part === 0 && stage.kind === 'produce') {
+                  const path =
+                    stage.writes === 'plan'
+                      ? 'PLAN.md'
+                      : java
+                        ? 'src/Greeting.java'
+                        : 'src/greeting.py';
+                  const original = await service.readText(environmentId, path);
+                  if (stage.writes === 'plan' && !oversizedPlanWriteChecked) {
+                    const oversized = original + '\n' + 'Learner plan '.repeat(4000);
+                    await expect(
+                      invoke(config, 'write_file', {
+                        path,
+                        text: oversized,
+                        expectedHash: digest(original),
+                      }),
+                    ).rejects.toMatchObject({ code: 'PBL_PROMPT_SIZE' });
+                    expect(await service.readText(environmentId, path)).toBe(original);
+                    oversizedPlanWriteChecked = true;
+                  }
+                  await invoke(config, 'write_file', {
+                    path,
+                    text:
+                      stage.writes === 'plan'
+                        ? original +
+                          `\n## ${milestone.title}\nImplement and review the current task.\n`
+                        : java
+                          ? 'public class Greeting { public static String greet(String name) { return "Hello, " + name.trim() + "!"; } public static void main(String[] args) { System.out.println(greet(args[0])); } }'
+                          : 'def greet(name):\n    return f"Hello, {name.strip()}!"\n',
+                    expectedHash: digest(original),
+                  });
+                  if (stage.compileBeforeReview) {
+                    await invoke(config, 'run_build');
+                    await invoke(config, 'collect_build');
+                  }
                 }
-              }
-              if (!oversizedQuestionChecked) {
-                await expect(
-                  invoke(config, 'request_skill_review', { question: '请'.repeat(2000) }),
-                ).rejects.toMatchObject({ code: 'PBL_PROMPT_SIZE' });
-                expect(config.isTurnComplete()).toBe(false);
-                oversizedQuestionChecked = true;
-              }
-              await invoke(config, 'request_skill_review', { question: 'Explain this section.' });
-            });
+                if (!oversizedQuestionChecked) {
+                  await expect(
+                    invoke(config, 'request_skill_review', { question: '请'.repeat(2000) }),
+                  ).rejects.toMatchObject({ code: 'PBL_PROMPT_SIZE' });
+                  expect(config.isTurnComplete()).toBe(false);
+                  oversizedQuestionChecked = true;
+                }
+                await invoke(config, 'request_skill_review', { question: 'Explain this section.' });
+              },
+            );
           }
           await turn('I reviewed this section.', async (config) => {
             await invoke(config, 'complete_stage', { studentFeedback: 'I reviewed this section.' });

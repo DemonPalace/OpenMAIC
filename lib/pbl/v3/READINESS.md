@@ -15,7 +15,7 @@ release operations are not copied.
 
 | Step | Preserved behavior and host adaptation | Work in this PR / audit result |
 | --- | --- | --- |
-| Teaching | Discussion A/B/C starts proactively, introduces the current milestone, discloses one section at a time and withholds formal decision answers. | Keep the baseline opening and fresh-response gates. Help-first rules also apply to a bare “I don't know”; a conflicting instruction in section B is removed. |
+| Teaching | Discussion A/B/C starts proactively, introduces the current milestone, discloses one section at a time and withholds formal decision answers. | Begin the project with a compact welcome inside the first step, withholding lesson materials until actual readiness; background questions do not start teaching. Keep fresh-response gates for genuinely new questions. Help-first rules also apply to a bare “I don't know”; a conflicting instruction in section B is removed. |
 | Decisions | Explain offered options and consequences; only the learner's explicit control submission records a choice. | Add explicit neutral-option rules, including no recommended/correct answer hints. A milestone with no decisions remains a normal, immediately continuable decision step. |
 | Plan | Planner A/B/C/D writes and reviews the actual PLAN, retains earlier approved content in incremental mode and binds approval to the current artifact. | A specific requested edit by the Planner counts as participation. Help comes before another question. Final approval summarizes established reasons and asks for a brief fresh confirmation, without repeating the entire review. Changed plans require new review. |
 | Code | Coder A/B/C/D implements the approved plan, reads real files, checks one key path and a consequential risk, and makes necessary repairs. Configured compile gates remain separate from tests. | Preserve the baseline non-repetitive review, read/hash/write tools and current-version final confirmation. Shared help-first and completed-follow-up rules also apply here. |
@@ -24,7 +24,10 @@ release operations are not copied.
 | Recap | Mentor reflection uses actual decisions, artifacts and observed assessments, and accepts a substantive reflection without repeating completed topics. | Final milestone's final recap completes the project through `complete_stage`; only then is the report button available. Prompt handoff and the tool use the same boundary check. |
 
 Across all guided steps, meaningful participation is not a keyword test or fixed
-number of questions. New section questions still require real new learner replies;
+number of questions. New questions still require real new learner replies; sections already covered by
+correct same-stage, same-version answers may reuse that verified feedback without
+repeating the question. Explicit confident understanding is sufficient absent
+unresolved errors, and an existing current-version approval is not requested twice;
 automatic openings, retries and assistant text do not supply them. Follow-up chat
 does not reopen completed teaching, while changed evidence invalidates affected
 approvals. Roles know the next step without performing another role's work or

@@ -94,6 +94,92 @@ describe('guided review boundaries', () => {
     expect(() => review.advance('B-review.md', 'The learner answered.', artifact)).toThrow();
   });
 
+  it('keeps welcome inside A, answers background questions, and requires later real readiness before teaching', () => {
+    const review = new GuidedSkillReview(protocol, undefined, true);
+    review.beginRun('first:0', [], false, 1);
+    review.advance('A-teach.md', undefined, artifact);
+    review.checkpoint('Any process questions? Ready to continue?', artifact);
+    expect(() => review.startTeaching('Ready', artifact)).toThrow();
+    const resumed = new GuidedSkillReview(protocol, review.state, true);
+    resumed.beginRun('first:0', [{ seq: 3, text: 'Will the Agent write code with me?' }], true);
+    resumed.checkpoint('Yes, you review it together. Ready to begin?', artifact);
+    resumed.beginRun('first:0', [{ seq: 3, text: 'Will the Agent write code with me?' }], true);
+    expect(() => resumed.startTeaching('Ready', artifact)).toThrow();
+    resumed.beginRun(
+      'first:0',
+      [
+        { seq: 3, text: 'Will the Agent write code with me?' },
+        { seq: 5, text: 'Ready, please begin.' },
+      ],
+      true,
+    );
+    resumed.startTeaching('The learner explicitly asks to begin.', artifact);
+    expect(resumed.state.activeFile).toBe('A-teach.md');
+    expect(resumed.state.reviewedFiles).toEqual([]);
+    expect(resumed.state.welcome).toBe('ready');
+    expect(() =>
+      resumed.advance('B-review.md', 'Readiness means understanding.', artifact, true),
+    ).toThrow();
+    resumed.checkpoint('Explain the new concept.', artifact);
+  });
+
+  it('does not replay the project welcome for legacy teaching or after a protocol update', () => {
+    const legacy = new GuidedSkillReview(protocol);
+    legacy.beginRun('first:0', [], false, 1);
+    legacy.advance('A-teach.md', undefined, artifact);
+    const restored = new GuidedSkillReview({ ...protocol, digest: 'updated' }, legacy.state, true);
+    expect(restored.state.welcome).toBe('ready');
+    expect(restored.state.activeFile).toBe('');
+    expect(new GuidedSkillReview(protocol).state.welcome).toBeUndefined();
+  });
+
+  it('credits an answer that anticipated later sections without another question or learner turn', () => {
+    const larger = { ...protocol, progression: ['SKILL.md', 'A', 'B', 'C', 'D'], final: 'D' };
+    const review = new GuidedSkillReview(larger);
+    review.beginRun('code:3', [], false, 1);
+    review.advance('A', undefined, artifact);
+    review.checkpoint('Explain the path.', artifact);
+    const answer = {
+      seq: 3,
+      text: 'The input reaches the output; I checked empty input and approve this exact version for testing.',
+    };
+    review.beginRun('code:3', [answer], true);
+    review.advance(
+      'B',
+      'The learner explains the path and already covers the risk and approval.',
+      artifact,
+    );
+    review.advance('C', 'The same actual reply covers the empty-input risk.', artifact, true);
+    review.advance('D', 'The learner has approved this unchanged version.', artifact, true);
+    const resumed = new GuidedSkillReview(larger, review.state);
+    resumed.beginRun('code:3', [answer], true);
+    expect(() =>
+      resumed.complete('The same real approval survives reload.', artifact, true),
+    ).not.toThrow();
+    expect(() =>
+      review.complete('Reuse that explicit current-version approval.', artifact, true),
+    ).not.toThrow();
+  });
+
+  it('rejects reused feedback from an opening, another stage, changed artifact or an unanswered new question', () => {
+    const review = new GuidedSkillReview(protocol);
+    review.beginRun('code:3', [], false, 1);
+    review.advance('A-teach.md', undefined, artifact);
+    expect(() =>
+      review.advance('B-review.md', 'Fabricated understanding.', artifact, true),
+    ).toThrow();
+    review.checkpoint('Explain.', artifact);
+    review.beginRun('code:3', [{ seq: 3, text: 'I understand and approve.' }], true);
+    review.advance('B-review.md', 'The learner confirms understanding.', artifact);
+    expect(() => review.complete('Old version.', 'b'.repeat(64), true)).toThrow();
+    review.beginRun('code:4', [{ seq: 3, text: 'An answer in another stage.' }], true);
+    expect(() => review.complete('Other stage.', artifact, true)).toThrow();
+    review.beginRun('code:3', [{ seq: 3, text: 'I understand and approve.' }], true);
+    review.checkpoint('A newly discovered real issue needs an answer.', artifact);
+    review.beginRun('code:3', [{ seq: 3, text: 'I understand and approve.' }], true);
+    expect(() => review.complete('Ignore the new issue.', artifact, true)).toThrow();
+  });
+
   it('accepts only bounded installed-project references', () => {
     expect(isPBLV3Reference({ id: 'greeting-python', version: '1.0.0' })).toBe(true);
     for (const value of [

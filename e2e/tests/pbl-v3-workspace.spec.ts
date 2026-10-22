@@ -219,7 +219,10 @@ test('installed sample opens in the normal classroom and preserves progress afte
       }
       if (command.type === 'begin') {
         view.needsOpening = false;
-        view.messages.push({ role: 'assistant', text: 'Welcome to your greeting project.' });
+        view.messages.push({
+          role: 'assistant',
+          text: 'Welcome to your greeting project.\n\n### The project\nBuild a small greeting application.\n\n### This milestone\nMake the greeting return a value.\n\n### How learning works\n- **Seven steps:** Teaching, decisions, planning, coding, tests, quiz and reflection.\n- **Agents guide you:** Discuss, ask questions, and review the plan and code together.\n\nAny questions about the project or process? If not, are you ready to begin?',
+        });
       }
       if (command.type === 'chat') {
         view.messages.push(
@@ -260,6 +263,14 @@ test('installed sample opens in the normal classroom and preserves progress afte
   await expect(page.getByRole('button', { name: 'Learning report', exact: true })).toHaveCount(0);
   await expect(page.getByText('1/7', { exact: true }).first()).toBeVisible();
   await expect(page.getByText('Welcome to your greeting project.', { exact: true })).toBeVisible();
+  for (const name of ['The project', 'This milestone', 'How learning works'])
+    await expect(page.getByRole('heading', { name, exact: true })).toBeVisible();
+  await expect(page.getByText('Seven steps:', { exact: true })).toBeVisible();
+  await expect(
+    page.getByText('Any questions about the project or process? If not, are you ready to begin?', {
+      exact: true,
+    }),
+  ).toBeVisible();
   expect(calls.filter((c) => c.type === 'prepare')).toHaveLength(1);
   expect(calls.filter((c) => c.type === 'begin')).toHaveLength(1);
   expect(calls.filter((c) => c.type === 'chat' || c.type === 'next')).toHaveLength(0);

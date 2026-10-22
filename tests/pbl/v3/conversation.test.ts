@@ -3,7 +3,7 @@ vi.mock('server-only', () => ({}));
 import { projectConversation, learningRunFailure } from '@/lib/server/pbl-v3/conversation';
 import { stageSkill, interactionRules } from '@/lib/server/pbl-v3/skills';
 import { installedProject } from '@/lib/server/pbl-v3/catalog';
-import { renderTeachingPrompt } from '@/lib/server/pbl-v3/teaching-prompt';
+import { renderTeachingPrompt, teachingSection } from '@/lib/server/pbl-v3/teaching-prompt';
 import { isFinalProjectRecap } from '@/lib/server/pbl-v3/stage-progress';
 import {
   startOrchestration,
@@ -365,6 +365,36 @@ describe('general teaching protocols', () => {
       collected: startOrchestration(definition).state.collected[milestone.id]!,
     }).systemPrompt;
   }
+  it('withholds lesson material until first-project readiness and gives a concise formatted welcome contract', () => {
+    const milestone = structuredClone(definition.milestones[0]!);
+    const stage = milestone.stages[0]!;
+    const skill = {
+      ...stageSkill(stage),
+      documents: [{ path: 'lesson', text: 'LESSON_RESOURCE_SENTINEL' }],
+    };
+    const input = {
+      definition,
+      milestone,
+      stage,
+      role: 'discussion' as const,
+      stageKey: `${milestone.id}:0`,
+      packaged: false,
+      skill,
+      collected: startOrchestration(definition).state.collected[milestone.id]!,
+      welcome: 'pending' as const,
+    };
+    const pending = renderTeachingPrompt(input).systemPrompt;
+    expect(pending).toContain('three compact Markdown headings');
+    expect(pending).toContain('Do not teach concepts');
+    expect(pending).not.toContain('LESSON_RESOURCE_SENTINEL');
+    const opening = teachingSection(input, skill.progression[1]!);
+    expect(opening.referenceMaterials).toEqual([]);
+    expect(JSON.stringify(opening)).not.toContain('LESSON_RESOURCE_SENTINEL');
+    expect(
+      JSON.stringify(teachingSection({ ...input, welcome: 'ready' }, skill.progression[1]!)),
+    ).toContain('LESSON_RESOURCE_SENTINEL');
+    expect(renderTeachingPrompt(input).sectionBytes).toBeGreaterThan(0);
+  });
   it('gives decision discussion neutral options and keeps a decision-free milestone immediately continuable', () => {
     const noDecisions = structuredClone(definition);
     noDecisions.milestones[0]!.decisions = [];
