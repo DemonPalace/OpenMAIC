@@ -180,7 +180,8 @@ export async function learningEvidence(
           actor: item.actor,
           ...Object.fromEntries(
             Object.entries(item.detail).filter(
-              ([key]) => !['fingerprint', 'previousHash'].includes(key),
+              ([key]) =>
+                !['fingerprint', 'previousHash', 'expectedHash', 'requestId'].includes(key),
             ),
           ),
         },
