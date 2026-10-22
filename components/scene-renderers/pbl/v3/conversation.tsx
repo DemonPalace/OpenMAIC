@@ -169,7 +169,15 @@ function AgentTurn({ entry }: { entry: LearningConversationEntry }) {
     </article>
   );
 }
-export function LearningConversation({ view, sent }: { view: LearningView; sent: number }) {
+export function LearningConversation({
+  view,
+  sent,
+  requesting = false,
+}: {
+  view: LearningView;
+  sent: number;
+  requesting?: boolean;
+}) {
   const { t } = useI18n();
   const entries: LearningConversationEntry[] =
     view.conversation ??
@@ -210,11 +218,12 @@ export function LearningConversation({ view, sent }: { view: LearningView; sent:
             <AgentTurn key={entry.id} entry={entry} />
           ),
         )}
-        {view.busy && !view.conversation && (
-          <AgentTurn
-            entry={{ id: 'queued', speaker: view.role ?? 'mentor', status: 'running', parts: [] }}
-          />
-        )}
+        {(requesting || (view.busy && !view.conversation)) &&
+          !entries.some((e) => e.status === 'running') && (
+            <AgentTurn
+              entry={{ id: 'queued', speaker: view.role ?? 'mentor', status: 'running', parts: [] }}
+            />
+          )}
       </ConversationContent>
       <ConversationScrollButton aria-label={t('pblV3.journey.latest')} />
     </Conversation>

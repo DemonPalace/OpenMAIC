@@ -132,6 +132,9 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
       },
     ],
   } as unknown as LearningView;
+  let failDecision = true;
+  let decisionGate: Promise<void> | null = null;
+  let decisionEntered = () => {};
   let openings = 0;
   let failOpening = true;
   let advances = 0;
@@ -143,6 +146,21 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
       route.request().method() === 'POST' ? route.request().postDataJSON()?.command : undefined;
     if (command?.type === 'save')
       return route.fulfill({ status: 503, json: { error: { code: 'SANDBOX_UNAVAILABLE' } } });
+    if (command?.type === 'decide') {
+      if (decisionGate) {
+        const gate = decisionGate;
+        decisionGate = null;
+        decisionEntered();
+        await gate;
+      }
+      if (failDecision) {
+        failDecision = false;
+        return route.fulfill({ status: 503, json: { error: { code: 'SANDBOX_UNAVAILABLE' } } });
+      }
+      view.state.collected.greeting!.decisions = [{ id: 'storage', chosen: 'list', revision: 1 }];
+      view.revision++;
+      return route.fulfill({ json: { view } });
+    }
     if (command?.type === 'chat') {
       // The server preserves a completed review while answering a follow-up.
       view.activitySequence!++;
@@ -258,10 +276,8 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
           canManageFiles: false,
           canRun: false,
           planning: view.stage.kind === 'produce' && view.stage.writes === 'plan',
-          ports: [],
           commands: [],
           terminals: [],
-          checkpoint: null,
         },
       });
     if (new URL(route.request().url()).pathname.endsWith('/report'))
@@ -370,6 +386,29 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
   const composerBefore = await page.getByLabel('Your message', { exact: true }).boundingBox();
   await task.getByRole('button', { name: /Current task details/ }).click();
   await expect(details.getByText('Where will tasks live?')).toBeVisible();
+  let releaseDecision!: () => void;
+  decisionGate = new Promise<void>((resolve) => {
+    releaseDecision = resolve;
+  });
+  const decisionStarted = new Promise<void>((resolve) => {
+    decisionEntered = resolve;
+  });
+  const choice = details.getByRole('button', { name: 'A Python list', exact: true });
+  await choice.click();
+  await decisionStarted;
+  await expect(choice).toHaveAttribute('aria-pressed', 'true');
+  await expect(choice).toHaveAttribute('aria-busy', 'true');
+  await expect(
+    page.getByTestId('pbl-pending-action').filter({ hasText: 'Submitting decision…' }),
+  ).toBeVisible();
+  await expect(task.getByText('2/7', { exact: true })).toBeVisible();
+  releaseDecision();
+  await expect(choice).toHaveAttribute('aria-pressed', 'false');
+  await expect(choice).toBeEnabled();
+  await choice.click();
+  await expect(choice).toHaveAttribute('aria-pressed', 'true');
+  await expect(choice).toBeEnabled();
+
   await expect(details.getByRole('listitem')).toHaveCount(0);
   expect((await page.getByLabel('Your message', { exact: true }).boundingBox())?.y).toBe(
     composerBefore?.y,

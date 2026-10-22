@@ -2243,7 +2243,56 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
     expect(mocked.creates.length).toBe(creates + 1);
     expect((await learningView(principal, study.id)).environment?.ready).toBe(true);
   });
-  it('integrates scoped files, command evidence, terminal controls, previews and recovery', async () => {
+  it('locks failed-test repair writes until collection while retaining the same test step', async () => {
+    const study = await freshStudy();
+    let row = await store.get(study.id, principal.ownerId);
+    row.state.position.stageIndex = 4;
+    row.state.milestones[0]!.stageIndex = 4;
+    row.state.collected.greeting!.remediation = {
+      id: randomUUID(),
+      kind: 'implementation_repair',
+      target: 'coder',
+      reason: 'tests',
+      attempt: 1,
+      evaluationId: randomUUID(),
+    };
+    row.evaluation = {
+      id: randomUUID(),
+      fingerprint: 'pending',
+      stageKey: stageKey(row),
+      startedAt: new Date().toISOString(),
+    };
+    row = await store.transaction((db) => store.commit(db, row, { state: row.state, events: [] }));
+    const service = await SandboxService.forOwner(principal);
+    const original = await service.readText(row.environment_id!, 'greeting.py');
+    const save = async () =>
+      commandStudy(principal, study.id, {
+        id: randomUUID(),
+        revision: (await store.get(study.id, principal.ownerId)).revision,
+        type: 'save',
+        path: 'greeting.py',
+        text: original + '# learner repair\n',
+        expectedHash: digest(original),
+      });
+    expect(await workbenchView(principal, study.id)).toMatchObject({
+      canEdit: false,
+      editReason: 'testing',
+    });
+    await expect(save()).rejects.toMatchObject({ reason: 'WORKBENCH_ACCESS_DENIED' });
+    expect(await service.readText(row.environment_id!, 'greeting.py')).toBe(original);
+    row = await store.get(study.id, principal.ownerId);
+    row.evaluation = null;
+    await store.transaction((db) => store.commit(db, row, { state: row.state, events: [] }));
+    expect(await workbenchView(principal, study.id)).toMatchObject({ canEdit: true });
+    await expect(save()).resolves.toBeDefined();
+    const view = await learningView(principal, study.id);
+    expect(view.state.position.stageIndex).toBe(4);
+    expect(view.role).toBe('coder');
+    expect(await service.readText(row.environment_id!, 'greeting.py')).toBe(
+      original + '# learner repair\n',
+    );
+  });
+  it('integrates scoped files, command evidence, terminal controls and recovery without project previews', async () => {
     const fresh = await freshStudy();
     let row = await store.get(fresh.id, principal.ownerId);
     const environmentId = row.environment_id!;
@@ -2322,11 +2371,7 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
       }
 
       await expect(fresh.send('checkpoint')).rejects.toThrow();
-      const preview = new URL(((await send('preview', { port: 8000 })) as { url: string }).url);
-      await expect(
-        SandboxService.previewTarget(preview.hash.slice(1), preview.host),
-      ).resolves.toMatchObject({ transport: 'native' });
-      await expect(send('preview', { port: 49983 })).rejects.toThrow();
+      await expect(send('preview', { port: 8000 })).rejects.toThrow('Unknown workbench operation');
       const busyTurn = (await fresh.send('chat')) as { sessionId: string };
       const worker = await agents.claimNextSession('preview-test-worker', process.pid, {
         sessionId: busyTurn.sessionId,
@@ -2335,10 +2380,10 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
       });
       const busyView = await workbenchView(principal, row.id);
       expect(busyView.canRun).toBe(false);
-      expect(busyView.canPreview).toBe(true);
-      await expect(
-        SandboxService.previewTarget(preview.hash.slice(1), preview.host),
-      ).resolves.toMatchObject({ transport: 'native' });
+      expect(busyView.canEdit).toBe(false);
+      expect(busyView.editReason).toBe('agent');
+      expect(busyView).not.toHaveProperty('canPreview');
+      expect(busyView).not.toHaveProperty('ports');
       await expect(
         send('input', { terminalId: terminal.id, data: 'forbidden' }),
       ).rejects.toMatchObject({ reason: 'WORKBENCH_ACCESS_DENIED' });
@@ -2353,11 +2398,20 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
       await expect(
         SandboxService.previewTarget(oldGrant.hash.slice(1), oldGrant.host),
       ).rejects.toMatchObject({ code: 'PBL_WORKSPACE_MANAGED' });
+      const legacyScoped = new URL(
+        issuePreviewGrant({
+          ownerId: principal.ownerId,
+          environmentId,
+          port: 8000,
+          epoch: 0,
+          ...{ studyId: row.id },
+        }).url,
+      );
+      await expect(
+        SandboxService.previewTarget(legacyScoped.hash.slice(1), legacyScoped.host),
+      ).rejects.toMatchObject({ code: 'PBL_WORKSPACE_MANAGED' });
       await store.exclusive(row.id, () => send('stop', { revision: 0 }));
       expect((await workbenchView(principal, row.id)).terminals[0]?.state).toBe('closed');
-      await expect(
-        SandboxService.previewTarget(preview.hash.slice(1), preview.host),
-      ).rejects.toThrow('revoked');
       await fresh.send('checkpoint');
       mocked.missing.add(environmentId);
       await fresh.send('prepare');
@@ -2374,7 +2428,7 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
     }
   }, 30000);
 
-  it.each(['run', 'terminal', 'preview'] as const)(
+  it.each(['run', 'terminal'] as const)(
     'fences an admitted %s that reaches creation after Stop has succeeded',
     async (action) => {
       vi.stubEnv('OPENMAIC_SECRET_KEY', 'local-secret-'.repeat(4));
@@ -2402,30 +2456,22 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
       };
       const originalCommand = SandboxStore.prototype.reserveCommand;
       const originalTerminal = SandboxStore.prototype.reserveTerminal;
-      const originalPreview = SandboxService.prototype.preview;
       const spy =
-        action === 'preview'
-          ? vi.spyOn(SandboxService.prototype, 'preview').mockImplementation(async function (
-              this: SandboxService,
+        action === 'run'
+          ? vi.spyOn(SandboxStore.prototype, 'reserveCommand').mockImplementation(async function (
+              this: SandboxStore,
               ...args
             ) {
               await pause();
-              return originalPreview.apply(this, args);
+              return originalCommand.apply(this, args);
             })
-          : action === 'run'
-            ? vi.spyOn(SandboxStore.prototype, 'reserveCommand').mockImplementation(async function (
-                this: SandboxStore,
-                ...args
-              ) {
-                await pause();
-                return originalCommand.apply(this, args);
-              })
-            : vi
-                .spyOn(SandboxStore.prototype, 'reserveTerminal')
-                .mockImplementation(async function (this: SandboxStore, ...args) {
-                  await pause();
-                  return originalTerminal.apply(this, args);
-                });
+          : vi.spyOn(SandboxStore.prototype, 'reserveTerminal').mockImplementation(async function (
+              this: SandboxStore,
+              ...args
+            ) {
+              await pause();
+              return originalTerminal.apply(this, args);
+            });
       const request = {
         id: randomUUID(),
         revision: row.revision,

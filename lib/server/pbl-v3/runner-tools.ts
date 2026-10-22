@@ -248,6 +248,8 @@ export async function teachingRunnerConfig(input: {
           if (bound.role === 'planner' ? p.path !== 'PLAN.md' : p.path === 'PLAN.md')
             throw sandboxConflict('This role cannot write that file.');
           assertProjectSource(project, p.path);
+          if (current.evaluation)
+            throw sandboxConflict('Collect the running build or test before editing files.');
           if (guided) review.assertWritable();
           if (p.path === 'PLAN.md') await assertLearningPlan(store, current, p.text);
           const changed = await (
@@ -326,6 +328,8 @@ export async function teachingRunnerConfig(input: {
           expectedHash: Type.Optional(Type.String({ pattern: '^[a-f0-9]{64}$' })),
         }),
         async (current, p, _callId, signal) => {
+          if (current.evaluation)
+            throw sandboxConflict('Collect the running build or test before editing files.');
           if (guided) review.assertWritable();
           assertProjectSource(project, p.path);
           if (p.path === 'PLAN.md' || p.destination === 'PLAN.md')

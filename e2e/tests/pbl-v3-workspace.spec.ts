@@ -65,14 +65,26 @@ test('installed sample opens in the normal classroom and preserves progress afte
   let file = 'Write your plan here.';
   const savedFiles = new Map<string, { text: string; hash: string }>();
   let rejectAutosave = false;
+  let readGate: Promise<void> | null = null,
+    chatGate: Promise<void> | null = null,
+    createGate: Promise<void> | null = null;
+  let readEntered = () => {},
+    chatEntered = () => {},
+    createEntered = () => {};
+
   const workCalls: { action: string; path?: string }[] = [];
-  let previewOpen = false;
   let workEpoch = 0;
   const calls: { type: string; path?: string; text?: string; expectedHash?: string }[] = [];
   await page.route('**/api/pbl/v3**', async (route) => {
     const req = route.request(),
       url = new URL(req.url());
     const body = req.method() === 'POST' ? req.postDataJSON() : null;
+    if (body?.command?.type === 'chat' && chatGate) {
+      const gate = chatGate;
+      chatGate = null;
+      chatEntered();
+      await gate;
+    }
     if (url.searchParams.has('samples')) return route.continue();
     if (body?.action === 'sample') return route.continue(); // actual course creation and persistence
     if (url.pathname === '/api/pbl/v3/report') {
@@ -140,20 +152,20 @@ test('installed sample opens in the normal classroom and preserves progress afte
     if (url.pathname === '/api/pbl/v3/workspace') {
       if (body?.command) {
         const command = body.command;
-        if (['run', 'terminal', 'preview'].includes(command.action))
-          expect(command.epoch).toBe(workEpoch);
+        if (command.action === 'create' && createGate) {
+          const gate = createGate;
+          createGate = null;
+          createEntered();
+          await gate;
+        }
+        if (['run', 'terminal'].includes(command.action)) expect(command.epoch).toBe(workEpoch);
         workCalls.push(command);
         view.revision++;
         if (command.action === 'create') view.files.push(command.path);
         if (command.action === 'rename')
           view.files = view.files.map((p) => (p === command.path ? command.destination : p));
         if (command.action === 'delete') view.files = view.files.filter((p) => p !== command.path);
-        if (command.action === 'preview') {
-          previewOpen = true;
-          return route.fulfill({ json: { url: 'https://preview.example.test/' } });
-        }
         if (command.action === 'stop') {
-          previewOpen = false;
           workEpoch++;
         }
         return route.fulfill({ json: { accepted: true } });
@@ -167,21 +179,25 @@ test('installed sample opens in the normal classroom and preserves progress afte
           planning: false,
           canManageFiles: view.actions.includes('edit'),
           canRun: view.actions.includes('edit'),
-          canPreview: view.actions.includes('edit'),
-          ports: [8000],
           commands: [],
           terminals: [],
-          checkpoint: null,
         },
       });
     }
-    if (req.method() === 'GET' && url.searchParams.has('file'))
+    if (req.method() === 'GET' && url.searchParams.has('file')) {
+      if (readGate) {
+        const gate = readGate;
+        readGate = null;
+        readEntered();
+        await gate;
+      }
       return route.fulfill({
         json: savedFiles.get(url.searchParams.get('file')!) ?? {
           text: url.searchParams.get('file') === 'PLAN.md' ? file : 'print("Starter")',
           hash: 'a'.repeat(64),
         },
       });
+    }
     if (body?.command) {
       if (body.command.type === 'save' && rejectAutosave)
         return route.fulfill({ status: 503, json: { error: { code: 'SANDBOX_UNAVAILABLE' } } });
@@ -256,7 +272,23 @@ test('installed sample opens in the normal classroom and preserves progress afte
     0,
   );
   // Read-only Monaco model switches and server value refreshes are not learner edits.
+  let releaseRead!: () => void;
+  readGate = new Promise<void>((resolve) => {
+    releaseRead = resolve;
+  });
+  const fileReadStarted = new Promise<void>((resolve) => {
+    readEntered = resolve;
+  });
   await page.getByRole('button', { name: 'greeting.py', exact: true }).click();
+  await fileReadStarted;
+  await expect(page.getByRole('tab', { name: 'greeting.py', exact: true })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  );
+  await expect(
+    page.getByTestId('pbl-pending-action').filter({ hasText: 'Reading file…' }),
+  ).toBeVisible();
+  releaseRead();
   await expect(page.locator('.monaco-editor .view-lines')).toHaveText('print("Starter")');
   await page.getByRole('tab', { name: 'PLAN.md', exact: true }).click();
   await expect(page.locator('.monaco-editor .view-lines')).toHaveText('Write your plan here.');
@@ -290,7 +322,26 @@ test('installed sample opens in the normal classroom and preserves progress afte
   await page.getByRole('button', { name: 'Refresh progress' }).click();
   await viewSeen;
   await page.getByLabel('Your message').fill('Please introduce the project.');
+  let releaseChat!: () => void;
+  chatGate = new Promise<void>((resolve) => {
+    releaseChat = resolve;
+  });
+  const chatStarted = new Promise<void>((resolve) => {
+    chatEntered = resolve;
+  });
   await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await chatStarted;
+  await expect(
+    page.getByTestId('pbl-pending-action').filter({ hasText: 'Sending message…' }),
+  ).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Send', exact: true })).toHaveAttribute(
+    'aria-busy',
+    'true',
+  );
+  await expect(page.getByTestId('workbench-waiting-bar')).toHaveCount(1);
+  expect(calls.filter((c) => c.type === 'chat')).toHaveLength(0);
+  releaseChat();
+
   await expect(page.getByText('What should greet(name) return?', { exact: true })).toBeVisible();
   const staleViewResponse = page.waitForResponse(
     (response) => response.headers()['x-pbl-stale-fixture'] === '1',
@@ -411,9 +462,41 @@ test('installed sample opens in the normal classroom and preserves progress afte
     text: 'print("Saved code")',
     expectedHash: 'c'.repeat(64),
   });
+  const savesBeforeSwitching = calls.filter((c) => c.type === 'save').length;
+  for (let i = 0; i < 2; i++) {
+    await page.getByRole('tab', { name: 'PLAN.md', exact: true }).click();
+    await expect(page.getByTestId('pbl-edit-access')).toContainText('PLAN.md is approved');
+    await page.getByRole('tab', { name: 'greeting.py', exact: true }).click();
+    await expect(page.locator('.monaco-editor .view-lines')).toHaveText('print("Saved code")');
+  }
+  await expect(page.getByRole('tab', { name: /●/ })).toHaveCount(0);
+  expect(calls.filter((c) => c.type === 'save')).toHaveLength(savesBeforeSwitching);
+  view.busy = true;
+  view.revision++;
+  await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
+  await expect(page.getByTestId('pbl-edit-access')).toContainText('The assistant is working');
+  await expect(page.locator('.monaco-editor textarea').first()).not.toBeEditable();
+  view.busy = false;
+  view.revision++;
+  await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
+  await expect(page.locator('.monaco-editor textarea').first()).toBeEditable();
   await page.getByRole('button', { name: 'Manage source files' }).click();
   await page.getByLabel('Project-relative file path').fill('src/new.py');
+  let releaseCreate!: () => void;
+  createGate = new Promise<void>((resolve) => {
+    releaseCreate = resolve;
+  });
+  const createStarted = new Promise<void>((resolve) => {
+    createEntered = resolve;
+  });
   await page.getByRole('button', { name: 'Create file', exact: true }).click();
+  await createStarted;
+  await expect(
+    page.getByTestId('pbl-pending-action').filter({ hasText: 'Creating file…' }),
+  ).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'new.py', exact: true })).toHaveCount(0);
+  releaseCreate();
+
   await expect(page.getByRole('tab', { name: 'new.py', exact: true })).toHaveAttribute(
     'aria-selected',
     'true',
@@ -462,72 +545,15 @@ test('installed sample opens in the normal classroom and preserves progress afte
   await page.getByLabel('Project command', { exact: true }).fill('python3 src/moved.py');
   await page.getByRole('button', { name: 'Run command', exact: true }).click();
   await expect.poll(() => workCalls.some((c) => c.action === 'run')).toBe(true);
-  await page.getByRole('button', { name: 'Project application', exact: true }).click();
-  await expect(
-    page.getByText(
-      'Start the project web server in the terminal or Run panel, then connect to a configured port below.',
-    ),
-  ).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Project application', exact: true })).toHaveCount(
+    0,
+  );
   await expect(page.locator('iframe[title="Project application"]')).toHaveCount(0);
-  await page.route('https://preview.example.test/**', (route) =>
-    route.fulfill({
-      contentType: 'text/html',
-      body: '<h1>Project application</h1><button onclick="this.textContent=\'Clicked\'">Try</button>',
-    }),
-  );
-  await page.getByRole('button', { name: 'Connect preview · 8000', exact: true }).click();
-  const frame = page.frameLocator('iframe[title="Project application"]');
-  await expect(frame.getByRole('heading', { name: 'Project application' })).toBeVisible();
-  await frame.getByRole('button', { name: 'Try' }).click();
-  await expect(frame.getByRole('button', { name: 'Clicked' })).toBeVisible();
-  expect(previewOpen).toBe(true);
-  const planTab = page.getByRole('tab', { name: 'PLAN.md', exact: true });
-  await expect(planTab).toBeVisible();
-  const tabBounds = await planTab.boundingBox(),
-    stripBounds = await page.getByRole('tablist', { name: 'Open files' }).boundingBox();
-  expect(tabBounds!.x).toBeGreaterThanOrEqual(stripBounds!.x);
-  expect(tabBounds!.x + tabBounds!.width).toBeLessThanOrEqual(
-    stripBounds!.x + stripBounds!.width + 1,
-  );
-
-  await page.getByRole('button', { name: 'Expand project workspace' }).click();
-  await page.getByTestId('pbl-workbench-split').evaluate((el) => {
-    el.scrollTop = 0;
-  });
+  await expect(page.getByRole('button', { name: 'Save checkpoint', exact: true })).toHaveCount(0);
   await page
     .getByTestId('pbl-v3-workspace')
     .screenshot({ path: 'test-results/pbl-v3-workbench.png' });
-  await page.getByRole('button', { name: 'Return to classroom layout' }).click();
   await page.getByRole('button', { name: 'Stop commands and close terminals' }).click();
-  await expect(page.locator('iframe[title="Project application"]')).toHaveCount(0);
-  expect(previewOpen).toBe(false);
-  // A creation response already in flight cannot reopen a preview after Stop.
-  let releasePreview!: () => void, previewEntered!: () => void;
-  const previewGate = new Promise<void>((resolve) => {
-    releasePreview = resolve;
-  });
-  const previewReady = new Promise<void>((resolve) => {
-    previewEntered = resolve;
-  });
-  await page.route('**/api/pbl/v3/workspace', async (route) => {
-    const command =
-      route.request().method() === 'POST' ? route.request().postDataJSON()?.command : null;
-    if (command?.action !== 'preview') return route.fallback();
-    expect(command.epoch).toBe(workEpoch);
-    previewEntered();
-    await previewGate;
-    return route.fulfill({ json: { url: 'https://preview.example.test/late' } });
-  });
-  await page.getByRole('button', { name: 'Project application', exact: true }).click();
-  await page.getByRole('button', { name: 'Connect preview · 8000', exact: true }).click();
-  await previewReady;
-  await page.getByRole('button', { name: 'Stop commands and close terminals' }).click();
-  await expect.poll(() => workEpoch).toBe(2);
-  releasePreview();
-  await expect(page.getByRole('button', { name: 'Run command', exact: true })).toBeEnabled();
-  await expect(page.locator('iframe[title="Project application"]')).toHaveCount(0);
-  await page.getByRole('button', { name: 'Save checkpoint', exact: true }).click();
-  await expect.poll(() => calls.some((c) => c.type === 'checkpoint')).toBe(true);
   view.questions = [
     { q: 'What does return do?', options: ['Returns a value', 'Prints a value'] },
     {

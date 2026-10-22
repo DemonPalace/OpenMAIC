@@ -1,151 +1,117 @@
 # Learning workbench and recovery
 
-The classroom workbench reuses the existing SandboxService, owner identity, PostgreSQL
-receipts, command supervisor, PTY and isolated preview gateway. There is no additional
-runtime, queue, scheduler or SSH provider.
+The hosted classroom reuses SandboxService, owner identity, PostgreSQL command
+receipts, the command supervisor and PTY. Entry prepares the installed project's
+environment automatically and reuses an existing ready sandbox. Failed preparation
+has an explicit retry; completed projects can reopen reports without a sandbox.
 
-## Layout
+## Layout and feedback
 
-The IDE occupies the left workbench panel; the teaching conversation, current-step
-controls and composer occupy the right. Resize the divider or expand the scene for
-more room. The file tree supports nested source paths and the editor keeps separate
-open-file drafts. Use **Run & output** for commands and build results, **Terminal**
-for the connected shell, and **Preview port** to open the application beside code
-as an editor tab. Hiding these panes retains their state; Stop explicitly ends the
-managed execution. Save files before checkpointing, running or handing work back
-to the teaching assistant. Dirty file tabs, unsent chat, quiz selections and pane
-visibility survive scene return and same-tab refresh in study-scoped browser storage.
-Clean files reload from the server. This does not save files into the sandbox or
-create a checkpoint; save or copy work before closing the tab or clearing storage.
-Unavailable browser storage keeps drafts in memory for scene return and displays
-a warning before refresh/leaving. Environment replacement preserves dirty text and
-keeps stale saves blocked. No commands, terminal input or permissions are replayed.
+The IDE is on the left; conversation, current-step controls and composer are on the
+right. Both panels can be resized or hidden. The header panorama lists milestones;
+the progress control above the composer lists the current milestone's steps.
+Task details open above the composer, with bounded height and internal scrolling.
 
-Test and quiz actions appear in the current-task drawer above the conversation composer.
-Teaching and reflection show a non-expandable status strip.
+File tabs select immediately and show a reading indicator while content is fetched.
+Read-only Monaco synchronization and switching models are not learner edits. User
+edits autosave after 750 ms, one write at a time, with compact saving/saved/error
+status. Typing can continue during a save. Receipts acknowledge only submitted text
+and advance its observed hash, preserving newer typing. Rejected or stale drafts
+remain recoverable, with an explicit retry rather than an unbounded request loop.
+Ctrl/Cmd+S flushes pending edits; there is no manual Save or Save checkpoint button.
 
-The hosted classroom prepares the installed project's environment automatically on
-entry, then opens its teaching step. The learner sees setup status and only needs a
-retry button if preparation fails. Existing ready workspaces are reused; completed
-projects can reopen their reports without starting a sandbox. Setup and recovery
-retain the existing durable allocation identity, project files and checkpoint rules.
+Network actions acknowledge clicks immediately with their specific pending state:
+opening, sending, submitting a decision/quiz, starting tests, entering the next step,
+reading/managing files, starting a command or connecting/stopping a terminal. The
+assistant waiting indicator appears before the teaching request returns. A pending
+decision selection is temporary; failures restore the confirmed selection. Only
+server receipts install learning progress, outcomes and file-operation results.
 
-## Controls and boundaries
+Reports already open their page and generation status before awaiting a response.
+The current v3 workbench has no project-application preview UI, port declaration,
+preview command or study-specific preview grant. Application-shell integration is
+outside this change; the generic shared sandbox facilities remain separate.
 
-- Read and edit project text files. Create, rename/move and delete files only under
-  trusted source directories; retain PLAN.md and refuse stale content hashes,
-  traversal, symlinks and nonregular files. The public Python sample additionally
-  allows sources below `src/`. Changes invalidate dependent evidence before I/O.
-- Run commands and connect to a terminal during editable code stages. Planning and
-  pending guided reviews do not permit arbitrary execution. Command/terminal
-  creation invalidates earlier evidence; it does not claim the command passed a test.
-- Stop commands and close terminals independently of the study lock or progress
-  revision. The observed workspace epoch fences command/terminal admission atomically
-  with Stop; pre-Stop preview requests cannot issue a usable grant afterward. Late
-  creation responses cannot reopen the browser view. An in-flight terminal allocation
-  may return busy from Stop; retry after it settles rather than treating that as success.
-  Managed writers must settle before a review snapshot, test or checkpoint.
-  Unknown command outcomes remain unknown; do not start a replacement automatically.
-- Preview deployment-approved ports through the existing isolated gateway. Signed
-  tickets bind owner, study, environment, port and revocation epoch. Each gateway
-  authorization checks the current study/environment and stage again. Old generic
-  sandbox tickets cannot reopen learning workspaces.
-- Preserve dirty editor text when the environment changes; saving it is disabled
-  until the learner copies or explicitly discards/reloads it. Late file responses
-  cannot become the contents of another file.
-- Save checkpoints explicitly and display the latest durable save time. Preparation
-  restores the latest checkpoint using the existing allocation identity and recovery
-  result. Closing a terminal panel only disconnects the view; **Stop commands and
-  close terminals** ends the managed processes.
+## Editing boundaries
 
-Shell access is a cooperative learning facility, not a malicious-code security
-boundary. It can edit PLAN.md or start untracked background children. Code completion
-refuses a changed approved plan; unchanged approved content remains valid. Do not
-claim process-level isolation or save consistency while unmanaged children write.
-The existing provider remains responsible for isolating different learner sandboxes.
+`projectEditAccess` is shared by the editor, workbench permissions and host file-save
+admission. The IDE displays its current lock reason instead of leaving an unexplained
+read-only editor. These rules follow the existing OpenPBL stage/writer boundaries:
 
-`GET/POST /api/pbl/v3/workspace` and the owner-checked terminal stream are the dedicated
-learning routes. Generic sandbox mutation APIs remain blocked for learning workspaces.
-Reads show up to 20 recent/active commands; stop inspects the service's bounded command
-and terminal lists. This is a workbench, not an operational audit dashboard.
+| Step/state | Student file access |
+| --- | --- |
+| Teaching and decision discussion | Read-only; file editing opens in planning/coding |
+| Planning, assistant idle | PLAN.md only; source remains read-only |
+| Coding, assistant idle | Source files; approved PLAN.md remains read-only |
+| Formal tests or result collection | Read-only to preserve the tested version |
+| Recorded test failure, coder repair idle | Source editable in the same test step |
+| Understanding quiz and reflection | Read-only |
+| Assistant queued/running | Read-only until the assistant finishes |
+| Build or build-result collection | Read-only until collection finishes |
+| Completed, paused or stopped project | Read-only |
 
-## Browser fixture
+The existing stage definitions still determine whether an action is available.
+Client-side loading, an in-flight operation, environment readiness and stale buffers
+also block editing with distinct explanations. Direct API writes cannot bypass a
+pending test/build. Agent file-write and file-management tools obey that evaluation
+lock too. Passing tests ends repair access; failure does not move back to a different
+stage or skip the existing repair/retest cycle.
 
-The classroom workbench below uses local API fixtures, not a live cloud sandbox.
+Create, rename/move and delete files only inside trusted source directories. Keep
+PLAN.md; refuse stale hashes, traversal, symlinks and nonregular files. All changes
+invalidate dependent review/test evidence before I/O. Existing guided-review checks
+still apply after either a student or Agent changes an artifact.
 
-![Learning workbench with interactive application preview](screenshots/workbench.png)
+## Persistence and execution
 
-## Deployment
+Autosave writes the current sandbox's files. Existing automatic stage-boundary and
+final-completion checkpoints separately preserve recovery snapshots; students do not
+manage these snapshots. Preparation restores through the existing durable allocation
+identity and reports recovery or progress resets. Durable snapshots require the
+configured asset-byte store. No new background worker or snapshot scheduler is added.
 
-Follow [shared sandbox configuration](../../server/sandbox/README.md). Keep the existing
-`DATABASE_URL`, agent model authorization and `OPENMAIC_AGENT_RUNTIME_ENABLED=true`.
-Use the existing sandbox settings, with Python 3/POSIX shell in the code template.
-A Java course also needs its JDK/build tools installed in that template. Do not put
-provider credentials or private course materials in a scene or learner filesystem.
+Dirty file tabs, unsent chat, quiz choices and panel selection survive scene return
+and same-tab refresh in study-scoped browser storage. This browser cache is neither
+a sandbox write nor a recovery snapshot. Unavailable browser storage retains scene-
+return drafts in memory and warns before leaving. Environment replacement preserves
+dirty text and refuses stale saves until explicitly reloaded/discarded. Late file
+responses cannot populate another file. No commands, terminal input or permissions
+are replayed from browser storage.
 
-Durable checkpoints require the existing asset-byte storage configuration. Browser
-preview additionally needs `OPENMAIC_APP_ORIGIN`, `OPENMAIC_SANDBOX_PREVIEW_ORIGIN`,
-`OPENMAIC_PREVIEW_GATEWAY_KEY`, stable `OPENMAIC_SECRET_KEY`, DNS/TLS and the existing
-`sandbox:preview` gateway process on an isolated site. Installed projects declare
-`previewPorts` (default 8000); browser input cannot authorize other ports. Preview
-configuration being present is not proof that its networking works.
+Use Run & output for commands/build results and Terminal for a connected shell.
+Planning and pending guided reviews do not allow arbitrary execution. Stop terminates
+managed commands/terminals independently of the long study lock. Workspace epochs
+fence late admission after Stop. Terminal input uses the environment lock and a fresh
+owner/environment/permission check; only confirmed pre-dispatch ENVIRONMENT_BUSY is
+retried, within a finite budget. Lost acknowledgements are never replayed.
 
-Keep `maxActive` / `maxActivePerOwner` and PG pool sizing appropriate to the deployment.
-A local test holds one learner's lock while concurrent requests receive busy responses,
-then verifies another learner and ordinary SQL still proceed. This is bounded admission
-validation, not a production capacity claim or a substitute for staged load testing.
+Managed writers must stop before a review snapshot, formal test or recovery snapshot.
+An open shell can modify files, including PLAN.md; this is a cooperative learning
+facility, not an adversarial-code boundary. Completion refuses a changed approved
+plan and stale source evidence. Generic sandbox mutation routes cannot operate on a
+learning workspace; the owner-checked v3 workbench and terminal routes own its scope.
+Old generic or study-scoped preview tickets cannot open learning workspaces.
 
-Background polls and teaching tools recheck the durable environment check time before
-renewing. An environment-lock conflict retries only the keepalive, at 50 ms intervals
-for up to five seconds, without retaining a SQL connection while waiting or replaying
-the teaching action. Provider failures, pool-admission limits and workspace mutation
-conflicts still fail normally. Replaced environments cannot receive an old check receipt.
+## Verification and deployment
 
-Teaching requests identify the active stage and current completion receipt explicitly.
-Earlier-stage dialogue is retained as quoted project memory, while the native message
-sequence starts at the first real student turn of the current stage. Earlier tool
-completion results cannot masquerade as the current workflow. The durable transcript,
-feedback counts and intermediate student-confirmation gates retain the same evidence; the projection
-adds no student message and does not invent a teaching result.
+![Learning workbench with automatic save and explicit editing reasons](screenshots/workbench.png)
 
-## Verification
+The screenshot and Chromium classroom journeys use API fixtures. Deliberately held
+responses verify that selection/loading/waiting feedback precedes acknowledgement.
+Browser checks cover editable/read-only file switching without saves, stale drafts,
+scene navigation, short/narrow viewports, terminal controls and report round trips.
+Real PostgreSQL/local-Python tests cover file admission, evaluation locks, repair,
+terminal ownership/Stop fencing, recovery and generic sandbox compatibility.
 
 ```sh
-PG_CONTRACT_URL=postgres://... pnpm exec vitest run tests/pbl/v3 tests/sandbox --maxWorkers=4
-pnpm exec playwright test e2e/tests/pbl-v3-workspace.spec.ts
+PG_CONTRACT_URL=postgres://... pnpm exec vitest run tests/pbl/v3 tests/sandbox --maxWorkers=2
+pnpm exec playwright test e2e/tests/pbl-v3-workspace.spec.ts e2e/tests/pbl-v3-conversation.spec.ts
 ```
 
-The PG tests use actual host service/store logic with a local provider fixture and
-Python execution: file mutation, ownership, command results, terminal input/closure,
-preview grants/revocation, checkpoint restoration and multi-learner lock pressure.
-The renewal regression holds a poll inside the provider while a leased teaching tool
-contends for the same real PG lock, then verifies that both complete with one renewal.
-Focused tests also cover the retry budget, stale snapshots, provider failure and
-environment replacement before/during a check.
-The file-operation tests execute the adapter's actual Python script, including stale
-hashes, occupied destinations, symlink ancestors and multiply linked files. Browser
-fixtures cover dirty/stale buffers, command controls and interactive iframe preview.
-They do not call a live model or provision cloud sandboxes.
-
-Combine with the learning-experience change for Java/Python cross-milestone acceptance:
-edit → run → stop → save → review → tests → next milestone → restore. Check source
-fingerprints and stage evidence together, including arbitrary-command edits of PLAN.md.
-Live-provider results for an authorized single-owner installation are recorded in
-[LIVE-ACCEPTANCE.md](LIVE-ACCEPTANCE.md). Small-cohort capacity still needs its own
-staged deployment validation before claiming operational readiness.
-
-Both feature branches build on the merged shared workspace-contract PR. This branch
-targets `integration/shared-sandbox`; standalone and combined checks were repeated
-against that baseline. Teaching Skills, version-aware assessment, reports and cross-milestone recovery
-are the companion learning change; full private-course deployment and activity
-operations follow the general capability work.
-
-Terminal input uses the environment lock and freshly checks study ownership, environment
-and stage permission without waiting for the long study mutation lock or renewing the
-provider on every keystroke. The client retries only `ENVIRONMENT_BUSY`, a confirmed
-rejection before provider dispatch, with a bounded backoff. Lost acknowledgements and
-permission failures are never replayed; Stop/environment replacement still fence input.
-Existing preview grants survive ordinary model activity at an otherwise permitted code
-stage; pending review, assessments, completion and Stop still revoke access. Background
-inspection never imports a half-restored workspace; scoped entry setup or an explicit retry owns that
-write scope.
+Use the [shared sandbox configuration](../../server/sandbox/README.md), PostgreSQL,
+model authorization and enabled Agent runtime. The code template needs Python 3 and
+POSIX shell; Java projects additionally need their installed JDK/build tools. Keep
+credentials and private course materials out of scenes and learner files. Small-
+cohort capacity, private curriculum integration and full live learner acceptance
+remain separate from local fixtures and contract tests. Existing live-provider
+results are recorded in [LIVE-ACCEPTANCE.md](LIVE-ACCEPTANCE.md).

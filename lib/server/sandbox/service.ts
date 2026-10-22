@@ -13,11 +13,7 @@ import {
   type DesktopAction,
 } from '@/lib/sandbox/types';
 
-import {
-  assertWorkspaceMutation,
-  isLearningWorkspace,
-  type WorkspaceMutation,
-} from './managed-workspace';
+import { assertWorkspaceMutation, type WorkspaceMutation } from './managed-workspace';
 import { issuePreviewGrant, previewConfig, verifyPreviewGrant } from './preview';
 import { WORKSPACE_ROOT, workspacePath } from './workspace-archive';
 import { checkpointPolicy } from './checkpoint-policy';
@@ -849,7 +845,6 @@ export class SandboxService {
       environmentId: row.id,
       port: port as number,
       epoch: row.preview_epoch,
-      ...(isLearningWorkspace(row.workspace_id) ? { studyId: row.workspace_id.slice(4) } : {}),
     });
   }
 
@@ -865,10 +860,7 @@ export class SandboxService {
     const config = await resolvedSandboxConfig();
     const store = await SandboxStore.open();
     const row = await store.get(grant.ownerId, grant.environmentId);
-    if (grant.studyId && row.workspace_id === `pbl-${grant.studyId}`) {
-      const { authorizeLearningPreview } = await import('@/lib/server/pbl-v3/workbench');
-      await authorizeLearningPreview(grant.ownerId, grant.studyId, row.id, grant.port);
-    } else assertWorkspaceMutation(grant.ownerId, row.workspace_id, row.id, 'preview');
+    assertWorkspaceMutation(grant.ownerId, row.workspace_id, row.id, 'preview');
     if (
       row.state !== 'running' ||
       !row.workspace_ready ||

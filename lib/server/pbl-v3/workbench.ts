@@ -1,6 +1,7 @@
 import 'server-only';
 import { recordLearningEvidence } from './evidence';
 import type { OwnerPrincipal } from '@/lib/server/identity/types';
+import { projectEditAccess } from '@/lib/pbl/v3/edit-access';
 import type { LearningWorkbench } from '@/lib/pbl/v3/workbench';
 import { allowedStudentActions } from '@/lib/pbl/v3/domain/orchestration/transition';
 import { sandboxConflict, sandboxInvalid } from '@/lib/sandbox/errors';
@@ -26,22 +27,24 @@ import { touchEnvironment, assertEnvironmentReady } from './environment';
 async function permissions(store: LearningStore, row: Study) {
   const stage = stageFor(row),
     project = projectFor(row);
-  const stageEditable =
-    row.state.status !== 'completed' &&
-    allowedStudentActions(project.definition, row.state).includes('edit') &&
-    !row.evaluation;
-  const canEdit = stageEditable && !(await busy(store, row));
-  const planning = stage.kind === 'produce' && stage.writes === 'plan';
+  const access = projectEditAccess({
+    state: row.state,
+    stage,
+    actions: allowedStudentActions(project.definition, row.state),
+    busy: await busy(store, row),
+    evaluation: row.evaluation,
+  });
+  const canEdit = access.canEdit;
+  const planning = access.mode === 'plan';
   const pending = (await store.roles(row.id)).some(
     (b) => b.stage_key === stageKey(row) && b.guided?.pending,
   );
   return {
     canEdit,
+    editReason: access.reason,
     planning,
     canManageFiles: canEdit && !planning && !!project.sourceRoots?.length,
     canRun: canEdit && !planning && !pending,
-    canPreview: stageEditable && !planning && !pending,
-    ports: [...(project.previewPorts ?? [8000])],
   };
 }
 export async function workbenchView(
@@ -67,23 +70,7 @@ export async function workbenchView(
     ...policy,
     commands,
     terminals,
-    checkpoint: await service.checkpoint(environmentId),
   };
-}
-export async function authorizeLearningPreview(
-  ownerId: string,
-  studyId: string,
-  environmentId: string,
-  port: number,
-) {
-  const store = await LearningStore.open(),
-    row = await store.get(studyId, ownerId);
-  const policy = await permissions(store, row);
-  if (row.environment_id !== environmentId || !policy.canPreview || !policy.ports.includes(port))
-    throw sandboxConflict(
-      'Preview is unavailable at this learning stage.',
-      'WORKBENCH_ACCESS_DENIED',
-    );
 }
 export interface WorkbenchCommand {
   id: string;
@@ -100,7 +87,6 @@ export interface WorkbenchCommand {
   data?: string;
   cols?: number;
   rows?: number;
-  port?: number;
 }
 /** Uses the same study lock, command receipts and sandbox service as the teaching runtime. */
 export async function workbenchCommand(
@@ -166,7 +152,7 @@ export async function workbenchCommand(
     );
   }
   if (
-    ['run', 'terminal', 'preview'].includes(command.action) &&
+    ['run', 'terminal'].includes(command.action) &&
     (!Number.isSafeInteger(command.epoch) || command.epoch! < 0)
   )
     throw sandboxInvalid('An observed workspace generation is required.');
@@ -178,7 +164,7 @@ export async function workbenchCommand(
       project = projectFor(row),
       environmentId = requireEnvironment(row);
     if (
-      ['run', 'terminal', 'preview'].includes(command.action) &&
+      ['run', 'terminal'].includes(command.action) &&
       (await service.workspaceEpoch(environmentId)) !== command.epoch
     )
       throw sandboxConflict('Workspace was stopped. Retry the operation.', 'WORKSPACE_STOPPED');
@@ -225,8 +211,8 @@ export async function workbenchCommand(
           'Learning projects support at most 256 source files.',
           'PBL_SOURCE_COUNT',
         );
-    } else if (['run', 'terminal', 'preview'].includes(command.action)) {
-      if (!(command.action === 'preview' ? policy.canPreview : policy.canRun))
+    } else if (['run', 'terminal'].includes(command.action)) {
+      if (!policy.canRun)
         throw sandboxConflict(
           'Stop at the current teaching review before using the terminal or running an application.',
           'WORKBENCH_ACCESS_DENIED',
@@ -236,9 +222,7 @@ export async function workbenchCommand(
       ? 'write'
       : command.action === 'run'
         ? 'command'
-        : command.action === 'preview'
-          ? 'preview'
-          : 'terminal';
+        : 'terminal';
     if (!receipt)
       await store.pool.query(
         'INSERT INTO pbl_v3_commands(study_id,id,hash,result,stage_key) VALUES($1,$2,$3,NULL,$4)',
@@ -299,9 +283,7 @@ export async function workbenchCommand(
             command.epoch,
           );
         }
-        if (!policy.ports.includes(command.port!))
-          throw sandboxInvalid('Select a configured preview port.');
-        return service.preview(environmentId, command.port, command.epoch);
+        throw sandboxInvalid('Unknown workbench operation.');
       },
     );
     if (fileAction || command.action === 'run' || command.action === 'terminal')

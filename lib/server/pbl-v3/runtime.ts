@@ -1,6 +1,7 @@
 import { recordLearningEvidence } from './evidence';
 import { projectConversation, learningRunFailure } from './conversation';
 import 'server-only';
+import { projectEditAccess } from '@/lib/pbl/v3/edit-access';
 import { reviewQuestion } from './review-question';
 import { createHash, randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
@@ -521,6 +522,16 @@ export async function commandStudy(
       }
     } else if (command.type === 'save') {
       check('edit');
+      if (
+        !projectEditAccess(
+          { state: row.state, stage, actions: allowed, busy: false, evaluation: row.evaluation },
+          command.path,
+        ).canEdit
+      )
+        throw sandboxConflict(
+          'Project files are read-only at this time.',
+          'WORKBENCH_ACCESS_DENIED',
+        );
       if (!command.path || command.text === undefined || typeof command.expectedHash !== 'string')
         throw sandboxInvalid('A project file, text and observed file hash are required.');
       assertProjectSource(project, command.path);

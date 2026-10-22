@@ -7,15 +7,17 @@ import {
   FolderCog,
   Files,
   Play,
-  Save,
   Square,
   Terminal,
   X,
-  Globe,
   LoaderCircle,
   Check,
   AlertCircle,
+  LockKeyhole,
+  Pencil,
 } from 'lucide-react';
+import { PendingAction } from './pending-action';
+import { projectEditAccess } from '@/lib/pbl/v3/edit-access';
 import { FileExplorer } from './file-explorer';
 import { useProjectEditor, type FileSaveReceipt, type FileSaveRequest } from './use-project-editor';
 const CodeEditor = dynamic(() => import('./code-editor').then((m) => m.CodeEditor), { ssr: false });
@@ -43,14 +45,15 @@ export async function workbenchRequest<T>(url: string, body?: unknown): Promise<
 export function LearningWorkbenchPanel({
   view,
   pending,
+  pendingAction,
   onRefresh,
   onSave,
-  onCheckpoint,
   onDirtyChange,
   children,
 }: {
   view: LearningView;
   pending: boolean;
+  pendingAction: string | null;
   onRefresh: () => Promise<void>;
   onSave: (
     path: string,
@@ -58,22 +61,21 @@ export function LearningWorkbenchPanel({
     hash: string,
     request: FileSaveRequest,
   ) => Promise<FileSaveReceipt>;
-  onCheckpoint: () => Promise<boolean>;
   onDirtyChange: (dirty: boolean) => void;
   children: ReactNode;
 }) {
   const { t } = useI18n();
   const [work, setWork] = useState<LearningWorkbench | null>(null),
     [error, setError] = useState(''),
-    [working, setWorking] = useState(false);
+    [operation, setOperation] = useState<string | null>(null);
+  const working = operation !== null;
+  const operationSequence = useRef(0);
   const [newPath, setNewPath] = useState(''),
     [shell, setShell] = useState(''),
-    [terminal, setTerminal] = useState(''),
-    [preview, setPreview] = useState('');
+    [terminal, setTerminal] = useState('');
   const [manage, setManage] = useState(false),
     [consoleOpen, setConsoleOpen] = useState(false),
-    [consoleTab, setConsoleTab] = useState<'output' | 'terminal'>('output'),
-    [editorTab, setEditorTab] = useState<'code' | 'preview'>('code');
+    [consoleTab, setConsoleTab] = useState<'output' | 'terminal'>('output');
   const showEvaluation =
     view.stage.kind !== 'check' && (view.actions.includes('compile') || !!view.evaluation);
   useEffect(() => {
@@ -87,10 +89,9 @@ export function LearningWorkbenchPanel({
     current = useRef(view);
   current.current = view;
   const disabled = pending || working || view.busy || !view.environment?.ready;
-  const canEdit = (name: string) =>
-    !!work?.canEdit &&
-    view.actions.includes('edit') &&
-    (work.planning ? name === 'PLAN.md' : name !== 'PLAN.md');
+  const access = (name?: string) =>
+    projectEditAccess({ ...view, evaluation: view.evaluation ? {} : null }, name);
+  const canEdit = (name: string) => !disabled && !!work?.canEdit && access(name).canEdit;
   const editor = useProjectEditor(
     view,
     (path) =>
@@ -109,6 +110,27 @@ export function LearningWorkbenchPanel({
   useEffect(() => () => onDirtyChange(false), [onDirtyChange]);
   const editable = canEdit(path);
   const canSave = !disabled && !editor.loading && !stale && !!buffer && editable;
+  const pendingReason =
+    pendingAction === 'evaluate' || (pendingAction === 'collect' && view.stage.kind === 'check')
+      ? 'testing'
+      : pendingAction === 'compile' || pendingAction === 'collect'
+        ? 'building'
+        : ['chat', 'begin', 'retry'].includes(pendingAction ?? '')
+          ? 'agent'
+          : 'request';
+  const editReason = stale
+    ? 'stale'
+    : !view.environment?.ready
+      ? 'environment'
+      : operation
+        ? 'operation'
+        : pending
+          ? pendingReason
+          : editor.loading || !work
+            ? 'loading'
+            : (access(path).reason ??
+              work.editReason ??
+              (work.canEdit ? (work.planning ? 'planEditable' : 'codeEditable') : 'loading'));
   const save = () => {
     if (canSave) void editor.save();
   };
@@ -141,7 +163,6 @@ export function LearningWorkbenchPanel({
     executionSequence.current++;
     setWork(null);
     setTerminal('');
-    setPreview('');
   }, [refresh]);
   useEffect(() => {
     void refresh().catch((e) => setError(e.message));
@@ -157,7 +178,13 @@ export function LearningWorkbenchPanel({
     // Stop invalidates earlier creation responses even when the provider finishes later.
     if (action === 'stop') executionSequence.current++;
     const executionTicket = executionSequence.current;
-    if (action !== 'stop') setWorking(true);
+    const operationTicket = ++operationSequence.current;
+    setOperation(action);
+    if (action === 'terminal' || action === 'run') {
+      setConsoleOpen(true);
+      setConsoleTab(action === 'terminal' ? 'terminal' : 'output');
+    }
+    if (action === 'stop') setTerminal('');
     setError('');
     try {
       const selected = current.current;
@@ -179,15 +206,6 @@ export function LearningWorkbenchPanel({
         setConsoleOpen(true);
         setConsoleTab('terminal');
       }
-      if (action === 'preview') {
-        setPreview((result as { url: string }).url);
-        setEditorTab('preview');
-      }
-      if (action === 'stop') {
-        setTerminal('');
-        setPreview('');
-        setEditorTab('code');
-      }
       if (action === 'create' || action === 'rename') {
         if (action === 'rename') editor.close(path);
         editor.select(String(action === 'create' ? payload.path : payload.destination));
@@ -202,7 +220,7 @@ export function LearningWorkbenchPanel({
     } finally {
       await onRefresh().catch(() => {});
       await refresh().catch(() => {});
-      if (action !== 'stop') setWorking(false);
+      if (operationTicket === operationSequence.current) setOperation(null);
     }
   };
   const transport = useMemo(
@@ -245,11 +263,6 @@ export function LearningWorkbenchPanel({
           className="shrink-0 border-b bg-destructive/10 p-2 text-xs text-destructive"
         >
           {error}
-        </p>
-      )}
-      {stale && (
-        <p role="alert" className="shrink-0 border-b p-2 text-xs">
-          {t('pblV3.workbench.staleBuffer')}
         </p>
       )}
       {manage && work?.canManageFiles && (
@@ -324,7 +337,6 @@ export function LearningWorkbenchPanel({
               editable={canEdit}
               onSelect={(p) => {
                 editor.select(p);
-                setEditorTab('code');
               }}
             />
           </Panel>
@@ -354,12 +366,11 @@ export function LearningWorkbenchPanel({
                   <div key={p} className="flex shrink-0 items-center border-r">
                     <button
                       role="tab"
-                      aria-selected={p === path && editorTab === 'code'}
+                      aria-selected={p === path}
                       className="shrink-0 whitespace-nowrap border-t-2 border-transparent px-3 py-2 text-xs aria-selected:border-primary aria-selected:bg-background"
                       title={p}
                       onClick={() => {
                         editor.select(p);
-                        setEditorTab('code');
                       }}
                     >
                       {p.split('/').at(-1)}
@@ -379,41 +390,35 @@ export function LearningWorkbenchPanel({
                   </div>
                 ))}
               </div>
-              <span
-                role="status"
-                className="flex shrink-0 items-center gap-1 px-2 text-xs text-muted-foreground"
-                title={editor.saveError || undefined}
-              >
-                {editor.saveError ? (
-                  <>
-                    <AlertCircle size={12} />
-                    <button className="underline" disabled={!canSave} onClick={save}>
-                      {t('pblV3.ide.saveFailed')}
-                    </button>
-                  </>
-                ) : dirty && (disabled || !editable || stale) && !editor.saving ? (
-                  <span>{t('pblV3.ide.draftRetained')}</span>
-                ) : dirty || editor.saving ? (
-                  <>
-                    <LoaderCircle size={12} className="animate-spin" />
-                    {t('pblV3.ide.saving')}
-                  </>
-                ) : (
-                  <>
-                    <Check size={12} />
-                    {t('pblV3.ide.saved')}
-                  </>
-                )}
-              </span>
-              {work?.canPreview && !!work.ports.length && (
-                <button
-                  className={button}
-                  aria-label={t('pblV3.workbench.application')}
-                  aria-pressed={editorTab === 'preview'}
-                  onClick={() => setEditorTab(editorTab === 'preview' ? 'code' : 'preview')}
+              {editor.loading ? (
+                <PendingAction action="read" />
+              ) : (
+                <span
+                  role="status"
+                  className="flex shrink-0 items-center gap-1 px-2 text-xs text-muted-foreground"
+                  title={editor.saveError || undefined}
                 >
-                  <Globe size={14} />
-                </button>
+                  {editor.saveError ? (
+                    <>
+                      <AlertCircle size={12} />
+                      <button className="underline" disabled={!canSave} onClick={save}>
+                        {t('pblV3.ide.saveFailed')}
+                      </button>
+                    </>
+                  ) : dirty && (disabled || !editable || stale) && !editor.saving ? (
+                    <span>{t('pblV3.ide.draftRetained')}</span>
+                  ) : dirty || editor.saving ? (
+                    <>
+                      <LoaderCircle size={12} className="animate-spin" />
+                      {t('pblV3.ide.saving')}
+                    </>
+                  ) : (
+                    <>
+                      <Check size={12} />
+                      {t('pblV3.ide.saved')}
+                    </>
+                  )}
+                </span>
               )}
               <button
                 className={button}
@@ -436,59 +441,20 @@ export function LearningWorkbenchPanel({
               )}
             </div>
             <div className="relative min-h-0 flex-1">
-              <div
-                className="absolute inset-0"
-                hidden={editorTab === 'preview' && !!work?.canPreview}
-              >
-                {buffer ? (
-                  <CodeEditor
-                    key={path}
-                    studyId={view.id}
-                    path={path}
-                    value={buffer.text}
-                    readOnly={!canSave}
-                    onChange={editor.edit}
-                    onSave={save}
-                  />
-                ) : (
-                  <p className="p-4 text-sm text-muted-foreground">
-                    {t(view.environment?.ready ? 'pblV3.loading' : 'pblV3.environmentNotice')}
-                  </p>
-                )}
-              </div>
-              {editorTab === 'preview' && work?.canPreview && !preview && (
-                <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center text-sm text-muted-foreground">
-                  <Globe size={28} />
-                  <strong className="text-foreground">{t('pblV3.workbench.application')}</strong>
-                  <p className="max-w-sm">{t('pblV3.ide.previewNotStarted')}</p>
-                  {work?.canPreview &&
-                    work.ports.map((port) => (
-                      <button
-                        key={port}
-                        className={`${button} border`}
-                        disabled={
-                          pending ||
-                          working ||
-                          dirty ||
-                          !view.environment?.ready ||
-                          !work.canPreview
-                        }
-                        onClick={() => void run('preview', { port })}
-                      >
-                        {t('pblV3.ide.connectPreview')} · {port}
-                      </button>
-                    ))}
-                </div>
-              )}
-              {preview && work?.canPreview && editorTab === 'preview' && (
-                <iframe
-                  title={t('pblV3.workbench.application')}
-                  className="absolute inset-0 h-full w-full bg-white"
-                  hidden={editorTab !== 'preview'}
-                  src={preview}
-                  sandbox="allow-scripts allow-forms allow-same-origin allow-downloads"
-                  referrerPolicy="no-referrer"
+              {buffer ? (
+                <CodeEditor
+                  key={path}
+                  studyId={view.id}
+                  path={path}
+                  value={buffer.text}
+                  readOnly={!canSave}
+                  onChange={editor.edit}
+                  onSave={save}
                 />
+              ) : (
+                <p className="p-4 text-sm text-muted-foreground">
+                  {t(view.environment?.ready ? 'pblV3.loading' : 'pblV3.environmentNotice')}
+                </p>
               )}
             </div>
           </Panel>
@@ -521,9 +487,10 @@ export function LearningWorkbenchPanel({
             {t('pblV3.ide.terminal')}
           </button>
 
+          <PendingAction action={operation} />
           <button
             className={`${button} ml-auto`}
-            disabled={!view.environmentId}
+            disabled={!view.environmentId || operation === 'stop'}
             onClick={() => void run('stop')}
           >
             <Square size={12} />
@@ -611,27 +578,17 @@ export function LearningWorkbenchPanel({
           </div>
         </div>
       </div>
-      <footer className="flex shrink-0 flex-wrap items-center gap-2 border-t px-2 py-1 text-xs text-muted-foreground">
-        <span className="mr-auto" title={t('pblV3.saveNotice')}>
-          {work?.checkpoint
-            ? t('pblV3.workbench.savedAt', {
-                time: new Date(work.checkpoint.createdAt).toLocaleString(),
-              })
-            : t('pblV3.workbench.notSaved')}
-        </span>
-        <button
-          className={button}
-          disabled={disabled || dirty}
-          onClick={() =>
-            void (async () => {
-              await onCheckpoint();
-              await refresh().catch((e) => setError(e.message));
-            })()
-          }
-        >
-          <Save size={13} />
-          {t('pblV3.checkpoint')}
-        </button>
+      <footer
+        role="status"
+        data-testid="pbl-edit-access"
+        className="flex shrink-0 items-start gap-1.5 border-t px-2 py-1.5 text-xs text-muted-foreground"
+      >
+        {canSave ? (
+          <Pencil size={12} className="mt-0.5 shrink-0" />
+        ) : (
+          <LockKeyhole size={12} className="mt-0.5 shrink-0" />
+        )}
+        <span>{t(`pblV3.editAccess.${editReason}`)}</span>
       </footer>
     </section>
   );
