@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { AnimatePresence, motion } from 'motion/react';
-import { useStageStore } from '@/lib/store';
+import { useStageStore, useCanvasStore } from '@/lib/store';
 import {
   isCurrentSceneEditable,
   isHostedSceneEditable,
@@ -22,7 +22,7 @@ import {
 } from '@/components/scene-renderers/InteractiveIframeHost';
 import { CHROME_EASE } from '@/lib/edit/transitions';
 import { enterEditMode } from '@/lib/edit/enter-edit-mode';
-import { isEditorPreloaded, preloadEditor } from '@/lib/edit/preload-editor';
+import { preloadEditor } from '@/lib/edit/preload-editor';
 import { WorkbenchReturnControl } from '@/components/workbench/WorkbenchReturnControl';
 import { resolveClassroomBackControl } from '@/lib/workbench/classroom-back-control';
 import { resolveClassroomHeaderControls } from '@/lib/workbench/classroom-header-controls';
@@ -38,21 +38,10 @@ import { exitProPlaybackToStandalone } from '@/lib/workbench/pro-playback-exit';
  *   mode === 'edit'                → EditChromeRoot
  *   mode === 'playback' / 'autonomous' → PlaybackChromeRoot
  *
- * When this classroom is HOSTED — mounted inside the Pro workspace's classroom
- * pane rather than filling a route — the dispatch below is not replaced, it is
- * merely stripped of the chrome that the host already provides: no header, no
- * global controls or Pro switch (the pane IS Pro-locked). Hosted chrome is
- * EDIT-LOCKED: the pane declares the lock once (`WorkbenchPanelState.editPinned`)
- * and this component reads it back, so no entry path — a course the agent just
- * created, a restored tab, a tab switch, a reload — gets to decide otherwise.
- * The learning chrome is reachable only through Start Learning, which clears
- * the lock at the pane. Everything else resolves synchronously between the
- * neutral loading shell and edit, so a hosted first paint can never be
- * playback. Deliberately not a third
- * `StageMode` — `StageMode` lives in the
- * published `@openmaic/dsl` and is persisted with the stage, whereas "this is
- * rendered inside the workspace right now" is view state that must not outlive
- * the tab.
+ * A hosted classroom takes its learning/editing intent from the pane. The
+ * pane applies the course preference and access gates, and this component
+ * additionally enforces the live generation fence. This remains view state;
+ * the published/persisted StageMode contract does not change.
  *
  * The host itself owns the three-pane layout, the conversation, the session
  * stream and the course sync. Stage's only responsibilities are: mode
@@ -119,11 +108,7 @@ export function Stage({
   // its panelOpen bit here made the keyed edit/playback roots swap for one
   // frame and produced a full classroom flash.
   const workbenchPlayback = workbenchPanel.playback;
-  // The classroom is showing exactly when it is hosted and the pane says it is
-  // edit-locked. The lock is computed once, at the provider the workspace
-  // mounts the classroom through (`WorkbenchPanelProvider`), so this is the
-  // pane's answer being read back rather than a second derivation that could
-  // disagree with it.
+  // The host's edit intent is independent of full-screen playback and chat.
   const workbenchShowingClassroom = hosted && workbenchPanel.editPinned;
 
   // Single decision for the classroom chrome's top-left back affordance:
@@ -148,9 +133,8 @@ export function Stage({
       hasCurrentScene: !!currentScene,
     });
 
-  // Hosted generation is page-granular: once the current page materialises,
-  // the human may edit it while the agent writes later scene IDs. Keep the
-  // stricter whole-deck generation gate above for standalone Pro mode.
+  // Hosted agent edits are page-scoped; a server generation run still locks
+  // the whole course through courseGenerating below.
   const currentStageMatchesHost = !classroomId || stage?.id === classroomId;
   const hostedSceneEditable = isHostedSceneEditable({
     editorEnabled,
@@ -162,49 +146,49 @@ export function Stage({
     hasCurrentScene: !!currentScene,
   });
   const chromeEditable = hosted ? hostedSceneEditable : isEditable;
-  // Seeded from the module-level registry rather than always starting at
-  // `idle`: once the editor chunk has been imported in this tab, a remount
-  // (course switch, reopened tab) must resolve to the edit chrome during the
-  // FIRST render. Starting at `idle` would spend a paint on the neutral
-  // loading shell waiting for an import that already finished.
+  // Keep playback mounted until its SSE/engine/audio teardown and the editor
+  // preload finish. This also covers automatic restoration of saved editing
+  // when generation ends, not only a click on the tab's mode switch.
   const [editorPreloadState, setEditorPreloadState] = useState<
     'idle' | 'loading' | 'ready' | 'failed'
-  >(() => (isEditorPreloaded() ? 'ready' : 'idle'));
+  >('idle');
+  const playbackRef = useRef<PlaybackChromeRootHandle>(null);
 
   useEffect(() => {
-    if (!hosted || !workbenchShowingClassroom || !hostedSceneEditable) return;
-    // Already registered — do not knock the state back to `loading`, which
-    // would blank an edit chrome that is on screen and correct.
-    if (isEditorPreloaded()) {
-      setEditorPreloadState('ready');
+    if (!hosted || !workbenchShowingClassroom || !hostedSceneEditable) {
+      setEditorPreloadState('idle');
       return;
     }
     let cancelled = false;
     setEditorPreloadState('loading');
-    preloadEditor()
-      .then(() => {
+    void enterEditMode({
+      teardown: () => playbackRef.current?.teardown(),
+      preload: preloadEditor,
+      activate: () => {
         if (!cancelled) setEditorPreloadState('ready');
-      })
-      .catch((error) => {
-        console.error('[Stage] hosted editor preload failed', error);
+      },
+      onError: (error) => {
+        console.error('[Stage] hosted editor entry failed', error);
         if (!cancelled) setEditorPreloadState('failed');
-      });
+      },
+    });
     return () => {
       cancelled = true;
     };
-  }, [hosted, workbenchShowingClassroom, hostedSceneEditable]);
+  }, [hosted, workbenchShowingClassroom, hostedSceneEditable, classroomId]);
 
-  // The workspace owns the edit/playback intent: the pane's edit lock is the
-  // edit intent, while Start Learning (`workbenchPlayback`) is the one signal
-  // that releases it. Resolve that intent in render rather than mutating the
-  // transient stage-store mode in an effect — otherwise every hosted course
-  // paints PlaybackChromeRoot once before the effect can run, and a course
-  // switch can inherit stale mode.
+  // Resolve before paint so a restored edit preference cannot override a
+  // generating course's fence or leak into a different course's chrome.
   const chromeMode = resolveStageChromeMode({
     storedMode: mode,
     hosted,
     workbenchShowingClassroom,
-    workbenchLearning: hosted && workbenchPlayback,
+    workbenchLearning:
+      hosted &&
+      workbenchPanel.visible &&
+      (workbenchPanel.learning ||
+        courseGenerating ||
+        (workbenchShowingClassroom && editorPreloadState !== 'ready')),
     isEditable: chromeEditable,
     hasCurrentScene: !!currentScene,
     stageMatchesHost: currentStageMatchesHost,
@@ -212,7 +196,11 @@ export function Stage({
     editorLoadFailed: editorPreloadState === 'failed',
   });
 
-  const playbackRef = useRef<PlaybackChromeRootHandle>(null);
+  useEffect(() => {
+    if (!hosted || chromeMode !== 'edit') return;
+    return () => useCanvasStore.getState().resetCanvasState();
+  }, [hosted, chromeMode]);
+
   const [playbackInteractivePicker, setPlaybackInteractivePicker] =
     useState<PlaybackInteractivePickerState | null>(null);
   const handlePlaybackInteractivePick = useCallback((pick: PlaybackInteractiveComponentPick) => {
@@ -297,7 +285,7 @@ export function Stage({
     });
   }, [router, setMode, stage?.id]);
 
-  // The embedded pane is already Pro-locked, so it has no switch. Full-screen
+  // The embedded pane owns its mode switch in the tab header. Full-screen
   // learning exposes an active switch whose off transition exits the workspace
   // and returns to the ordinary classroom route.
   const chromeToggleHandler = hosted

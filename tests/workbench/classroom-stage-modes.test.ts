@@ -1,0 +1,157 @@
+// @vitest-environment jsdom
+import { act, createElement, forwardRef, useImperativeHandle, type ReactNode } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
+import { useCanvasStore } from '@/lib/store/canvas';
+import { useStageStore } from '@/lib/store/stage';
+import { WorkbenchPanelProvider } from '@/lib/workbench/panel-context';
+
+const probe = vi.hoisted(() => ({ teardown: vi.fn(), preload: vi.fn() }));
+vi.mock('next/navigation', () => ({ useRouter: () => ({ replace: vi.fn() }) }));
+vi.mock('@/lib/config/feature-flags', () => ({
+  isMaicEditorEnabled: () => true,
+  isProWorkbenchEnabled: () => true,
+}));
+vi.mock('@/lib/edit/preload-editor', () => ({ preloadEditor: () => probe.preload() }));
+vi.mock('@/lib/workbench/session-store', () => ({
+  useWorkbenchStore: (s: (v: unknown) => unknown) => s({ setPanelOpen: vi.fn() }),
+}));
+vi.mock('@/components/edit/EditChromeRoot', () => ({
+  EditChromeRoot: () => createElement('div', { 'data-testid': 'edit' }),
+}));
+vi.mock('@/components/edit/PlaybackChromeRoot', () => ({
+  PlaybackChromeRoot: forwardRef(function Playback(_, ref) {
+    useImperativeHandle(ref, () => ({ teardown: () => probe.teardown() }));
+    return createElement('div', { 'data-testid': 'learning' });
+  }),
+}));
+vi.mock('@/components/scene-renderers/InteractiveIframeHost', () => ({
+  InteractiveIframeHost: () => null,
+}));
+vi.mock('@/components/workbench/WorkbenchReturnControl', () => ({
+  WorkbenchReturnControl: () => null,
+}));
+vi.mock('motion/react', () => ({
+  AnimatePresence: ({ children }: { children: ReactNode }) => children,
+  motion: { div: ({ children }: { children: ReactNode }) => createElement('div', null, children) },
+}));
+
+import { Stage } from '@/components/stage';
+let root: Root;
+const has = (id: string) => document.querySelector(`[data-testid="${id}"]`) !== null;
+async function render(learning: boolean, courseId = 'stage-1') {
+  const providerProps = { learning, children: createElement(Stage, { classroomId: courseId }) };
+  await act(async () => root.render(createElement(WorkbenchPanelProvider, providerProps)));
+}
+
+beforeEach(() => {
+  const container = document.createElement('div');
+  document.body.append(container);
+  root = createRoot(container);
+  probe.teardown.mockReset().mockResolvedValue(undefined);
+  probe.preload.mockReset().mockResolvedValue(undefined);
+  vi.stubGlobal(
+    'fetch',
+    vi.fn().mockResolvedValue({ ok: true, json: async () => ({ enabled: true }) }),
+  );
+  useStageStore.setState({
+    stage: { id: 'stage-1' } as never,
+    scenes: [{ id: 'scene-1', type: 'slide' }] as never,
+    currentSceneId: 'scene-1',
+    generatingOutlines: [],
+    isOwner: true,
+    readOnly: false,
+    courseGenerating: false,
+    mode: 'playback',
+  });
+});
+afterEach(async () => {
+  await act(async () => root.unmount());
+  document.body.replaceChildren();
+  vi.unstubAllGlobals();
+});
+
+describe('hosted Stage mode enforcement and playback lifecycle', () => {
+  it('keeps learning mounted until teardown and editor preload finish', async () => {
+    let finish!: () => void;
+    probe.teardown.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    await render(true);
+    await render(false);
+    expect(probe.teardown).toHaveBeenCalledOnce();
+    expect(probe.preload).toHaveBeenCalledOnce();
+    expect(has('learning')).toBe(true);
+    expect(has('edit')).toBe(false);
+    await act(async () => finish());
+    expect(has('edit')).toBe(true);
+    useCanvasStore.getState().setActiveElementIdList(['title']);
+    await render(true);
+    expect(has('learning')).toBe(true);
+    expect(useCanvasStore.getState().activeElementIdList).toEqual([]);
+  });
+
+  it('enforces generation over a hostile edit request and safely restores it on completion', async () => {
+    await act(async () => useStageStore.setState({ courseGenerating: true }));
+    await render(false);
+    expect(has('learning')).toBe(true);
+    expect(has('edit')).toBe(false);
+    expect(probe.preload).not.toHaveBeenCalled();
+    let finish!: () => void;
+    probe.teardown.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    await act(async () => useStageStore.setState({ courseGenerating: false }));
+    expect(has('learning')).toBe(true);
+    expect(has('edit')).toBe(false);
+    await act(async () => finish());
+    expect(has('edit')).toBe(true);
+    await act(async () => useStageStore.setState({ courseGenerating: true }));
+    expect(has('learning')).toBe(true);
+    expect(has('edit')).toBe(false);
+  });
+
+  it('ignores an edit transition overtaken by generation or a learning choice', async () => {
+    let finish!: () => void;
+    probe.teardown.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    await render(true);
+    await render(false);
+    await act(async () => useStageStore.setState({ courseGenerating: true }));
+    await act(async () => finish());
+    expect(has('edit')).toBe(false);
+    await act(async () => useStageStore.setState({ courseGenerating: false }));
+    await render(true);
+    await act(async () => finish());
+    expect(has('learning')).toBe(true);
+    expect(has('edit')).toBe(false);
+  });
+
+  it('does not mount either chrome against another course document', async () => {
+    await render(true, 'stage-2');
+    expect(has('learning')).toBe(false);
+    expect(has('edit')).toBe(false);
+    await render(false, 'stage-2');
+    expect(has('edit')).toBe(false);
+  });
+
+  it('stays in learning if editor loading fails', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    probe.preload.mockRejectedValue(new Error('chunk failed'));
+    await render(true);
+    await render(false);
+    expect(has('edit')).toBe(false);
+    expect(has('learning')).toBe(true);
+    vi.restoreAllMocks();
+  });
+});
