@@ -647,7 +647,12 @@ export async function commandStudy(
           row.state,
           {
             id: evaluation.id,
-            ...evaluationOutcome(evaluationFor(project, milestone.id), evaluation.id, observed),
+            ...evaluationOutcome(
+              evaluationFor(project, milestone.id),
+              evaluation.id,
+              observed,
+              Object.keys(snapshot.files),
+            ),
             evaluator: 'sandbox-command',
             milestoneId: milestone.id,
             stageIndex: row.state.position.stageIndex,
@@ -868,12 +873,20 @@ export async function learningView(principal: OwnerPrincipal, id: string): Promi
         evaluation = {
           id: observed.id,
           state: observed.state,
+          ...(row.evaluation.purpose ? { purpose: row.evaluation.purpose } : {}),
           stdout: row.evaluation.purpose === 'compile' ? observed.stdout.slice(0, 8000) : '',
           stderr: row.evaluation.purpose === 'compile' ? observed.stderr.slice(0, 8000) : '',
         };
     } catch {
-      evaluation = { id: row.evaluation.id, state: 'unavailable', stdout: '', stderr: '' };
-      environment = { state: environment?.state ?? 'unknown', ready: false };
+      evaluation = {
+        id: row.evaluation.id,
+        state: 'unavailable',
+        stdout: '',
+        stderr: '',
+        ...(row.evaluation.purpose ? { purpose: row.evaluation.purpose } : {}),
+      };
+      // A missing command observation does not contradict the workspace health probe.
+      // Keep the execution lock until collection confirms that its writer has stopped.
     }
   }
 

@@ -2380,6 +2380,112 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
     expect(mocked.creates.length).toBe(creates + 1);
     expect((await learningView(principal, study.id)).environment?.ready).toBe(true);
   });
+  it.each(['compile', 'infrastructure'] as const)(
+    'keeps %s assessment failure repairable without abandoning the test step',
+    async (kind) => {
+      const previousStudyId = studyId;
+      const previousBuild = project.buildCommand;
+      const previousEvaluation = project.evaluations.greeting!;
+      onTestFinished(() => {
+        studyId = previousStudyId;
+        project.buildCommand = previousBuild;
+        project.evaluations.greeting = previousEvaluation;
+      });
+      studyId = (await freshStudy()).id;
+      let row = await store.get(studyId, principal.ownerId);
+      row.state.position.stageIndex = 4;
+      row.state.milestones[0]!.stageIndex = 4;
+      row.state.introCompleted = true;
+      await store.transaction((db) => store.commit(db, row, { state: row.state, events: [] }));
+      project.buildCommand = 'python3 -m py_compile greeting.py';
+      project.evaluations.greeting = {
+        ...previousEvaluation,
+        prepare:
+          kind === 'compile'
+            ? ['python3', '-m', 'py_compile', 'greeting.py']
+            : ['python3', '-c', 'raise RuntimeError("PRIVATE_FIXTURE")'],
+      };
+      const service = await SandboxService.forOwner(principal);
+      const file = join(mocked.root, row.environment_id!, 'greeting.py');
+      await writeFile(file, 'def greet(name)\n    return ""\n');
+      await command('evaluate');
+      expect((await workbenchView(principal, studyId)).canEdit).toBe(false);
+      await command('collect');
+      const view = await learningView(principal, studyId);
+      expect(view.environment?.ready).toBe(true);
+      expect(view.state.status).not.toBe('failed');
+      expect(view.state.collected.greeting!.tests).toMatchObject({
+        status: kind === 'compile' ? 'failed' : 'error',
+        failureKind: kind,
+      });
+      expect(view.state.collected.greeting!.remediation?.kind).toBe(
+        kind === 'compile' ? 'implementation_repair' : 'evaluation_recovery',
+      );
+      expect(view.actions).toEqual(expect.arrayContaining(['chat', 'edit', 'evaluate']));
+      expect(view.actions).not.toContain('next');
+      expect((await workbenchView(principal, studyId)).canEdit).toBe(true);
+      await expect(command('next')).rejects.toThrow('not available');
+      // A real learner edit remains possible after an unreliable assessment.
+      const original = await service.readText(row.environment_id!, 'greeting.py');
+      await command('save', {
+        path: 'greeting.py',
+        expectedHash: digest(original),
+        text: original + '# learner inspection\n',
+      });
+      await runTools('Please help inspect this assessment problem.', async (config) => {
+        if (kind === 'infrastructure')
+          expect(config.systemPrompt).toContain('not confirmed learner error');
+        const failedBuild = await invoke(config, 'run_build');
+        expect(failedBuild).toBeDefined();
+        const collected = await invoke(config, 'collect_build');
+        const failedContent = collected.content[0]!;
+        if (failedContent.type !== 'text') throw new Error('Expected a build receipt');
+        expect(JSON.parse(failedContent.text)).toMatchObject({ passed: false });
+        const current = await service.readText(row.environment_id!, 'greeting.py');
+        await invoke(config, 'write_file', {
+          path: 'greeting.py',
+          expectedHash: digest(current),
+          text: 'def greet(name): return f"Hello, {name}!"\n',
+        });
+        await invoke(config, 'run_build');
+        const passedContent = (await invoke(config, 'collect_build')).content[0]!;
+        if (passedContent.type !== 'text') throw new Error('Expected a build receipt');
+        expect(JSON.parse(passedContent.text)).toMatchObject({
+          passed: true,
+        });
+      });
+      project.evaluations.greeting = previousEvaluation;
+      await command('evaluate');
+      await command('collect');
+      row = await store.get(studyId, principal.ownerId);
+      expect(row.state.position.stageIndex).toBe(4);
+      expect(row.state.collected.greeting!.tests?.status).toBe('passed');
+      expect(row.state.collected.greeting!.remediation).toBeNull();
+    },
+  );
+  it('does not relabel a healthy workspace as unavailable when reading test progress fails', async () => {
+    const study = await freshStudy();
+    const row = await store.get(study.id, principal.ownerId);
+    row.state.position.stageIndex = 4;
+    row.state.milestones[0]!.stageIndex = 4;
+    await store.transaction((db) => store.commit(db, row, { state: row.state, events: [] }));
+    await study.send('evaluate');
+    const observation = vi
+      .spyOn(SandboxService.prototype, 'command')
+      .mockRejectedValueOnce(new Error('Transient command query failure'));
+    let view;
+    try {
+      view = await learningView(principal, study.id);
+    } finally {
+      observation.mockRestore();
+    }
+    expect(view.environment).toEqual({ state: 'running', ready: true });
+    expect(view.evaluation?.state).toBe('unavailable');
+    // Unknown execution state is not permission to edit concurrently with a possible writer.
+    expect((await workbenchView(principal, study.id)).canEdit).toBe(false);
+    await study.send('collect');
+    expect((await workbenchView(principal, study.id)).canEdit).toBe(true);
+  });
   it('locks failed-test repair writes until collection while retaining the same test step', async () => {
     const study = await freshStudy();
     let row = await store.get(study.id, principal.ownerId);

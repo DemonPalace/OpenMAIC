@@ -53,13 +53,20 @@ lock-reason footer consumes editor height. These rules follow the existing OpenP
 | Planning, assistant idle | PLAN.md only; source remains read-only |
 | Coding, assistant idle | Source files; approved PLAN.md remains read-only |
 | Formal tests or result collection | Read-only to preserve the tested version |
-| Recorded test failure, coder repair idle | Source editable in the same test step |
+| Recorded test failure or unreliable evaluation, coder idle and workspace healthy | Source editable in the same test step; chat/build/retest remain available |
 | Understanding quiz and reflection | Read-only |
 | Assistant queued/running | Read-only until the assistant finishes |
 | Build or build-result collection | Read-only until collection finishes |
 | Completed, paused or stopped project | Read-only |
 
 The existing stage definitions still determine whether an action is available.
+An unreliable evaluation records `evaluation_recovery`, not a confirmed learner
+implementation error. The coding assistant receives the same public diagnostics as
+the learner and can inspect files or run the public build. Unresolved tooling or
+course-fixture problems need platform/course support; recovery never invents a pass
+or advances the stage. A failed progress query alone does not mark a successfully
+probed workspace unavailable. Uncertain execution still retains the writer lock
+until collection confirms it has stopped.
 Client-side loading, an in-flight operation, environment readiness and stale buffers
 also block editing with distinct explanations. Direct API writes cannot bypass a
 pending test/build. Agent file-write and file-management tools obey that evaluation

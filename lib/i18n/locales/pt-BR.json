@@ -2590,6 +2590,14 @@
         "failed": "Review the failed checks and ask the coding assistant for help, then rerun tests. Hidden tests and expected answers are not shown.",
         "error": "No reliable code verdict is available. Check the environment and rerun; this is not a confirmed code failure.",
         "unavailable": "The result is not confirmed. Retry getting results on the task bar; an earlier pass cannot authorize progression."
+      },
+      "compile": "Falha na compilação; os testes ainda não começaram.",
+      "diagnostics": {
+        "cannot_find_symbol": "Símbolo não encontrado",
+        "type_mismatch": "Tipos incompatíveis",
+        "invalid_method_call": "Argumentos do método incompatíveis",
+        "missing_package": "Pacote não encontrado",
+        "compile_error": "Erro de compilação ou sintaxe"
       }
     },
     "runTests": "Run tests",

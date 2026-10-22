@@ -45,13 +45,19 @@ export function TestEvaluation({
         ? 'text-amber-700 dark:text-amber-300'
         : 'text-muted-foreground';
   const checks = !active && !view.evaluation ? result?.publicDiagnostics?.caseResults : undefined;
-  const title = t(`pblV3.testResult.${phase}`);
-  const count = checks?.length
-    ? t('pblV3.testResult.count', {
-        passed: checks.filter((c) => c.passed).length,
-        total: checks.length,
-      })
-    : '';
+  const compileFailed = phase === 'failed' && result?.failureKind === 'compile';
+  const building = view.evaluation?.purpose === 'compile';
+  const title = building
+    ? t('pblV3.build')
+    : t(`pblV3.testResult.${compileFailed ? 'compile' : phase}`);
+  const locations = !active && !view.evaluation ? result?.publicDiagnostics?.locations : undefined;
+  const count =
+    checks?.length && !compileFailed
+      ? t('pblV3.testResult.count', {
+          passed: checks.filter((c) => c.passed).length,
+          total: checks.length,
+        })
+      : '';
   if (mode === 'summary')
     return (
       <span
@@ -82,6 +88,20 @@ export function TestEvaluation({
         {title}
         {count && <span className="font-normal">{count}</span>}
       </h5>
+      {locations?.length ? (
+        <ul className="space-y-2 text-xs" data-testid="pbl-test-locations">
+          {locations.map((location, index) => (
+            <li key={`${location.file}:${location.line}:${index}`}>
+              <code className="break-all">
+                {location.file}
+                {location.line ? `:${location.line}` : ''}
+              </code>
+              {' · '}
+              {t(`pblV3.testResult.diagnostics.${location.code}`)}
+            </li>
+          ))}
+        </ul>
+      ) : null}
       {checks?.length ? (
         <ul className="space-y-2">
           {checks.map((check) => (
@@ -107,7 +127,9 @@ export function TestEvaluation({
           {result.publicFeedback}
         </pre>
       ) : null}
-      <p className="text-xs text-muted-foreground">{t(`pblV3.testResult.hints.${phase}`)}</p>
+      <p className="text-xs text-muted-foreground">
+        {t(building ? 'pblV3.editAccess.building' : `pblV3.testResult.hints.${phase}`)}
+      </p>
     </section>
   );
 }

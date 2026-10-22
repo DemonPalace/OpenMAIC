@@ -94,8 +94,7 @@ export function LearningWorkbenchPanel({
     current = useRef(view);
   current.current = view;
   const disabled = pending || working || view.busy || !view.environment?.ready;
-  const access = (name?: string) =>
-    projectEditAccess({ ...view, evaluation: view.evaluation ? {} : null }, name);
+  const access = (name?: string) => projectEditAccess(view, name);
   const canEdit = (name: string) => !disabled && !!work?.canEdit && access(name).canEdit;
   const editor = useProjectEditor(
     view,

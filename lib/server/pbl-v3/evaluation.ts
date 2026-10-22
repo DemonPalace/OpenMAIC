@@ -1,7 +1,10 @@
 import 'server-only';
 import { createHash } from 'node:crypto';
 import { sandboxConflict } from '@/lib/sandbox/errors';
-import type { EvaluationResult } from '@/lib/pbl/v3/domain/orchestration/types';
+import type {
+  EvaluationResult,
+  PublicEvaluationDiagnosticLocation,
+} from '@/lib/pbl/v3/domain/orchestration/types';
 import type { SandboxCommandResult } from '@/lib/sandbox/types';
 import type { InstalledProject } from './catalog';
 
@@ -39,9 +42,22 @@ export function evaluationCommand(spec: ProjectEvaluation, requestId: string) {
     cases: spec.cases.map(({ id, argv, stdin }) => ({ id, argv, stdin })),
   };
   const payload = Buffer.from(JSON.stringify({ spec: execution, requestId })).toString('base64');
-  const script = `import base64,json,subprocess,tempfile,os,hashlib,resource
+  const script = `import base64,json,subprocess,tempfile,os,hashlib,resource,re
 cfg=json.loads(base64.b64decode(${JSON.stringify(payload)}))
-spec=cfg['spec']; results=[]; build=True; buildReason=None
+spec=cfg['spec']; results=[]; build=True; buildReason=None; locations=[]
+def diagnose(raw):
+ text=re.sub(r'\\x1b\\[[0-?]*[ -/]*[@-~]','',raw); found=[]; compilation=False
+ patterns=[r'(?m)^(?:\\[ERROR\\]\\s+)?([^\\n]+?\\.java):(?:\\[(\\d+),\\d+\\]|(\\d+)):?\\s*(.*)',r'File "([^"\\n]+\\.py)", line (\\d+)']
+ for pattern in patterns:
+  for m in re.finditer(pattern,text):
+   if m[1].endswith('.py') and not re.search(r'(?:SyntaxError|IndentationError|TabError):',text): continue
+   compilation=True; path=os.path.relpath(os.path.realpath(m[1].strip()),os.getcwd())
+   if path=='..' or path.startswith('../'): continue
+   line=int(m[2] or m[3]); message=m[4] if path.endswith('.java') else ''
+   code='cannot_find_symbol' if 'cannot find symbol' in message else 'type_mismatch' if 'incompatible types' in message else 'invalid_method_call' if 'cannot be applied to given types' in message else 'missing_package' if re.search(r'package .+ does not exist',message) else 'compile_error'
+   item={'file':path,'line':line,'code':code}
+   if item not in found: found.append(item)
+ return found[:8] if found or not compilation else None
 with tempfile.TemporaryDirectory(prefix='pbl-check-') as out:
  resources=os.path.join(out,'evaluation'); os.makedirs(resources)
  for path,text in spec.get('resources',{}).items():
@@ -54,25 +70,27 @@ with tempfile.TemporaryDirectory(prefix='pbl-check-') as out:
    except subprocess.TimeoutExpired:
     proc.kill(); proc.communicate(); raise
    output.seek(0); data=output.read(1048577)
-   if len(data)>1048576: return proc.returncode,None
+   errors.seek(0); diagnostic=diagnose(errors.read(65536).decode('utf-8',errors='replace')+'\\n'+data[:65536].decode('utf-8',errors='replace')) if proc.returncode else []
+   if diagnostic is None: raise OSError('Assessment compilation could not be attributed to public source')
+   if len(data)>1048576: return proc.returncode,None,diagnostic
    text=data.decode('utf-8').replace('\\r\\n','\\n').replace('\\r','\\n')
-   return proc.returncode,hashlib.sha256(text.encode('utf-8')).hexdigest()
+   return proc.returncode,hashlib.sha256(text.encode('utf-8')).hexdigest(),diagnostic
  try:
   if spec.get('prepare'):
-   build=run(spec['prepare'])[0]==0
+   code,_,locations=run(spec['prepare']); build=code==0
    if not build: buildReason='build'
   for case in spec['cases']:
    observed=None; exitCode=None; reason='not_run'
    if build:
     try:
-     exitCode,observed=run(case['argv'],case.get('stdin',''))
+     exitCode,observed,diagnostic=run(case['argv'],case.get('stdin','')); locations.extend(diagnostic)
      reason='execution' if exitCode else ('output' if observed is None else None)
     except subprocess.TimeoutExpired: reason='timeout'
     except (OSError,UnicodeError): reason='environment'
    results.append({'id':case['id'],'stdoutDigest':observed,'exitCode':exitCode,'reason':reason})
  except subprocess.TimeoutExpired: build=False; buildReason='timeout'
  except OSError: build=False; buildReason='environment'
-print('PBL_RESULT:'+cfg['requestId']+':'+json.dumps({'build':build,'buildReason':buildReason,'checks':results},separators=(',',':')))
+print('PBL_RESULT:'+cfg['requestId']+':'+json.dumps({'build':build,'buildReason':buildReason,'checks':results,'locations':locations[:8]},separators=(',',':')))
 `;
   return `python3 -c ${quote(script)}`;
 }
@@ -80,10 +98,16 @@ type Receipt = {
   build: boolean;
   buildReason?: 'build' | 'timeout' | 'environment';
   checks: NonNullable<NonNullable<EvaluationResult['publicDiagnostics']>['caseResults']>;
+  locations: PublicEvaluationDiagnosticLocation[];
 };
 
 /** Only the installed case identities and a complete run-specific receipt establish evidence. */
-function evaluationReceipt(spec: ProjectEvaluation, id: string, output: string): Receipt | null {
+function evaluationReceipt(
+  spec: ProjectEvaluation,
+  id: string,
+  output: string,
+  sourcePaths: readonly string[] = [],
+): Receipt | null {
   const prefix = `PBL_RESULT:${id}:`;
   const lines = output.split('\n').filter((line) => line.startsWith(prefix));
   if (lines.length !== 1) return null;
@@ -97,6 +121,36 @@ function evaluationReceipt(spec: ProjectEvaluation, id: string, output: string):
         !['build', 'timeout', 'environment'].includes(value.buildReason))
     )
       return null;
+    const locations: PublicEvaluationDiagnosticLocation[] = [];
+    if (value.locations != null) {
+      if (!Array.isArray(value.locations) || value.locations.length > 8) return null;
+      const codes = [
+        'cannot_find_symbol',
+        'type_mismatch',
+        'invalid_method_call',
+        'missing_package',
+        'compile_error',
+      ];
+      for (const item of value.locations) {
+        if (
+          !sourcePaths.includes(item?.file) ||
+          !Number.isSafeInteger(item.line) ||
+          item.line < 1 ||
+          item.line > 10_000_000 ||
+          !codes.includes(item.code)
+        )
+          return null;
+        if (
+          !locations.some(
+            (location) =>
+              location.file === item.file &&
+              location.line === item.line &&
+              location.code === item.code,
+          )
+        )
+          locations.push({ file: item.file, line: item.line, code: item.code });
+      }
+    }
     const reasons = ['output', 'execution', 'timeout', 'environment', 'not_run'];
     const checks: Receipt['checks'] = spec.cases.map((c, index) => {
       const result = value.checks[index];
@@ -121,7 +175,7 @@ function evaluationReceipt(spec: ProjectEvaluation, id: string, output: string):
         ...(!passed ? { reason: result.reason ?? 'output' } : {}),
       };
     });
-    return { build: value.build, buildReason: value.buildReason ?? undefined, checks };
+    return { build: value.build, buildReason: value.buildReason ?? undefined, checks, locations };
   } catch {
     return null;
   }
@@ -136,15 +190,17 @@ export function evaluationOutcome(
   spec: ProjectEvaluation,
   id: string,
   observed: Pick<SandboxCommandResult, 'state' | 'exitCode' | 'stdout' | 'stderr'>,
+  sourcePaths: readonly string[] = [],
 ): Pick<EvaluationResult, 'status' | 'failureKind' | 'publicFeedback' | 'publicDiagnostics'> {
   const receipt =
     observed.state === 'exited' && observed.exitCode === 0
-      ? evaluationReceipt(spec, id, observed.stdout)
+      ? evaluationReceipt(spec, id, observed.stdout, sourcePaths)
       : null;
   if (
     !receipt ||
     receipt.buildReason === 'environment' ||
     receipt.buildReason === 'timeout' ||
+    (!receipt.build && !receipt.locations.length) ||
     receipt.checks.some((c) => c.reason === 'environment')
   )
     return {
@@ -160,11 +216,12 @@ export function evaluationOutcome(
     };
   const checks = receipt.checks;
   const passed = receipt.build && checks.every((c) => c.passed);
-  const kind = !receipt.build
-    ? 'compile'
-    : checks.some((c) => c.reason === 'timeout')
-      ? 'timeout'
-      : 'assertion';
+  const kind =
+    !receipt.build || receipt.locations.length
+      ? 'compile'
+      : checks.some((c) => c.reason === 'timeout')
+        ? 'timeout'
+        : 'assertion';
   const reasons = {
     output: 'output did not satisfy the contract',
     execution: 'code could not execute successfully',
@@ -186,11 +243,12 @@ export function evaluationOutcome(
       kind,
       summary: passed
         ? 'All installed checks passed.'
-        : !receipt.build
+        : kind === 'compile'
           ? 'The code build failed before tests could run.'
           : 'Some checks did not satisfy the project contract.',
-      reportGenerated: receipt.build,
+      reportGenerated: receipt.build && kind !== 'compile',
       caseResults: checks,
+      ...(receipt.locations.length ? { locations: receipt.locations } : {}),
     },
   };
 }

@@ -14,8 +14,12 @@ export async function startBuild(
     command = projectFor(row).buildCommand;
   if (
     row.state.status === 'completed' ||
-    stage.kind !== 'produce' ||
-    stage.writes !== 'code' ||
+    !(
+      (stage.kind === 'produce' && stage.writes === 'code') ||
+      (stage.kind === 'check' &&
+        stage.checker === 'tests' &&
+        row.state.collected[row.state.position.milestoneId!]?.remediation?.target === 'coder')
+    ) ||
     !command
   )
     throw sandboxConflict('No build is installed for this stage.');

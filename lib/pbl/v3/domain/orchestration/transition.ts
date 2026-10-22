@@ -499,7 +499,7 @@ export function recordEvaluation(
   const collected = state.collected[milestone.id]!;
   const attempt = (collected.remediation?.attempt ?? 0) + 1;
   const remediation =
-    evaluation.status === 'failed'
+    evaluation.status !== 'passed'
       ? createRemediationHint(evaluation, { id: ids.remediationId, attempt })
       : null;
   const completedEvaluation = remediation ? { ...evaluation, remediation } : evaluation;

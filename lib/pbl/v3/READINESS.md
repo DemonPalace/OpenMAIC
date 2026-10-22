@@ -91,6 +91,18 @@ Expected-output digests remove the known command-line disclosure, but shell acce
 remains a cooperative learning facility. Course authors must not put expected values
 inside sandbox-visible support scripts. This does not claim hostile-exam isolation.
 
+Compile feedback returns bounded public-source locations and error categories,
+without compiler source excerpts, private test paths, hidden expectations or raw
+tracebacks. ANSI decoration is removed before parsing. The host validates locations
+against the actual source snapshot. Unattributed preparation/private-driver failures
+remain unreliable assessments, not confirmed learner failures. Both categories keep
+editing, Coder help, public builds and retesting available when the workspace is
+healthy and no writer is active. Actual environment loss still uses the shared
+recovery path. Python/JDK and PostgreSQL regressions cover failure, repair and a
+passing rerun; explicit current-stage compile commands do not compile an unused
+future-stage fixture merely because it is staged. Course authors still own correct
+stage selection, contracts, fixtures and cumulative API compatibility.
+
 ## Later work
 
 The simplified course content, its DSL/tests/business frontend and private packaging

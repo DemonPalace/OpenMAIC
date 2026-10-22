@@ -2590,6 +2590,14 @@
         "failed": "Review the failed checks and ask the coding assistant for help, then rerun tests. Hidden tests and expected answers are not shown.",
         "error": "No reliable code verdict is available. Check the environment and rerun; this is not a confirmed code failure.",
         "unavailable": "The result is not confirmed. Retry getting results on the task bar; an earlier pass cannot authorize progression."
+      },
+      "compile": "컴파일 실패로 테스트가 시작되지 않았습니다",
+      "diagnostics": {
+        "cannot_find_symbol": "기호를 찾을 수 없음",
+        "type_mismatch": "호환되지 않는 형식",
+        "invalid_method_call": "메서드 인수 불일치",
+        "missing_package": "패키지를 찾을 수 없음",
+        "compile_error": "컴파일 또는 구문 오류"
       }
     },
     "runTests": "Run tests",

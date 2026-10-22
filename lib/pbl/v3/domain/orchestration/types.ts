@@ -62,7 +62,7 @@ export interface WorkspaceRevision {
 
 export interface RemediationHint {
   id: string;
-  kind: 'implementation_repair';
+  kind: 'implementation_repair' | 'evaluation_recovery';
   target: 'coder';
   reason: string;
   attempt: number;

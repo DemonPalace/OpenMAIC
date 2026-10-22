@@ -516,7 +516,7 @@ function oversizedTeachingPrompt(project: InstalledProject, planText: string) {
               }
             : null;
           const repairing = stage.kind === 'check' && role === 'coder';
-          if (repairing && collected.tests?.status !== 'failed') continue;
+          if (repairing && (!collected.tests || collected.tests.status === 'passed')) continue;
           collected.remediation =
             repairing && collected.tests
               ? createRemediationHint(collected.tests, {

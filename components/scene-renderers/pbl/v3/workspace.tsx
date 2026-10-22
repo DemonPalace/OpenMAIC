@@ -605,7 +605,9 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
                                 : resultUnavailable
                                   ? 'pblV3.testResult.retryCollect'
                                   : view.evaluation
-                                    ? 'pblV3.testResult.running'
+                                    ? view.evaluation.purpose === 'compile'
+                                      ? 'pblV3.build'
+                                      : 'pblV3.testResult.running'
                                     : 'pblV3.runTests',
                           )}
                         </button>

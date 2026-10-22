@@ -776,6 +776,33 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
   ).toBeVisible();
   await expect(details.getByRole('listitem')).toHaveCount(2);
   await expect(details.getByText('PRIVATE STDERR', { exact: true })).toHaveCount(0);
+  view.state.collected.greeting!.tests!.failureKind = 'compile';
+  view.state.collected.greeting!.tests!.publicDiagnostics!.kind = 'compile';
+  view.state.collected.greeting!.tests!.publicDiagnostics!.locations = [
+    { file: 'src/Greeting.java', line: 7, code: 'cannot_find_symbol' },
+  ];
+  view.revision++;
+  await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
+  await expect(details.getByTestId('pbl-test-locations')).toContainText('src/Greeting.java:7');
+  await expect(details.getByTestId('pbl-test-locations')).toContainText('Symbol not found');
+  await expect(summary).toContainText('Code could not compile');
+  view.evaluation = {
+    id: 'repair-build',
+    state: 'running',
+    purpose: 'compile',
+    stdout: '',
+    stderr: '',
+  };
+  view.busy = true;
+  view.revision++;
+  await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
+  await expect(summary).toContainText('Build / check syntax');
+  await expect(summary).not.toContainText('Running tests');
+  await expect(summary.locator('.animate-spin')).toHaveCount(1);
+  view.evaluation = null;
+  view.busy = false;
+  view.revision++;
+  await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
   await details.getByRole('button', { name: 'Close task details' }).click({ timeout: 7000 });
   await runTests.click();
   await expect(summary).toHaveAttribute('data-state', 'running');

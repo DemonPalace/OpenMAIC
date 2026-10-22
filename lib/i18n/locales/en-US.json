@@ -2588,8 +2588,16 @@
         "collecting": "Execution finished. The server is checking the file version and saving the result.",
         "passed": "The result is saved. Use Continue on the task bar to enter the next step.",
         "failed": "Review the failed checks and ask the coding assistant for help, then rerun tests. Hidden tests and expected answers are not shown.",
-        "error": "No reliable code verdict is available. Check the environment and rerun; this is not a confirmed code failure.",
+        "error": "No reliable verdict is available; this is not confirmed code failure. While the workspace is available, you can edit, ask the coding assistant for help or retry. Contact course or platform support if the problem persists.",
         "unavailable": "The result is not confirmed. Retry getting results on the task bar; an earlier pass cannot authorize progression."
+      },
+      "compile": "Code could not compile; tests have not started.",
+      "diagnostics": {
+        "cannot_find_symbol": "Symbol not found",
+        "type_mismatch": "Incompatible types",
+        "invalid_method_call": "Method arguments do not match",
+        "missing_package": "Package not found",
+        "compile_error": "Compilation or syntax error"
       }
     },
     "runTests": "Run tests",

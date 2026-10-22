@@ -65,8 +65,8 @@ evidence without claiming that old test results certify subsequently edited file
 
 The workbench places the IDE on the left and teaching assistant on the right,
 with adjustable panel widths. The IDE includes an authorized file tree, Monaco
-editor, per-file tabs and drafts, command output, terminal and application-preview
-panes. The assistant keeps its conversation scroll separate from stage controls and
+editor, per-file tabs and drafts, and build output. Shell controls are disabled for
+the current activity, and no application-preview pane is mounted. The assistant keeps its conversation scroll separate from stage controls and
 the message composer. Enter sends; Shift+Enter inserts a line. Workspace keystrokes
 do not trigger classroom shortcuts.
 
@@ -97,9 +97,8 @@ they are not shown as learner messages and cannot count as review feedback. Relo
 reuse the current role; a failed opening uses the normal retry path. Existing sessions
 retain their history and position when the old separate intro gate is folded away.
 The scene uses OpenPBL's blue-gray/green palette in dark mode and its light counterpart,
-scoped to the workbench and following the host theme. Configured application previews
-keep a tab before connection, with guidance for unavailable/not-started states; project
-web applications and their API contracts remain content-specific.
+scoped to the workbench and following the host theme. Project web applications and
+their API contracts remain later content-specific integration work.
 
 Monaco is loaded only in the browser. Install/dev/build copy its bundled assets to
 `public/code-editor/vs`; Docker copies these with the application's public directory.

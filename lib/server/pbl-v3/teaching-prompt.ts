@@ -217,7 +217,17 @@ function buildTeachingPrompt({
             }
           : {}),
         ...(repairing
-          ? { testFeedback: collected.tests?.publicFeedback, remediation: collected.remediation }
+          ? {
+              testFeedback: collected.tests?.publicFeedback,
+              publicDiagnostics: collected.tests?.publicDiagnostics,
+              remediation: collected.remediation,
+              ...(collected.remediation?.kind === 'evaluation_recovery'
+                ? {
+                    recoveryInstructions:
+                      'No reliable test verdict was obtained. This is not confirmed learner error. Help inspect visible project files and run the public build if useful; do not invent hidden test details or change correct code just to guess at a platform problem. The learner may retry assessment. If tooling, dependencies or course fixtures remain broken, explain the blocker and ask for platform/course support; do not claim a pass or reset teaching progress.',
+                  }
+                : {}),
+            }
           : {}),
         ...(stage.kind === 'mentor_say' && welcome !== 'pending'
           ? { instruction: stage.say, teaching: milestone.teaching }

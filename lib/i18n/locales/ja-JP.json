@@ -2590,6 +2590,14 @@
         "failed": "Review the failed checks and ask the coding assistant for help, then rerun tests. Hidden tests and expected answers are not shown.",
         "error": "No reliable code verdict is available. Check the environment and rerun; this is not a confirmed code failure.",
         "unavailable": "The result is not confirmed. Retry getting results on the task bar; an earlier pass cannot authorize progression."
+      },
+      "compile": "コンパイルに失敗したため、テストは未実行です",
+      "diagnostics": {
+        "cannot_find_symbol": "シンボルが見つかりません",
+        "type_mismatch": "型に互換性がありません",
+        "invalid_method_call": "メソッドの引数が一致しません",
+        "missing_package": "パッケージが見つかりません",
+        "compile_error": "コンパイルまたは構文エラー"
       }
     },
     "runTests": "Run tests",
