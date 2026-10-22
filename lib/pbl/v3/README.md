@@ -277,6 +277,21 @@ after all required milestones are completed; exploration remains open. The serve
 uses the same eligibility rule for the report button, evidence and GET/POST report
 access. Releases awaiting more milestones do not unlock a final report.
 
+Saved reports are keyed to the study revision, saved evidence and durable Agent
+history, including pending review receipts. New evidence invalidates the saved
+analysis; GET returns current bounded evidence without calling a model, and an
+explicit report action generates a replacement. Concurrent requests reuse the
+same attempt; an older analysis cannot overwrite a newer attempt.
+
+Report reads retain at most 1,000 orchestration records, 1,000 saved edit/artifact
+records and 1,000 conversation events across at most 1,000 role bindings. Queries
+omit payloads over 32 KiB before transferring them to the app. Each displayed
+record is limited to 12,000 characters, with an 80,000-character budget per
+category (240,000 total), prioritizing recent evidence and marking omissions.
+The complete append-only history remains stored. Quantitative counts are computed
+over the full snapshot in SQL, independently of excerpt limits; assistant turns
+count completed text messages, excluding thinking and tool/protocol events.
+
 Review feedback is bound to durable student messages after the pending question's
 turn in the same stage. The teaching role can assess multiple replies together and
 quote or summarize them in `studentFeedback`; literal substring matching is not an

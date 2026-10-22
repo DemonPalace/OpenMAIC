@@ -330,6 +330,7 @@ import {
 } from '@/lib/server/pbl-v3/runtime';
 import { teachingRunnerConfig } from '@/lib/server/pbl-v3/runner-tools';
 import { touchEnvironment } from '@/lib/server/pbl-v3/environment';
+import { recordLearningEvidence } from '@/lib/server/pbl-v3/evidence';
 import {
   completeCurrentStage,
   startOrchestration,
@@ -1000,6 +1001,23 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
       expect(mocked.reportAnalysis).toHaveBeenCalledTimes(calls + 1);
       expect(await store.get(created.id, principal.ownerId)).toEqual(before);
       expect((await learningView(principal, created.id)).environmentId).toBeNull();
+      await recordLearningEvidence(pool, before, 'learner', 'file-edit', {
+        path: 'extension.py',
+        text: 'A later exploration edit',
+      });
+      const refreshed = await learningReport(principal, created.id);
+      expect(refreshed.analysis?.status).toBe('not_generated');
+      expect(refreshed.facts?.fileEdits).toBe(1);
+      expect(refreshed.evidence.some((e) => e.detail.includes('A later exploration edit'))).toBe(
+        true,
+      );
+      expect(mocked.reportAnalysis).toHaveBeenCalledTimes(calls + 1); // GET is token-free.
+      mocked.reportAnalysis.mockResolvedValueOnce({ findings: [], omitted: false });
+      const regenerated = await generateLearningReport(principal, created.id, signal);
+      expect(regenerated.analysis?.status).toBe('ready');
+      expect(regenerated.facts?.fileEdits).toBe(1);
+      expect(await generateLearningReport(principal, created.id, signal)).toEqual(regenerated);
+      expect(mocked.reportAnalysis).toHaveBeenCalledTimes(calls + 2);
       await expect(
         learningReport({ ...principal, ownerId: 'another-owner' }, created.id),
       ).rejects.toMatchObject({ status: 404 });
@@ -1396,6 +1414,13 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
       "UPDATE pbl_v3_studies SET state=jsonb_set(state,'{status}','\"completed\"') WHERE id=$1",
       [id],
     );
+    // Existing databases have ready reports without an evidence key after migration.
+    // They must be replaced on explicit generation, never reused as current evidence.
+    await pool.query(
+      `INSERT INTO pbl_v3_reports(study_id,completion_revision,attempt,status,document)
+       VALUES($1,0,'old-format','ready',$2)`,
+      [id, JSON.stringify({ oldFormat: true })],
+    );
     mocked.reportAnalysis.mockReset().mockRejectedValueOnce(new Error('PRIVATE MODEL FAILURE'));
     const signal = new AbortController().signal;
     expect((await learningReport(principal, id)).analysis?.status).toBe('not_generated');
@@ -1424,6 +1449,166 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
     await expect(
       learningReport({ ...principal, ownerId: 'another-owner' }, id),
     ).rejects.toMatchObject({ status: 404 });
+  });
+  it('invalidates reports on new Agent evidence and fences an older analysis finishing late', async () => {
+    const study = await freshStudy();
+    const started = (await study.send('begin')) as { sessionId: string };
+    await pool.query(
+      "UPDATE pbl_v3_studies SET state=jsonb_set(state,'{status}','\"completed\"') WHERE id=$1",
+      [study.id],
+    );
+    const before = await store.get(study.id, principal.ownerId);
+    mocked.reportAnalysis.mockReset();
+    let finishOld!: (value: { findings: never[]; omitted: boolean }) => void;
+    mocked.reportAnalysis.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishOld = resolve;
+        }),
+    );
+    const signal = new AbortController().signal;
+    const older = generateLearningReport(principal, study.id, signal);
+    await vi.waitFor(() => expect(mocked.reportAnalysis).toHaveBeenCalledTimes(1));
+    await agents.appendControlEvent(started.sessionId, {
+      ts: Date.now(),
+      type: 'message_end',
+      data: {
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'Later exploration discussion.' }],
+        },
+      },
+    });
+    const latest = await learningReport(principal, study.id);
+    expect(latest.analysis?.status).toBe('not_generated');
+    expect(
+      latest.conversations
+        .flatMap((c) => c.messages)
+        .some((m) => m.text === 'Later exploration discussion.'),
+    ).toBe(true);
+    expect((await store.get(study.id, principal.ownerId)).revision).toBe(before.revision);
+    mocked.reportAnalysis.mockResolvedValueOnce({ findings: [], omitted: false });
+    const newer = await generateLearningReport(principal, study.id, signal);
+    finishOld({ findings: [], omitted: false });
+    expect(await older).toEqual(newer);
+    expect(await generateLearningReport(principal, study.id, signal)).toEqual(newer);
+    expect(mocked.reportAnalysis).toHaveBeenCalledTimes(2);
+    // A review receipt can precede its display event, without a study revision change.
+    const binding = (await store.binding(started.sessionId))!;
+    const events = await agents.readEventsAfter(started.sessionId, 0, 100);
+    const inputSeq = events.findLast((e) => e.type === 'user_message')!.id;
+    await pool.query('UPDATE pbl_v3_roles SET guided=$2 WHERE session_id=$1', [
+      started.sessionId,
+      JSON.stringify({
+        pending: {
+          runId: `${binding.stage_key}:${inputSeq}`,
+          question: 'A pending review question.',
+        },
+      }),
+    ]);
+    expect((await learningReport(principal, study.id)).analysis?.status).toBe('not_generated');
+    await agents.softDeleteSession(started.sessionId, principal.ownerId);
+    const deleted = await learningReport(principal, study.id);
+    expect(deleted.truncated).toBe(true);
+    expect(deleted.conversations).toEqual([]);
+  });
+  it('bounds long evidence histories and oversized records while retaining complete quantitative totals', async () => {
+    const study = await freshStudy();
+    const started = (await study.send('begin')) as { sessionId: string };
+    const row = await store.get(study.id, principal.ownerId);
+    const size = 6005;
+    await pool.query(
+      `INSERT INTO pbl_v3_events(study_id,sequence,event)
+      SELECT $1,$2+g,jsonb_build_object('type','decision.recorded','milestoneId','greeting','decisionId','format','chosen',CASE WHEN g%2=0 THEN 'format' ELSE 'concat' END)
+      FROM generate_series(1,$3::int) g`,
+      [study.id, row.state.lastSequence, size],
+    );
+    await pool.query(`INSERT INTO pbl_v3_events(study_id,sequence,event) VALUES($1,$2,$3)`, [
+      study.id,
+      row.state.lastSequence + size + 1,
+      JSON.stringify({
+        type: 'artifact.recorded',
+        artifact: { kind: 'plan', milestoneId: 'greeting' },
+        content: 'OVERSIZED_ORCHESTRATION_' + 'x'.repeat(100000),
+      }),
+    ]);
+    await pool.query(
+      `UPDATE pbl_v3_studies SET state=jsonb_set(jsonb_set(state,'{lastSequence}',to_jsonb($2::int)),'{status}','"completed"'),revision=revision+1 WHERE id=$1`,
+      [study.id, row.state.lastSequence + size + 1],
+    );
+    await pool.query(
+      `INSERT INTO pbl_v3_evidence(study_id,milestone_id,stage_index,kind,actor,detail)
+      SELECT $1,'greeting',0,'file-edit','learner',jsonb_build_object('text',repeat('x',2000),'number',g) FROM generate_series(1,$2::int) g`,
+      [study.id, size],
+    );
+    const current = await store.get(study.id, principal.ownerId);
+    await recordLearningEvidence(pool, current, 'learner', 'file-edit', {
+      text: 'OVERSIZED_FILE_' + 'x'.repeat(100000),
+    });
+    const seq = await agents.lastEventSeq(started.sessionId);
+    await pool.query(
+      `INSERT INTO agent_session_events(session_id,seq,ts,attempt,type,data)
+      SELECT $1,$2+g,0,0,'user_message',jsonb_build_object('text',repeat('y',2000),'pblOpening',false) FROM generate_series(1,$3::int) g`,
+      [started.sessionId, seq, size],
+    );
+    await agents.appendControlEvent(started.sessionId, {
+      ts: Date.now(),
+      type: 'message_end',
+      data: {
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'The most recent discussion remains visible.' }],
+        },
+      },
+    });
+    await agents.appendControlEvent(started.sessionId, {
+      ts: Date.now(),
+      type: 'message_end',
+      data: {
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'OVERSIZED_CONVERSATION_' + 'z'.repeat(100000) }],
+        },
+      },
+    });
+    const report = await learningReport(principal, study.id);
+    expect(report.truncated).toBe(true);
+    expect(report.evidence.length).toBeLessThanOrEqual(2000);
+    expect(report.conversations.flatMap((c) => c.messages).length).toBeLessThanOrEqual(1000);
+    const textSize =
+      report.evidence.reduce((n, e) => n + e.detail.length, 0) +
+      report.conversations.flatMap((c) => c.messages).reduce((n, m) => n + m.text.length, 0);
+    expect(textSize).toBeLessThanOrEqual(240000);
+    expect(Buffer.byteLength(JSON.stringify(report))).toBeLessThan(1000000);
+    expect(JSON.stringify(report)).not.toContain('OVERSIZED_');
+    expect(report.evidence.some((e) => e.detail.includes(`"number": ${size}`))).toBe(true);
+    expect(
+      report.conversations
+        .flatMap((c) => c.messages)
+        .some((m) => m.text === 'The most recent discussion remains visible.'),
+    ).toBe(true);
+    expect(report.counts['decision.recorded']).toBe(size);
+    expect(report.facts).toMatchObject({
+      learnerTurns: size,
+      assistantTurns: 2,
+      decisions: 1,
+      decisionChanges: size - 1,
+      fileEdits: size + 1,
+    });
+    expect(
+      (
+        await pool.query('SELECT count(*)::int AS n FROM pbl_v3_evidence WHERE study_id=$1', [
+          study.id,
+        ])
+      ).rows[0].n,
+    ).toBe(size + 1);
+    mocked.reportAnalysis.mockReset().mockResolvedValueOnce({ findings: [], omitted: true });
+    expect(
+      (await generateLearningReport(principal, study.id, new AbortController().signal)).analysis
+        ?.omitted,
+    ).toBe(true);
+    expect(mocked.reportAnalysis.mock.calls[0]![1].truncated).toBe(true);
+    await agents.softDeleteSession(started.sessionId, principal.ownerId);
   });
   it('prepares once and runs the complete learning flow with actual Python tests', async () => {
     await command('prepare');

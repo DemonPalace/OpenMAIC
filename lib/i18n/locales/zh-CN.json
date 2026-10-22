@@ -2809,7 +2809,7 @@
       "facts": "过程中的一些数字",
       "countNotice": "这些数字帮助回顾过程，多少不代表优劣，也不是评分。",
       "learnerTurns": "你的发言",
-      "assistantTurns": "助手回复与提问",
+      "assistantTurns": "助手回复",
       "decisions": "正式决策",
       "decisionChanges": "改过主意",
       "testRuns": "测试次数",

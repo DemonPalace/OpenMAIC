@@ -2809,7 +2809,7 @@
       "facts": "Your project in numbers",
       "countNotice": "These describe the recorded process; more is not a better score.",
       "learnerTurns": "Your messages",
-      "assistantTurns": "Assistant replies and review questions",
+      "assistantTurns": "Assistant replies",
       "decisions": "Decisions made",
       "decisionChanges": "Decisions reconsidered",
       "testRuns": "Test runs",

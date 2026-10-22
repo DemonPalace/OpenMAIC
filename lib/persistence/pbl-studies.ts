@@ -88,6 +88,12 @@ UPDATE asset_entries e SET committed_at=COALESCE(e.committed_at,now()),expires_a
         updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
       );`,
     },
+    {
+      version: 6,
+      name: 'report-evidence-version',
+      transaction: true,
+      up: 'ALTER TABLE pbl_v3_reports ADD COLUMN evidence_key TEXT;',
+    },
   ],
 };
 

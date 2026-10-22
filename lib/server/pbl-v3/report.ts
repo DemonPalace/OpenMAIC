@@ -1,35 +1,50 @@
 import 'server-only';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import type { PoolClient } from 'pg';
 import { sandboxConflict } from '@/lib/sandbox/errors';
 import { analyzeLearningReport } from './report-analysis';
 import type { OwnerPrincipal } from '@/lib/server/identity/types';
 import type { OrchestrationEvent } from '@/lib/pbl/v3/domain/orchestration/events';
 import type { LearningReport } from '@/lib/pbl/v3/report';
-import { getAgentSessionStore } from '@/lib/server/agent-runtime/store';
-import { LearningStore } from './store';
+import { LearningStore, type Study, type RoleBinding } from './store';
 import { projectFor } from './runtime';
 import { reviewQuestion } from './review-question';
 import { canViewProjectReport } from './stage-progress';
 
-/** Facts come from durable events. This read does not require an execution environment or change progress. */
-export async function learningEvidence(
-  principal: OwnerPrincipal,
-  id: string,
-): Promise<LearningReport> {
-  const store = await LearningStore.open(),
-    row = await store.get(id, principal.ownerId);
+const HISTORY_LIMIT = 1000;
+const RECORD_BYTES = 32768;
+const TEXT_LIMIT = 240000;
+const DETAIL_LIMIT = 12000;
+
+/** Bounded presentation of durable evidence; the underlying append-only history is retained. */
+async function buildLearningEvidence(db: PoolClient, row: Study): Promise<LearningReport> {
+  const id = row.id;
   const project = projectFor(row);
+  let truncated = false;
+  let remaining = TEXT_LIMIT / 3;
+  const boundedText = (text: string) => {
+    const clipped = text.slice(0, Math.min(DETAIL_LIMIT, remaining));
+    remaining -= clipped.length;
+    if (clipped.length < text.length) truncated = true;
+    return clipped;
+  };
   const evidence: LearningReport['evidence'] = [];
-  const records = await store.pool.query<{ sequence: number; event: OrchestrationEvent }>(
-    'SELECT sequence,event FROM pbl_v3_events WHERE study_id=$1 AND sequence<=$2 ORDER BY sequence',
-    [id, row.state.lastSequence],
+  const records = await db.query<{ sequence: number; event: OrchestrationEvent | null }>(
+    `SELECT sequence,CASE WHEN octet_length(event::text)<=$4 THEN event END AS event
+     FROM pbl_v3_events WHERE study_id=$1 AND sequence<=$2 ORDER BY sequence DESC LIMIT $3`,
+    [id, row.state.lastSequence, HISTORY_LIMIT + 1, RECORD_BYTES],
   );
+  if (records.rows.length > HISTORY_LIMIT) truncated = true;
   const versions = new Map<string, string>();
   const versionLabel = (hash: string) => {
     if (!versions.has(hash)) versions.set(hash, `v${versions.size + 1}`);
     return versions.get(hash)!;
   };
-  for (const { sequence, event } of records.rows) {
+  for (const { sequence, event } of records.rows.slice(0, HISTORY_LIMIT)) {
+    if (!event) {
+      truncated = true;
+      continue;
+    }
     let detail: string | undefined, version: string | undefined;
     let milestoneId = 'milestoneId' in event ? event.milestoneId : undefined;
     switch (event.type) {
@@ -67,70 +82,91 @@ export async function learningEvidence(
         detail = event.type;
         break;
     }
-    if (detail !== undefined)
+    if (detail !== undefined) {
+      const text = boundedText(detail);
+      if (!text && detail) continue;
       evidence.push({
         sequence,
         milestoneId,
         kind: event.type,
-        detail,
-        ...(detail.length >= 12000 &&
-        event.type === 'artifact.recorded' &&
-        event.content?.endsWith('…（后略）')
+        detail: text,
+        ...(text.length < detail.length ||
+        (detail.length >= 12000 &&
+          event.type === 'artifact.recorded' &&
+          event.content?.endsWith('…（后略）'))
           ? { truncated: true }
           : {}),
         ...(version ? { version } : {}),
       });
+    }
   }
+  evidence.reverse();
   const counts = Object.fromEntries(
     (
-      await store.pool.query<{ kind: string; count: number }>(
+      await db.query<{ kind: string; count: number }>(
         "SELECT event->>'type' AS kind,count(*)::int AS count FROM pbl_v3_events WHERE study_id=$1 AND sequence<=$2 GROUP BY event->>'type'",
         [id, row.state.lastSequence],
       )
     ).rows.map((r) => [r.kind, r.count]),
   );
-  const agents = await getAgentSessionStore();
   const conversations: LearningReport['conversations'] = [];
-  let interruptedRuns = 0;
-  let missingConversation = false;
-  for (const binding of await store.roles(id)) {
-    if (!(await agents.getSession(binding.session_id))) {
-      missingConversation = true;
+  remaining = TEXT_LIMIT / 3;
+  const bindings = await db.query<
+    RoleBinding & { available: boolean; last: number; omitted: boolean }
+  >(
+    `SELECT r.session_id,r.role,r.context_key,r.stage_key,
+       CASE WHEN octet_length(r.guided::text)<=$3 THEN r.guided END AS guided,
+       COALESCE(octet_length(r.guided::text)>$3,false) AS omitted,
+       a.id IS NOT NULL AND a.deleted_at IS NULL AS available,
+       COALESCE((SELECT max(seq) FROM agent_session_events WHERE session_id=r.session_id),0) AS last
+     FROM pbl_v3_roles r LEFT JOIN agent_sessions a ON a.id=r.session_id
+     WHERE r.study_id=$1 ORDER BY a.updated_at DESC NULLS LAST,r.session_id LIMIT $2`,
+    [id, HISTORY_LIMIT + 1, RECORD_BYTES],
+  );
+  if (bindings.rows.length > HISTORY_LIMIT) truncated = true;
+  let eventsRemaining = HISTORY_LIMIT;
+  for (const binding of bindings.rows.slice(0, HISTORY_LIMIT)) {
+    if (binding.omitted) truncated = true;
+    if (!binding.available) {
+      truncated = true;
       continue;
     }
-    const last = await agents.lastEventSeq(binding.session_id);
-    const entries = [];
-    let cursor = 0;
-    while (cursor < last) {
-      const page = (await agents.readEventsAfter(binding.session_id, cursor, 500)).filter(
-        (e) => e.id <= last,
-      );
-      if (!page.length) break;
-      entries.push(...page);
-      cursor = page.at(-1)!.id;
-    }
+    const entries = await db.query<{ id: number; type: string; data: unknown }>(
+      `SELECT seq AS id,type,CASE WHEN octet_length(data::text)<=$4 THEN data END AS data
+       FROM agent_session_events WHERE session_id=$1 AND seq<=$2
+         AND (type IN ('user_message','message_end')
+           OR (type='tool_execution_end' AND data->>'toolName'='request_skill_review'))
+       ORDER BY seq DESC LIMIT $3`,
+      [binding.session_id, binding.last, eventsRemaining + 1, RECORD_BYTES],
+    );
+    let conversationTruncated = entries.rows.length > eventsRemaining;
+    const selected = entries.rows.slice(0, eventsRemaining);
+    eventsRemaining -= selected.length;
     const messages: LearningReport['conversations'][number]['messages'] = [];
+    const pushMessage = (sequence: number, role: 'user' | 'assistant', text: string) => {
+      const clipped = boundedText(text);
+      if (clipped.length < text.length) conversationTruncated = true;
+      if (clipped) messages.push({ sequence, role, text: clipped });
+    };
     let latestInputSequence: number | undefined;
-    for (const entry of entries) {
-      if (
-        entry.type === 'session_interrupted' ||
-        (entry.type === 'session_end' && (entry.data as { status?: string }).status === 'failed')
-      )
-        interruptedRuns++;
+    for (const entry of selected) {
+      if (!entry.data) {
+        conversationTruncated = true;
+        continue;
+      }
       const data = entry.data as {
         text?: string;
         pblOpening?: boolean;
         message?: { role?: string; content?: { type: string; text?: string }[] };
       };
       const question = reviewQuestion(entry);
-      if (question !== null)
-        messages.push({ sequence: entry.id, role: 'assistant', text: question });
+      if (question !== null) pushMessage(entry.id, 'assistant', question);
       if (entry.type === 'user_message') {
         // Review recovery follows the actual queued input, including automatic
         // openings. Only real learner messages belong in the visible transcript.
-        latestInputSequence = entry.id;
+        latestInputSequence = Math.max(latestInputSequence ?? 0, entry.id);
         if (!data.pblOpening && typeof data.text === 'string')
-          messages.push({ sequence: entry.id, role: 'user', text: data.text });
+          pushMessage(entry.id, 'user', data.text);
       }
       if (
         entry.type === 'message_end' &&
@@ -141,7 +177,7 @@ export async function learningEvidence(
           .filter((p) => p.type === 'text')
           .map((p) => p.text ?? '')
           .join('\n');
-        if (text) messages.push({ sequence: entry.id, role: 'assistant', text });
+        if (text) pushMessage(entry.id, 'assistant', text);
       }
     }
     const pending = binding.guided?.pending;
@@ -153,70 +189,105 @@ export async function learningEvidence(
           m.sequence > latestInputSequence && m.role === 'assistant' && m.text === pending.question,
       )
     )
-      messages.push({ sequence: last + 1, role: 'assistant', text: pending.question });
+      pushMessage(binding.last + 1, 'assistant', pending.question);
     conversations.push({
       role: binding.role,
       milestone: binding.context_key,
-      messages,
-      truncated: cursor < last,
+      messages: messages.sort((a, b) => a.sequence - b.sequence),
+      truncated: conversationTruncated,
     });
   }
-  const saved = await store.pool.query<{
+  remaining = TEXT_LIMIT / 3;
+  const saved = await db.query<{
     id: string;
     milestone_id: string;
     kind: string;
     actor: string;
-    detail: Record<string, unknown>;
+    detail: Record<string, unknown> | null;
   }>(
-    'SELECT id,milestone_id,kind,actor,detail FROM pbl_v3_evidence WHERE study_id=$1 ORDER BY id',
-    [id],
+    `SELECT id,milestone_id,kind,actor,
+       CASE WHEN octet_length(detail::text)<=$3 THEN detail END AS detail
+     FROM pbl_v3_evidence WHERE study_id=$1 ORDER BY id DESC LIMIT $2`,
+    [id, HISTORY_LIMIT + 1, RECORD_BYTES],
   );
-  for (const item of saved.rows)
-    evidence.push({
+  if (saved.rows.length > HISTORY_LIMIT) truncated = true;
+  const savedEvidence: LearningReport['evidence'] = [];
+  for (const item of saved.rows.slice(0, HISTORY_LIMIT)) {
+    if (!item.detail) {
+      truncated = true;
+      continue;
+    }
+    const detail = JSON.stringify(
+      {
+        actor: item.actor,
+        ...Object.fromEntries(
+          Object.entries(item.detail).filter(
+            ([key]) => !['fingerprint', 'previousHash', 'expectedHash', 'requestId'].includes(key),
+          ),
+        ),
+      },
+      null,
+      2,
+    );
+    const text = boundedText(detail);
+    if (!text && detail) continue;
+    savedEvidence.push({
       sequence: -Number(item.id),
       milestoneId: item.milestone_id,
       kind: item.kind,
-      detail: JSON.stringify(
-        {
-          actor: item.actor,
-          ...Object.fromEntries(
-            Object.entries(item.detail).filter(
-              ([key]) =>
-                !['fingerprint', 'previousHash', 'expectedHash', 'requestId'].includes(key),
-            ),
-          ),
-        },
-        null,
-        2,
-      ),
+      detail: text,
+      ...(text.length < detail.length ? { truncated: true } : {}),
       ...(typeof item.detail.fingerprint === 'string'
         ? { version: versionLabel(item.detail.fingerprint) }
         : {}),
     });
-  const choices = new Map<string, string>();
-  let decisionChanges = 0;
-  for (const { event } of records.rows)
-    if (event.type === 'decision.recorded') {
-      const key = `${event.milestoneId}:${event.decisionId}`;
-      if (choices.has(key) && choices.get(key) !== event.chosen) decisionChanges++;
-      choices.set(key, event.chosen ?? '');
-    }
+  }
+  evidence.push(...savedEvidence.reverse());
+  const decisions = (
+    await db.query<{ decisions: number; changes: number }>(
+      `WITH choices AS (
+       SELECT event->>'milestoneId' AS milestone,event->>'decisionId' AS decision,
+         event->>'chosen' AS chosen,
+         row_number() OVER w AS n,lag(event->>'chosen') OVER w AS previous
+       FROM pbl_v3_events WHERE study_id=$1 AND sequence<=$2 AND event->>'type'='decision.recorded'
+       WINDOW w AS (PARTITION BY event->>'milestoneId',event->>'decisionId' ORDER BY sequence)
+     ) SELECT count(DISTINCT (milestone,decision))::int AS decisions,
+       count(*) FILTER (WHERE n>1 AND chosen IS DISTINCT FROM previous)::int AS changes FROM choices`,
+      [id, row.state.lastSequence],
+    )
+  ).rows[0]!;
+  const totals = (
+    await db.query<{
+      learner: number;
+      assistant: number;
+      interrupted: number;
+      edits: number;
+    }>(
+      `SELECT
+       count(*) FILTER (WHERE e.type='user_message' AND jsonb_typeof(e.data->'text')='string'
+         AND COALESCE(e.data->>'pblOpening','false')<>'true')::int AS learner,
+       count(*) FILTER (WHERE e.type='message_end' AND e.data#>>'{message,role}'='assistant'
+         AND EXISTS (SELECT 1 FROM jsonb_array_elements(CASE
+           WHEN jsonb_typeof(e.data#>'{message,content}')='array' THEN e.data#>'{message,content}' ELSE '[]'::jsonb END) p
+           WHERE p->>'type'='text' AND COALESCE(p->>'text','')<>''))::int AS assistant,
+       count(*) FILTER (WHERE e.type='session_interrupted' OR
+         (e.type='session_end' AND e.data->>'status'='failed'))::int AS interrupted,
+       (SELECT count(*)::int FROM pbl_v3_evidence WHERE study_id=$1 AND kind='file-edit') AS edits
+     FROM pbl_v3_roles r JOIN agent_sessions a ON a.id=r.session_id AND a.deleted_at IS NULL
+       JOIN agent_session_events e ON e.session_id=r.session_id WHERE r.study_id=$1`,
+      [id],
+    )
+  ).rows[0]!;
   return {
     facts: {
-      learnerTurns: conversations.reduce(
-        (n, c) => n + c.messages.filter((m) => m.role === 'user').length,
-        0,
-      ),
-      assistantTurns: conversations.reduce(
-        (n, c) => n + c.messages.filter((m) => m.role === 'assistant').length,
-        0,
-      ),
-      decisions: choices.size,
-      decisionChanges,
+      learnerTurns: totals.learner,
+      assistantTurns: totals.assistant,
+      decisions: decisions.decisions,
+      decisionChanges: decisions.changes,
       testRuns: counts['evaluation.recorded'] ?? 0,
       quizAttempts: counts['quiz.recorded'] ?? 0,
-      fileEdits: saved.rows.filter((e) => e.kind === 'file-edit').length,
-      interruptedRuns,
+      fileEdits: totals.edits,
+      interruptedRuns: totals.interrupted,
     },
     studyId: id,
     project: { id: project.ref.id, version: project.ref.version, title: project.definition.title },
@@ -250,35 +321,58 @@ export async function learningEvidence(
     counts,
     conversations,
     truncated:
-      missingConversation ||
+      truncated ||
       conversations.some((c) => c.truncated) ||
       evidence.some((e) => e.truncated === true),
   };
 }
 
-/** Reading is always token-free; unfinished projects have no report surface. */
-export async function learningReport(
+/** A short read-only snapshot keeps counts, excerpts and the cache key on the same evidence version. */
+async function readReport(principal: OwnerPrincipal, id: string, evidenceOnly = false) {
+  const store = await LearningStore.open();
+  const db = await store.pool.connect();
+  try {
+    await db.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+    const result = await readReportSnapshot(store, db, principal, id, evidenceOnly);
+    await db.query('COMMIT');
+    return result;
+  } catch (error) {
+    await db.query('ROLLBACK');
+    throw error;
+  } finally {
+    db.release();
+  }
+}
+
+async function readReportSnapshot(
+  store: LearningStore,
+  db: PoolClient,
   principal: OwnerPrincipal,
   id: string,
-): Promise<LearningReport> {
-  const store = await LearningStore.open();
-  const row = await store.get(id, principal.ownerId);
-  if (!canViewProjectReport(projectFor(row).definition, row.state))
+  evidenceOnly: boolean,
+) {
+  const row = await store.get(id, principal.ownerId, db);
+  if (!evidenceOnly && !canViewProjectReport(projectFor(row).definition, row.state))
     throw sandboxConflict(
       'Complete the final project reflection before viewing the report.',
       'WORKBENCH_ACCESS_DENIED',
     );
+  const evidenceKey = await reportEvidenceKey(db, row);
+  const completionRevision = row.state.completionRevision ?? 1;
+  if (evidenceOnly)
+    return { report: await buildLearningEvidence(db, row), evidenceKey, completionRevision };
   const saved = (
-    await store.pool.query<{ status: string; document: LearningReport | null; updated_at: Date }>(
-      'SELECT status,document,updated_at FROM pbl_v3_reports WHERE study_id=$1 AND completion_revision=$2',
-      [id, row.state.completionRevision ?? 1],
+    await db.query<{ status: string; document: LearningReport | null; updated_at: Date }>(
+      'SELECT status,document,updated_at FROM pbl_v3_reports WHERE study_id=$1 AND completion_revision=$2 AND evidence_key=$3',
+      [id, completionRevision, evidenceKey],
     )
   ).rows[0];
-  if (saved?.status === 'ready' && saved.document) return saved.document;
-  const report = await learningEvidence(principal, id);
+  if (saved?.status === 'ready' && saved.document)
+    return { report: saved.document, evidenceKey, completionRevision };
+  const evidence = await buildLearningEvidence(db, row);
   const stale = !!saved && Date.now() - saved.updated_at.getTime() > 120000;
-  return {
-    ...report,
+  const report: LearningReport = {
+    ...evidence,
     analysis: {
       status: stale
         ? 'failed'
@@ -288,10 +382,54 @@ export async function learningReport(
             ? 'failed'
             : 'not_generated',
       findings: [],
-      omitted: false,
+      omitted: evidence.truncated,
       canRetry: !saved || saved.status === 'failed' || stale,
     },
   };
+  return { report, evidenceKey, completionRevision };
+}
+
+async function reportEvidenceKey(db: PoolClient, row: Study): Promise<string> {
+  const version = (
+    await db.query<{ evidence: string; conversations: string }>(
+      `SELECT
+       (SELECT COALESCE(max(id),0)::text FROM pbl_v3_evidence WHERE study_id=$1) AS evidence,
+       md5(COALESCE(string_agg(r.session_id || ':' || COALESCE(e.seq,0)::text || ':' ||
+         COALESCE(a.deleted_at::text,'') || ':' || md5(COALESCE(r.guided::text,'')),
+         ',' ORDER BY r.session_id),'')) AS conversations
+     FROM pbl_v3_roles r LEFT JOIN agent_sessions a ON a.id=r.session_id
+       LEFT JOIN LATERAL (SELECT max(seq) AS seq FROM agent_session_events
+         WHERE session_id=r.session_id) e ON true WHERE r.study_id=$1`,
+      [row.id],
+    )
+  ).rows[0]!;
+  return createHash('sha256')
+    .update(
+      JSON.stringify([
+        1,
+        row.revision,
+        row.state.lastSequence,
+        version.evidence,
+        version.conversations,
+      ]),
+    )
+    .digest('hex');
+}
+
+/** Facts come from durable events without requiring an execution environment or changing progress. */
+export async function learningEvidence(
+  principal: OwnerPrincipal,
+  id: string,
+): Promise<LearningReport> {
+  return (await readReport(principal, id, true)).report;
+}
+
+/** Reading is always token-free; unfinished projects have no report surface. */
+export async function learningReport(
+  principal: OwnerPrincipal,
+  id: string,
+): Promise<LearningReport> {
+  return (await readReport(principal, id)).report;
 }
 
 /** Explicit report-button action. One bounded model call; no new queue or sandbox. */
@@ -300,40 +438,50 @@ export async function generateLearningReport(
   id: string,
   signal: AbortSignal,
 ) {
-  const report = await learningReport(principal, id);
+  const { report, evidenceKey, completionRevision } = await readReport(principal, id);
   if (report.analysis?.status === 'ready' || report.analysis?.status === 'generating')
     return report;
   const store = await LearningStore.open();
-  const row = await store.get(id, principal.ownerId);
   const attempt = randomUUID();
-  const claim = await store.pool.query(
-    `INSERT INTO pbl_v3_reports(study_id,completion_revision,attempt,status) VALUES($1,$2,$3,'generating')
-     ON CONFLICT(study_id) DO UPDATE SET completion_revision=$2,attempt=$3,status='generating',document=NULL,updated_at=now()
+  const claimed = await store.transaction(async (db) => {
+    // Serialize only the short claim. No database lock is held during the model call.
+    await db.query('SELECT id FROM pbl_v3_studies WHERE id=$1 AND owner_id=$2 FOR UPDATE', [
+      id,
+      principal.ownerId,
+    ]);
+    const current = await store.get(id, principal.ownerId, db);
+    if ((await reportEvidenceKey(db, current)) !== evidenceKey) return false;
+    const claim = await db.query(
+      `INSERT INTO pbl_v3_reports(study_id,completion_revision,attempt,status,evidence_key) VALUES($1,$2,$3,'generating',$4)
+     ON CONFLICT(study_id) DO UPDATE SET completion_revision=$2,attempt=$3,status='generating',document=NULL,updated_at=now(),evidence_key=$4
      WHERE pbl_v3_reports.status='failed' OR pbl_v3_reports.updated_at<now()-interval '2 minutes'
-       OR pbl_v3_reports.completion_revision<>$2 RETURNING study_id`,
-    [id, row.state.completionRevision ?? 1, attempt],
-  );
-  if (!claim.rows.length) return learningReport(principal, id);
+       OR pbl_v3_reports.completion_revision<>$2 OR pbl_v3_reports.evidence_key IS DISTINCT FROM $4 RETURNING study_id`,
+      [id, completionRevision, attempt, evidenceKey],
+    );
+    return claim.rows.length > 0;
+  });
+  if (!claimed) return learningReport(principal, id);
   try {
     const analysis = await analyzeLearningReport(principal.ownerId, report, signal);
     const document: LearningReport = {
       ...report,
       analysis: {
         ...analysis,
+        omitted: report.truncated || analysis.omitted,
         status: 'ready',
         generatedAt: new Date().toISOString(),
         canRetry: false,
       },
     };
     await store.pool.query(
-      `UPDATE pbl_v3_reports SET status='ready',document=$3,updated_at=now() WHERE study_id=$1 AND attempt=$2`,
-      [id, attempt, JSON.stringify(document)],
+      `UPDATE pbl_v3_reports SET status='ready',document=$3,updated_at=now() WHERE study_id=$1 AND attempt=$2 AND evidence_key=$4`,
+      [id, attempt, JSON.stringify(document), evidenceKey],
     );
     return learningReport(principal, id);
   } catch {
     await store.pool.query(
-      `UPDATE pbl_v3_reports SET status='failed',updated_at=now() WHERE study_id=$1 AND attempt=$2`,
-      [id, attempt],
+      `UPDATE pbl_v3_reports SET status='failed',updated_at=now() WHERE study_id=$1 AND attempt=$2 AND evidence_key=$3`,
+      [id, attempt, evidenceKey],
     );
     return learningReport(principal, id);
   }

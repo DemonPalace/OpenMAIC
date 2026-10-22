@@ -96,7 +96,7 @@ test('installed sample opens in the normal classroom and preserves progress afte
           project: { id: 'greeting-python-lab', version: '1.0.0', title: 'Greeting' },
           analysis: {
             status: 'ready',
-            omitted: false,
+            omitted: true,
             findings: [
               {
                 category: 'journey',
@@ -146,7 +146,7 @@ test('installed sample opens in the normal classroom and preserves progress afte
           ],
           counts: { 'artifact.recorded': 1 },
           conversations: [],
-          truncated: false,
+          truncated: true,
         },
       });
     }
@@ -701,6 +701,17 @@ test('installed sample opens in the normal classroom and preserves progress afte
   await page.getByRole('button', { name: 'Learning report', exact: true }).click();
   const report = page.getByRole('region', { name: 'Learning report' });
   await expect(report.getByText('A saved learning journey', { exact: true })).toBeVisible();
+  await expect(
+    report.getByText(
+      'Some records were shortened or omitted from this analysis. The saved evidence below remains available.',
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(
+    report.getByText('Only the most recent records are shown here. Earlier records remain saved.', {
+      exact: true,
+    }),
+  ).toBeVisible();
   await report.getByRole('button', { name: 'Evidence 7', exact: true }).click();
   await expect(report.getByText('Saved plan evidence')).toBeVisible();
   await report.evaluate((el) => {
