@@ -1,74 +1,106 @@
 'use client';
-import { FileText } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { FileText, Check } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 import { useI18n } from '@/lib/hooks/use-i18n';
 import type { LearningView } from '@/lib/pbl/v3/types';
 import type { LearningReport } from '@/lib/pbl/v3/report';
-import { learningStep, learningProgress } from '@/lib/pbl/v3/presentation';
+import { learningProgress } from '@/lib/pbl/v3/presentation';
 import { TextBlock } from '@/components/workbench/chat/text-block';
 import { sandboxErrorMessage } from '@/lib/sandbox/error-message';
 
 export function LearningPanels({ view }: { view: LearningView }) {
   const { t } = useI18n();
   const progress = learningProgress(view);
+  const [open, setOpen] = useState(false);
+  const wrap = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const outside = (event: PointerEvent) => {
+      if (!wrap.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setOpen(false);
+        trigger.current?.focus();
+      }
+    };
+    document.addEventListener('pointerdown', outside);
+    document.addEventListener('keydown', escape, true);
+    return () => {
+      document.removeEventListener('pointerdown', outside);
+      document.removeEventListener('keydown', escape, true);
+    };
+  }, [open]);
   return (
     <div className="contents">
-      <details className="text-xs">
-        <summary
-          className="flex cursor-pointer list-none items-center gap-2 rounded bg-muted px-2 py-1"
+      <div ref={wrap} className="relative flex min-w-0 items-center text-xs">
+        <button
+          ref={trigger}
+          type="button"
+          aria-expanded={open}
           aria-label={t('pblV3.learningPath')}
+          title={`M${view.state.position.milestoneIndex + 1} · ${view.milestones?.[view.state.position.milestoneIndex]?.title ?? ''}`}
+          onClick={() => setOpen(!open)}
+          className="inline-flex h-7 items-center gap-2 rounded-md bg-muted px-3 hover:bg-accent"
         >
-          <strong>M{view.state.position.milestoneIndex + 1}</strong>
+          <strong className="font-mono">M{view.state.position.milestoneIndex + 1}</strong>
           <span className="flex gap-0.5" aria-hidden="true">
             {progress.steps.map((step, index) => (
-              <span
+              <i
                 key={index}
-                className={`h-1 w-2 rounded-sm ${step.complete || step.active ? 'bg-primary' : 'bg-muted-foreground/25'}`}
+                className={`h-1 w-2 rounded-full ${step.complete || step.active ? 'bg-primary' : 'bg-muted-foreground/25'}`}
               />
             ))}
           </span>
           {progress.total > 0 && (
-            <span className="text-muted-foreground">
+            <span className="font-mono text-muted-foreground">
               {progress.current}/{progress.total}
             </span>
           )}
-        </summary>
-        <nav
-          aria-label={t('pblV3.learningPath')}
-          className="absolute right-2 top-12 z-20 max-h-80 max-w-[90%] overflow-auto rounded border bg-background p-4 shadow-lg"
-        >
-          <h3 className="font-semibold">{t('pblV3.learningPath')}</h3>
-          <ol className="mt-2 space-y-4">
-            {view.milestones?.map((m, i) => (
-              <li
-                key={m.id}
-                aria-current={i === view.state.position.milestoneIndex ? 'step' : undefined}
-                className={i === view.state.position.milestoneIndex ? 'font-semibold' : ''}
-              >
-                {view.state.milestones[i]?.status === 'completed' ? '✓ ' : `${i + 1}. `}
-                {m.title}
-                {i === view.state.position.milestoneIndex && (
-                  <div className="mt-2 space-y-1 text-xs font-normal">
-                    <p className="text-primary">{t(`pblV3.journey.steps.${learningStep(view)}`)}</p>
-                    <ol className="space-y-1" aria-label={t('pblV3.journey.milestoneSteps')}>
-                      {learningProgress(view).steps.map((step, index) => (
-                        <li
-                          key={index}
-                          aria-current={step.active ? 'step' : undefined}
-                          className={step.active ? 'text-primary' : 'text-muted-foreground'}
-                        >
-                          {step.complete ? '✓' : index + 1}.{' '}
-                          {t(`pblV3.journey.steps.${step.label}`)}
-                        </li>
-                      ))}
-                    </ol>
-                  </div>
-                )}
-              </li>
-            ))}
-          </ol>
-        </nav>
-      </details>
+        </button>
+        {open && (
+          <nav
+            aria-label={t('pblV3.learningPath')}
+            className="absolute right-0 top-[calc(100%+6px)] z-30 max-h-[min(24rem,60dvh)] w-max min-w-64 max-w-[min(32rem,80vw)] overflow-y-auto rounded-lg border bg-popover p-1 shadow-lg"
+          >
+            <h3 className="border-b px-3 py-2 text-xs font-semibold text-muted-foreground">
+              {t('pblV3.learningPath')}
+            </h3>
+            <ol className="py-1">
+              {view.milestones?.map((m, i) => {
+                const status = view.state.milestones.find(
+                  (item) => item.milestoneId === m.id,
+                )?.status;
+                const active = i === view.state.position.milestoneIndex;
+                const done = status === 'completed';
+                return (
+                  <li
+                    key={m.id}
+                    aria-current={active ? 'step' : undefined}
+                    data-state={done ? 'done' : active ? 'active' : 'pending'}
+                    className={`flex min-h-8 items-center gap-2 rounded-md px-3 py-1 ${active ? 'font-semibold' : 'text-muted-foreground'}`}
+                    title={`M${i + 1} · ${m.title}`}
+                  >
+                    <span
+                      aria-hidden="true"
+                      className={`h-1.5 w-1.5 shrink-0 rounded-full ${done ? 'bg-emerald-500' : active ? 'bg-primary' : 'bg-muted-foreground/25'}`}
+                    />
+                    <span className="shrink-0 font-mono text-muted-foreground">M{i + 1}</span>
+                    <span className="min-w-0 flex-1 truncate">{m.title}</span>
+                    {active && (
+                      <span className="shrink-0 font-mono font-normal text-muted-foreground">
+                        {progress.current}/{progress.total}
+                      </span>
+                    )}
+                    {done && <Check size={12} aria-label={t('pblV3.completed')} />}
+                  </li>
+                );
+              })}
+            </ol>
+          </nav>
+        )}
+      </div>
       {view.state.status === 'completed' && <ProjectReport view={view} />}
     </div>
   );

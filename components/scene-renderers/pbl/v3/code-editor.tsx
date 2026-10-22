@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import Editor, { loader } from '@monaco-editor/react';
 import { useTheme } from '@/lib/hooks/use-theme';
 import { useI18n } from '@/lib/hooks/use-i18n';
@@ -21,6 +21,15 @@ export function CodeEditor({
   onChange: (text: string) => void;
   onSave: () => void;
 }) {
+  const change = useRef({ readOnly, onChange });
+  // Update before Monaco synchronizes controlled values in passive effects.
+  useLayoutEffect(() => {
+    change.current = { readOnly, onChange };
+  }, [readOnly, onChange]);
+  const handleChange = useCallback((text: string | undefined) => {
+    // Read-only setValue emits Monaco changes too; only user-editable values are edits.
+    if (!change.current.readOnly) change.current.onChange(text ?? '');
+  }, []);
   const save = useRef(onSave);
   useEffect(() => {
     save.current = onSave;
@@ -50,6 +59,7 @@ export function CodeEditor({
     )[extension] ?? 'plaintext';
   return (
     <Editor
+      key={`${studyId}/${path}`}
       height="100%"
       width="100%"
       path={`${studyId}/${path}`}
@@ -57,7 +67,7 @@ export function CodeEditor({
       value={value}
       theme={resolvedTheme === 'dark' ? 'vs-dark' : 'light'}
       loading={<p className="p-4 text-sm text-muted-foreground">{t('pblV3.loading')}</p>}
-      onChange={(text) => onChange(text ?? '')}
+      onChange={handleChange}
       onMount={(editor, monaco) => {
         editor.addAction({
           id: 'pbl-save-file',

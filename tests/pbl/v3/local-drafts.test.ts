@@ -16,7 +16,7 @@ let root: Root | undefined,
   sequence = 0;
 let editor: ReturnType<typeof useProjectEditor>, ui: ReturnType<typeof useStudyDraft>;
 const read = vi.fn(async () => ({ text: 'Saved source', hash: 'a'.repeat(64) }));
-const save = vi.fn(async () => true),
+const save = vi.fn<Parameters<typeof useProjectEditor>[2]>(async () => ({ hash: 'b'.repeat(64) })),
   error = vi.fn();
 const view = (id: string, environmentId = 'environment-one') =>
   ({
@@ -26,8 +26,19 @@ const view = (id: string, environmentId = 'environment-one') =>
     files: ['PLAN.md', 'main.py'],
     revision: 1,
   }) as LearningView;
-function Editor({ value }: { value: LearningView }) {
-  const current = useProjectEditor(value, read, save, error);
+function Editor({
+  value,
+  writable = true,
+  enabled = true,
+}: {
+  value: LearningView;
+  writable?: boolean;
+  enabled?: boolean;
+}) {
+  const current = useProjectEditor(value, read, save, error, {
+    enabled,
+    canEdit: () => writable,
+  });
   useEffect(() => {
     editor = current;
   });
@@ -53,6 +64,7 @@ async function leave() {
 }
 afterEach(async () => {
   await leave();
+  vi.useRealTimers();
   vi.restoreAllMocks();
   window.sessionStorage.clear();
   read.mockClear();
@@ -89,7 +101,7 @@ describe('study-scoped local drafts', () => {
   });
   it('does not let a late save acknowledgement erase a newer draft after scene navigation', async () => {
     const id = `late-${sequence++}`;
-    let release!: (value: boolean) => void;
+    let release!: (value: { hash: string }) => void;
     save.mockImplementationOnce(
       () =>
         new Promise((resolve) => {
@@ -106,11 +118,105 @@ describe('study-scoped local drafts', () => {
     await mount(createElement(Editor, { value: view(id) }));
     await act(async () => editor.edit('Newer unsaved source'));
     await act(async () => {
-      release(true);
+      release({ hash: 'b'.repeat(64) });
       await pending;
     });
     expect(readEditorDraft(id).buffers['PLAN.md']?.text).toBe('Newer unsaved source');
     expect(editor.buffer?.text).toBe('Newer unsaved source');
+  });
+  it('debounces edits, keeps typing during a save, and saves the next version with the acknowledged hash', async () => {
+    const id = `autosave-${sequence++}`;
+    await mount(createElement(Editor, { value: view(id) }));
+    vi.useFakeTimers();
+    let release!: (receipt: { hash: string }) => void;
+    save.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    await act(async () => editor.edit('First edit'));
+    await act(async () => vi.advanceTimersByTimeAsync(749));
+    expect(save).not.toHaveBeenCalled();
+    await act(async () => vi.advanceTimersByTimeAsync(1));
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(editor.saving).toBe(true);
+    await act(async () => editor.edit('Typed while saving'));
+    expect(editor.buffer?.text).toBe('Typed while saving');
+    await act(async () => release({ hash: 'c'.repeat(64) }));
+    expect(save).toHaveBeenCalledTimes(2);
+    expect(save.mock.calls[1]?.slice(0, 3)).toEqual([
+      'PLAN.md',
+      'Typed while saving',
+      'c'.repeat(64),
+    ]);
+    expect(editor.anyDirty).toBe(false);
+    expect(editor.buffer?.saved).toBe('Typed while saving');
+  });
+  it('resumes restored drafts when workspace permissions finish loading', async () => {
+    const id = `ready-${sequence++}`;
+    await mount(createElement(Editor, { value: view(id) }));
+    await act(async () => editor.edit('Restored draft'));
+    await leave();
+    await mount(createElement(Editor, { value: view(id), enabled: false }));
+    vi.useFakeTimers();
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    expect(save).not.toHaveBeenCalled();
+    await act(async () => root!.render(createElement(Editor, { value: view(id), enabled: true })));
+    await act(async () => vi.advanceTimersByTimeAsync(750));
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(editor.anyDirty).toBe(false);
+  });
+  it('retains rejected edits without a retry loop and retries the same submission before newer typing', async () => {
+    const id = `failure-${sequence++}`;
+    await mount(createElement(Editor, { value: view(id) }));
+    vi.useFakeTimers();
+    save.mockRejectedValueOnce(new Error('Connection interrupted'));
+    await act(async () => editor.edit('Submitted edit'));
+    await act(async () => vi.advanceTimersByTimeAsync(750));
+    expect(editor.saveError).toBe('Connection interrupted');
+    const request = save.mock.calls[0]?.[3];
+    await act(async () => editor.edit('A newer edit'));
+    await act(async () => vi.advanceTimersByTimeAsync(10000));
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(readEditorDraft(id).buffers['PLAN.md']?.text).toBe('A newer edit');
+    await act(async () => editor.save());
+    expect(save.mock.calls[1]?.slice(0, 3)).toEqual(['PLAN.md', 'Submitted edit', 'a'.repeat(64)]);
+    expect(save.mock.calls[1]?.[3]).toBe(request);
+    expect(save.mock.calls[2]?.slice(0, 3)).toEqual(['PLAN.md', 'A newer edit', 'b'.repeat(64)]);
+    expect(editor.anyDirty).toBe(false);
+  });
+  it('ignores read-only editor changes and reflects saved Agent changes without writing them back', async () => {
+    const id = `readonly-${sequence++}`;
+    const value = view(id);
+    await mount(createElement(Editor, { value, writable: false }));
+    await act(async () => editor.edit('Programmatic Monaco event'));
+    expect(editor.anyDirty).toBe(false);
+    read.mockResolvedValueOnce({ text: 'Saved by Agent', hash: 'c'.repeat(64) });
+    await act(async () =>
+      root!.render(createElement(Editor, { value: { ...value, revision: 2 }, writable: false })),
+    );
+    expect(editor.buffer?.text).toBe('Saved by Agent');
+    expect(editor.anyDirty).toBe(false);
+    expect(save).not.toHaveBeenCalled();
+  });
+  it('never lets an older file refresh overwrite typing begun while it was in flight', async () => {
+    const id = `refresh-${sequence++}`;
+    await mount(createElement(Editor, { value: view(id) }));
+    let release!: (value: { text: string; hash: string }) => void;
+    read.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    await act(async () =>
+      root!.render(createElement(Editor, { value: { ...view(id), revision: 2 } })),
+    );
+    await act(async () => editor.edit('New local typing'));
+    await act(async () => release({ text: 'Older server read', hash: 'c'.repeat(64) }));
+    expect(editor.buffer?.text).toBe('New local typing');
+    expect(editor.anyDirty).toBe(true);
   });
   it('preserves chat, incomplete quiz choices and pane selection; a late send clears only its submitted text', async () => {
     const id = `ui-${sequence++}`;

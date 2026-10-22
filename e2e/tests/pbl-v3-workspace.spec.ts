@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { test, expect } from '@playwright/test';
 import type { LearningView } from '@/lib/pbl/v3/types';
 
@@ -62,6 +63,8 @@ test('installed sample opens in the normal classroom and preserves progress afte
   };
   let failPreparation = false;
   let file = 'Write your plan here.';
+  const savedFiles = new Map<string, { text: string; hash: string }>();
+  let rejectAutosave = false;
   const workCalls: { action: string; path?: string }[] = [];
   let previewOpen = false;
   let workEpoch = 0;
@@ -173,8 +176,15 @@ test('installed sample opens in the normal classroom and preserves progress afte
       });
     }
     if (req.method() === 'GET' && url.searchParams.has('file'))
-      return route.fulfill({ json: { text: file, hash: 'a'.repeat(64) } });
+      return route.fulfill({
+        json: savedFiles.get(url.searchParams.get('file')!) ?? {
+          text: url.searchParams.get('file') === 'PLAN.md' ? file : 'print("Starter")',
+          hash: 'a'.repeat(64),
+        },
+      });
     if (body?.command) {
+      if (body.command.type === 'save' && rejectAutosave)
+        return route.fulfill({ status: 503, json: { error: { code: 'SANDBOX_UNAVAILABLE' } } });
       expect(body.command.revision).toBe(view.revision);
       calls.push(body.command);
       const command = body.command;
@@ -201,7 +211,13 @@ test('installed sample opens in the normal classroom and preserves progress afte
           { role: 'assistant', text: 'What should greet(name) return?' },
         );
       }
-      if (command.type === 'save') file = command.text;
+      if (command.type === 'save') {
+        file = command.text;
+        savedFiles.set(command.path, {
+          text: command.text,
+          hash: createHash('sha256').update(command.text).digest('hex'),
+        });
+      }
       if (command.type === 'quiz') {
         const passed =
           command.answers.length === 2 && command.answers.every((answer: number) => answer === 0);
@@ -237,6 +253,20 @@ test('installed sample opens in the normal classroom and preserves progress afte
     stageIndex: 0,
   });
   await expect(page.getByRole('button', { name: 'Retry project setup', exact: true })).toHaveCount(
+    0,
+  );
+  // Read-only Monaco model switches and server value refreshes are not learner edits.
+  await page.getByRole('button', { name: 'greeting.py', exact: true }).click();
+  await expect(page.locator('.monaco-editor .view-lines')).toHaveText('print("Starter")');
+  await page.getByRole('tab', { name: 'PLAN.md', exact: true }).click();
+  await expect(page.locator('.monaco-editor .view-lines')).toHaveText('Write your plan here.');
+  await page.getByRole('tab', { name: 'greeting.py', exact: true }).click();
+  await expect(page.locator('.monaco-editor .view-lines')).toHaveText('print("Starter")');
+  await page.getByRole('tab', { name: 'PLAN.md', exact: true }).click();
+  await expect(page.getByRole('tab', { name: /●/ })).toHaveCount(0);
+  expect(calls.filter((c) => c.type === 'save')).toHaveLength(0);
+  await expect(page.getByRole('tab', { name: 'Project application' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Project application', exact: true })).toHaveCount(
     0,
   );
   // Hold an old progress GET until after a teaching command installs a newer revision.
@@ -352,8 +382,10 @@ test('installed sample opens in the normal classroom and preserves progress afte
     }
     await route.fulfill({
       json: {
-        text: path === 'PLAN.md' ? 'Late plan response' : 'print("Current code")',
-        hash: (path === 'PLAN.md' ? 'b' : 'c').repeat(64),
+        ...(savedFiles.get(path) ?? {
+          text: path === 'PLAN.md' ? 'Late plan response' : 'print("Current code")',
+          hash: (path === 'PLAN.md' ? 'b' : 'c').repeat(64),
+        }),
       },
     });
   });
@@ -367,12 +399,12 @@ test('installed sample opens in the normal classroom and preserves progress afte
   releasePlan();
   await lateResponse;
   await expect(page.locator('.monaco-editor .view-lines')).toHaveText('print("Current code")');
-  await expect(page.getByRole('button', { name: 'Save file', exact: true })).toBeEnabled();
+  await expect(page.locator('.monaco-editor textarea').first()).toBeEditable();
   await page.locator('.monaco-editor .view-lines .view-line').first().click();
   await page.keyboard.press('ControlOrMeta+A');
   await page.keyboard.type('print("Saved code")');
   await expect(page.locator('.monaco-editor .view-lines')).toHaveText('print("Saved code")');
-  await page.getByRole('button', { name: 'Save file', exact: true }).click();
+  await expect.poll(() => calls.some((c) => c.type === 'save')).toBe(true);
   expect(calls.at(-1)).toMatchObject({
     type: 'save',
     path: 'greeting.py',
@@ -387,7 +419,8 @@ test('installed sample opens in the normal classroom and preserves progress afte
     'true',
   );
   await expect(page.locator('.monaco-editor .view-lines')).toHaveText('print("Current code")');
-  await expect(page.getByRole('button', { name: 'Save file', exact: true })).toBeEnabled();
+  await expect(page.locator('.monaco-editor textarea').first()).toBeEditable();
+  rejectAutosave = true;
   await page.locator('.monaco-editor .view-lines .view-line').first().click();
   await page.keyboard.press('ControlOrMeta+A');
   await page.keyboard.type('Unsaved learner work');
@@ -395,7 +428,7 @@ test('installed sample opens in the normal classroom and preserves progress afte
   await page.getByLabel('Project command', { exact: true }).fill('python3 src/new.py');
   await expect(page.getByRole('button', { name: 'Run command', exact: true })).toBeDisabled();
   await page.getByRole('tab', { name: 'greeting.py', exact: true }).click();
-  await expect(page.locator('.monaco-editor .view-lines')).toHaveText('print("Current code")');
+  await expect(page.locator('.monaco-editor .view-lines')).toHaveText('print("Saved code")');
   await page.getByRole('tab', { name: 'new.py ●', exact: true }).click();
   await expect(page.locator('.monaco-editor .view-lines')).toHaveText('Unsaved learner work');
   await page.getByRole('button', { name: 'Expand project workspace' }).click();
@@ -414,11 +447,12 @@ test('installed sample opens in the normal classroom and preserves progress afte
   view.environmentId = '22345678-1234-1234-1234-123456789012';
   await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
   await expect(page.locator('.monaco-editor .view-lines')).toHaveText('Unsaved learner work');
-  await expect(page.getByRole('button', { name: 'Save file', exact: true })).toBeDisabled();
+  await expect(page.locator('.monaco-editor textarea').first()).not.toBeEditable();
   await expect(page.getByText('The environment or file changed.', { exact: false })).toBeVisible();
   page.once('dialog', (dialog) => dialog.accept());
   await page.getByRole('button', { name: 'Discard changes and reload' }).click();
   await expect(page.locator('.monaco-editor .view-lines')).toHaveText('print("Current code")');
+  rejectAutosave = false;
   await page.getByLabel('Project-relative file path').fill('src/moved.py');
   await page.getByRole('button', { name: 'Rename / move file' }).click();
   await expect(page.getByRole('tab', { name: 'moved.py', exact: true })).toHaveAttribute(
@@ -428,7 +462,7 @@ test('installed sample opens in the normal classroom and preserves progress afte
   await page.getByLabel('Project command', { exact: true }).fill('python3 src/moved.py');
   await page.getByRole('button', { name: 'Run command', exact: true }).click();
   await expect.poll(() => workCalls.some((c) => c.action === 'run')).toBe(true);
-  await page.getByRole('tab', { name: 'Project application', exact: true }).click();
+  await page.getByRole('button', { name: 'Project application', exact: true }).click();
   await expect(
     page.getByText(
       'Start the project web server in the terminal or Run panel, then connect to a configured port below.',
@@ -441,7 +475,7 @@ test('installed sample opens in the normal classroom and preserves progress afte
       body: '<h1>Project application</h1><button onclick="this.textContent=\'Clicked\'">Try</button>',
     }),
   );
-  await page.getByRole('button', { name: 'Preview port 8000' }).click();
+  await page.getByRole('button', { name: 'Connect preview · 8000', exact: true }).click();
   const frame = page.frameLocator('iframe[title="Project application"]');
   await expect(frame.getByRole('heading', { name: 'Project application' })).toBeVisible();
   await frame.getByRole('button', { name: 'Try' }).click();
@@ -484,7 +518,8 @@ test('installed sample opens in the normal classroom and preserves progress afte
     await previewGate;
     return route.fulfill({ json: { url: 'https://preview.example.test/late' } });
   });
-  await page.getByRole('button', { name: 'Preview port 8000' }).click();
+  await page.getByRole('button', { name: 'Project application', exact: true }).click();
+  await page.getByRole('button', { name: 'Connect preview · 8000', exact: true }).click();
   await previewReady;
   await page.getByRole('button', { name: 'Stop commands and close terminals' }).click();
   await expect.poll(() => workEpoch).toBe(2);

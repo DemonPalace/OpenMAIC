@@ -60,18 +60,6 @@ export function TaskDock({
       <span
         className={`h-1.5 w-1.5 shrink-0 rounded-full ${running ? 'animate-pulse bg-primary' : ready ? 'bg-primary' : 'bg-muted-foreground'}`}
       />
-      <span className="shrink-0 text-muted-foreground">
-        M{view.state.position.milestoneIndex + 1}
-        {progress.total > 0 && (
-          <>
-            {' '}
-            ·{' '}
-            <span>
-              {progress.current}/{progress.total}
-            </span>
-          </>
-        )}
-      </span>
       <strong className="shrink-0">{t(`pblV3.journey.steps.${step}`)}</strong>
       <span
         className={`${summary ? 'order-last basis-full' : 'flex-1'} min-w-0 truncate text-muted-foreground`}
@@ -131,6 +119,43 @@ export function TaskDock({
         </div>
       )}
       <div className={`flex ${summary ? 'min-h-12' : 'h-10'} items-center gap-2 px-3 py-2`}>
+        <details
+          className="relative shrink-0 text-xs"
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') {
+              event.currentTarget.open = false;
+              event.currentTarget.querySelector('summary')?.focus();
+              event.stopPropagation();
+            }
+          }}
+        >
+          <summary
+            className="cursor-pointer list-none rounded px-1 py-1 text-muted-foreground hover:bg-muted"
+            aria-label={t('pblV3.journey.milestoneSteps')}
+          >
+            M{view.state.position.milestoneIndex + 1}
+            {progress.total > 0 && (
+              <>
+                {' '}
+                ·{' '}
+                <span>
+                  {progress.current}/{progress.total}
+                </span>
+              </>
+            )}
+          </summary>
+          <ol className="absolute bottom-[calc(100%+8px)] left-0 z-30 max-h-[min(20rem,50dvh)] w-max max-w-[75vw] overflow-y-auto rounded-lg border bg-popover p-2 shadow-lg">
+            {progress.steps.map((item, index) => (
+              <li
+                key={index}
+                aria-current={item.active ? 'step' : undefined}
+                className={`rounded px-2 py-1.5 ${item.active ? 'font-semibold text-primary' : 'text-muted-foreground'}`}
+              >
+                {item.complete ? '✓' : index + 1}. {t(`pblV3.journey.steps.${item.label}`)}
+              </li>
+            ))}
+          </ol>
+        </details>
         {hasDrawer ? (
           <button
             ref={toggle}

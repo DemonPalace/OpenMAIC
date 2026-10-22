@@ -141,6 +141,8 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
   await page.route('**/api/pbl/v3**', async (route) => {
     const command =
       route.request().method() === 'POST' ? route.request().postDataJSON()?.command : undefined;
+    if (command?.type === 'save')
+      return route.fulfill({ status: 503, json: { error: { code: 'SANDBOX_UNAVAILABLE' } } });
     if (command?.type === 'chat') {
       // The server preserves a completed review while answering a follow-up.
       view.activitySequence!++;
@@ -281,6 +283,27 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
   await page.goto(`/classroom/${stageId}`);
   await page.getByTestId('scene-title').filter({ hasText: 'Practice project' }).click();
   await expect(page.getByTestId('pbl-v3-workspace')).toBeVisible();
+  await page.getByRole('button', { name: 'Learning path', exact: true }).click();
+  const milestoneMenu = page.getByRole('navigation', { name: 'Learning path' });
+  await expect(milestoneMenu.getByText('Implement a greeting', { exact: true })).toBeVisible();
+  await expect(milestoneMenu.getByText('Extend the greeting', { exact: true })).toBeVisible();
+  await expect(milestoneMenu.getByText('Teaching', { exact: true })).toHaveCount(0);
+  await expect(milestoneMenu.locator('li[data-state="active"]')).toHaveCount(1);
+  await expect(milestoneMenu.locator('li[data-state="pending"]')).toHaveCount(1);
+  const chipBox = (await page
+    .getByRole('button', { name: 'Learning path', exact: true })
+    .boundingBox())!;
+  const menuBox = (await milestoneMenu.boundingBox())!;
+  expect(menuBox.y).toBeGreaterThanOrEqual(chipBox.y + chipBox.height);
+  expect(menuBox.y).toBeLessThan(chipBox.y + chipBox.height + 12);
+  await page.keyboard.press('Escape');
+  await expect(milestoneMenu).toHaveCount(0);
+  await page.getByLabel('Milestone learning steps', { exact: true }).click();
+  await expect(
+    page.getByLabel('Milestone learning steps', { exact: true }).locator('..').locator('ol li'),
+  ).toHaveCount(7);
+  await page.getByLabel('Milestone learning steps', { exact: true }).press('Escape');
+
   await expect(
     page
       .getByRole('region', { name: 'Current learning step' })
@@ -397,11 +420,7 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
   );
   const draftText = await page.locator('.monaco-editor .view-lines').textContent();
   await expect(
-    page
-      .getByTestId('pbl-ide')
-      .getByText('Unsaved changes. Save or discard before switching files or running commands.', {
-        exact: true,
-      }),
+    page.getByRole('button', { name: 'Save failed · Retry', exact: true }),
   ).toBeVisible();
   const beforeDraftReturn = openings;
   view.needsOpening = true;
@@ -422,10 +441,21 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
   view.actions = ['chat'];
   view.decisions = [];
   view.state.introCompleted = true;
+  view.state.milestones[0]!.status = 'completed';
   view.state.position = { milestoneIndex: 1, milestoneId: 'normalize', stageIndex: 2 };
   view.revision++;
   await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
   await expect(task.getByText('3/7', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Learning path', exact: true }).click();
+  await expect(milestoneMenu.locator('li[data-state="done"]')).toContainText(
+    'Implement a greeting',
+  );
+  await expect(milestoneMenu.locator('li[data-state="active"]')).toContainText(
+    'Extend the greeting',
+  );
+  await page.keyboard.press('Escape');
+  view.state.milestones[0]!.status = 'active';
+
   view.state.position = { milestoneIndex: 0, milestoneId: 'greeting', stageIndex: 0 };
   view.revision++;
   await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();

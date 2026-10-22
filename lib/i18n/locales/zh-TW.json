@@ -2779,13 +2779,17 @@
       "hideFiles": "Hide file tree",
       "toggleWorkspace": "Toggle code workspace",
       "toggleAssistant": "Toggle learning assistant",
-      "environmentDetails": "Environment details"
+      "environmentDetails": "Environment details",
+      "saving": "儲存中…",
+      "saved": "已儲存",
+      "saveFailed": "儲存失敗 · 重試",
+      "draftRetained": "修改暫存於此瀏覽器"
     },
     "inputBlocked": {
       "pending": "正在提交請求，請稍候；輸入的內容會保留。",
       "busy": "助手正在回覆，可停止回覆後再傳送。",
       "environment": "The project environment is not ready. If setup failed, retry above; your draft is kept.",
-      "unsaved": "請先儲存或放棄未儲存的專案檔案，再傳送；輸入的內容會保留。",
+      "unsaved": "正在自动保存项目文件，完成后即可发送；输入的内容会保留。",
       "opening": "助手尚未完成本環節開場，請重試開場；輸入的內容會保留。"
     },
     "recoverEnvironment": "恢復學習環境",

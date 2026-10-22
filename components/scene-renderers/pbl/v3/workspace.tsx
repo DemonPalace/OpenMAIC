@@ -19,6 +19,7 @@ import { useI18n } from '@/lib/hooks/use-i18n';
 import { useStageStore } from '@/lib/store/stage';
 import type { LearningView } from '@/lib/pbl/v3/types';
 import { LearningWorkbenchPanel } from './workbench-panel';
+import type { FileSaveReceipt } from './use-project-editor';
 import { LearningPanels } from './learning-panels';
 import { LearningConversation } from './conversation';
 import { WorkspaceFrame } from './workspace-frame';
@@ -62,6 +63,8 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
     showAssistant,
     setShowAssistant,
   } = useStudyDraft(view?.id, storageError);
+  const latestView = useRef(view);
+  latestView.current = view;
   const [sent, setSent] = useState(0);
   const [dirtyFiles, setDirtyFiles] = useState(false);
   const answerKey = `${view?.id}:${view?.state.position.milestoneId}:${view?.state.position.stageIndex}`;
@@ -73,6 +76,14 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
     revision: number;
   } | null>(null);
   const updateView = useCallback((next: LearningView) => {
+    const prior = latestView.current;
+    if (
+      prior?.id === next.id &&
+      (prior.revision < next.revision ||
+        (prior.revision === next.revision &&
+          (prior.activitySequence ?? 0) <= (next.activitySequence ?? 0)))
+    )
+      latestView.current = next;
     // A delayed poll or command response cannot undo newer progress or replace another study.
     setView((current) =>
       current?.id === next.id &&
@@ -390,7 +401,38 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
                 pending={pending}
                 onDirtyChange={setDirtyFiles}
                 onRefresh={refresh}
-                onSave={(path, text, hash) => command('save', { path, text, expectedHash: hash })}
+                onSave={async (path, text, hash, request): Promise<FileSaveReceipt> => {
+                  // Autosave owns its request/receipt, independently of teaching-command retries.
+                  const digest = await crypto.subtle.digest(
+                    'SHA-256',
+                    new TextEncoder().encode(text),
+                  );
+                  const selected = latestView.current;
+                  if (
+                    !selected ||
+                    selected.id !== view.id ||
+                    selected.environmentId !== view.environmentId
+                  )
+                    throw new Error(t('pblV3.workbench.staleBuffer'));
+                  request.revision ??= selected.revision;
+                  const result = await pblRequest<{ view: LearningView }>('/api/pbl/v3', {
+                    studyId: selected.id,
+                    command: {
+                      id: request.id,
+                      revision: request.revision,
+                      type: 'save',
+                      path,
+                      text,
+                      expectedHash: hash,
+                    },
+                  });
+                  updateView(result.view);
+                  return {
+                    hash: Array.from(new Uint8Array(digest), (b) =>
+                      b.toString(16).padStart(2, '0'),
+                    ).join(''),
+                  };
+                }}
                 onCheckpoint={() => command('checkpoint')}
               >
                 {view.actions.includes('compile') && (
@@ -453,14 +495,6 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
 
                 <div className="pbl-task-area flex min-h-0 flex-1 flex-col">
                   <LearningConversation view={view} sent={sent} />
-                  {dirtyFiles && (
-                    <p
-                      role="status"
-                      className="border-t px-3 py-2 text-xs text-amber-700 dark:text-amber-300"
-                    >
-                      {t('pblV3.workbench.unsaved')}
-                    </p>
-                  )}
                   <TaskDock
                     key={`${view.id}:${view.state.introCompleted}:${view.state.position.milestoneIndex}:${view.state.position.stageIndex}`}
                     view={view}
@@ -629,7 +663,7 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
                       if (!disabled && text.trim()) void command('chat', { text });
                     }}
                   >
-                    {blockedReason && (
+                    {blockedReason && blockedReason !== 'unsaved' && (
                       <div
                         id={blockedId}
                         role="status"
@@ -647,6 +681,11 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
                           </button>
                         )}
                       </div>
+                    )}
+                    {blockedReason === 'unsaved' && (
+                      <span id={blockedId} className="sr-only">
+                        {t('pblV3.inputBlocked.unsaved')}
+                      </span>
                     )}
                     <label className="sr-only" htmlFor={`pbl-chat-${sceneId}`}>
                       {t('pblV3.message')}
