@@ -57,11 +57,12 @@ and the real-PG scripted-runner journeys in `runtime.pg.test.ts`.
 | Reports | Existing state, artifacts, assessments, events and durable role history. | Save process evidence and a completion-gated report, with factual metrics, cited qualitative findings, exact learner quotations, explicit missing/truncated evidence and retryable generation. Reads do not consume a model or provision a sandbox. Return to the workbench and reopen the saved report. Friendly versions replace the internal fingerprint label. |
 | Compatibility | Ordinary classroom scenes, v2, course authoring Agent and non-PBL sandboxes continue using their existing routes. | Exercise v2 and generation/runner regressions alongside the shared sandbox suite. Draft caching is confined to v3; the host canvas and shared chat/terminal components are reused. |
 
-There is no required or automatically appended exploration phase. The current
-samples finish at the last normal milestone's recap. Old version-pinned definitions
-remain readable so an upgrade does not silently shift an existing learner's stage
-indices; they are not a template for new course structure. Course-specific custom
-stage support is not expanded by this PR.
+Every milestone uses the normal seven-step workflow and ends in reflection. There
+is no exploration path, optional-milestone completion exception or separate intro
+stage. No real learners or released v3 courses exist to migrate: obsolete local
+fixture definitions, intro states and report-cache formats are not preserved.
+Current study pinning, page refresh recovery, sandbox recovery and shared host
+migrations retain their normal ownership and concurrency protections.
 
 The report contract supersedes an earlier suggestion to expose reports before the
 whole project finishes. A final recap tool receipt is required; an ordinary text

@@ -1,5 +1,5 @@
 import 'server-only';
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
 import { sandboxConflict } from '@/lib/sandbox/errors';
 import { analyzeLearningReport } from './report-analysis';
@@ -36,10 +36,16 @@ async function buildLearningEvidence(db: PoolClient, row: Study): Promise<Learni
   );
   if (records.rows.length > HISTORY_LIMIT) truncated = true;
   const versions = new Map<string, string>();
-  const versionLabel = (hash: string) => {
-    if (!versions.has(hash)) versions.set(hash, `v${versions.size + 1}`);
-    return versions.get(hash)!;
-  };
+  for (const { event } of records.rows.slice(0, HISTORY_LIMIT).toReversed()) {
+    const hash =
+      event?.type === 'artifact.recorded'
+        ? event.artifact.workspaceRevisionId
+        : event?.type === 'evaluation.recorded'
+          ? event.evaluation.revision.id
+          : undefined;
+    if (hash && !versions.has(hash)) versions.set(hash, `v${versions.size + 1}`);
+  }
+  const versionLabel = (hash: string) => versions.get(hash);
   for (const { sequence, event } of records.rows.slice(0, HISTORY_LIMIT)) {
     if (!event) {
       truncated = true;
@@ -237,7 +243,7 @@ async function buildLearningEvidence(db: PoolClient, row: Study): Promise<Learni
       kind: item.kind,
       detail: text,
       ...(text.length < detail.length ? { truncated: true } : {}),
-      ...(typeof item.detail.fingerprint === 'string'
+      ...(typeof item.detail.fingerprint === 'string' && versions.has(item.detail.fingerprint)
         ? { version: versionLabel(item.detail.fingerprint) }
         : {}),
     });
@@ -292,7 +298,7 @@ async function buildLearningEvidence(db: PoolClient, row: Study): Promise<Learni
     studyId: id,
     project: { id: project.ref.id, version: project.ref.version, title: project.definition.title },
     revision: row.revision,
-    requiredComplete: canViewProjectReport(project.definition, row.state),
+    requiredComplete: canViewProjectReport(row.state),
     milestones: project.definition.milestones.map((m, i) => ({
       id: m.id,
       title: m.title,
@@ -327,7 +333,7 @@ async function buildLearningEvidence(db: PoolClient, row: Study): Promise<Learni
   };
 }
 
-/** A short read-only snapshot keeps counts, excerpts and the cache key on the same evidence version. */
+/** A short read-only snapshot keeps counts and excerpts consistent; completed projects are immutable. */
 async function readReport(principal: OwnerPrincipal, id: string, evidenceOnly = false) {
   const store = await LearningStore.open();
   const db = await store.pool.connect();
@@ -352,23 +358,31 @@ async function readReportSnapshot(
   evidenceOnly: boolean,
 ) {
   const row = await store.get(id, principal.ownerId, db);
-  if (!evidenceOnly && !canViewProjectReport(projectFor(row).definition, row.state))
+  if (!evidenceOnly && !canViewProjectReport(row.state))
     throw sandboxConflict(
       'Complete the final project reflection before viewing the report.',
       'WORKBENCH_ACCESS_DENIED',
     );
-  const evidenceKey = await reportEvidenceKey(db, row);
-  const completionRevision = row.state.completionRevision ?? 1;
-  if (evidenceOnly)
-    return { report: await buildLearningEvidence(db, row), evidenceKey, completionRevision };
+  const completionRevision = row.revision;
+  if (evidenceOnly) return { report: await buildLearningEvidence(db, row), completionRevision };
+  const active = await db.query(
+    `SELECT 1 FROM pbl_v3_roles r JOIN agent_sessions a ON a.id=r.session_id
+     WHERE r.study_id=$1 AND a.deleted_at IS NULL AND a.status IN ('queued','running') LIMIT 1`,
+    [id],
+  );
+  if (active.rows.length)
+    throw sandboxConflict(
+      'Wait for the final teaching response to finish before generating the report.',
+      'PBL_REPORT_PENDING',
+    );
   const saved = (
     await db.query<{ status: string; document: LearningReport | null; updated_at: Date }>(
-      'SELECT status,document,updated_at FROM pbl_v3_reports WHERE study_id=$1 AND completion_revision=$2 AND evidence_key=$3',
-      [id, completionRevision, evidenceKey],
+      'SELECT status,document,updated_at FROM pbl_v3_reports WHERE study_id=$1 AND completion_revision=$2',
+      [id, completionRevision],
     )
   ).rows[0];
   if (saved?.status === 'ready' && saved.document)
-    return { report: saved.document, evidenceKey, completionRevision };
+    return { report: saved.document, completionRevision };
   const evidence = await buildLearningEvidence(db, row);
   const stale = !!saved && Date.now() - saved.updated_at.getTime() > 120000;
   const report: LearningReport = {
@@ -386,34 +400,7 @@ async function readReportSnapshot(
       canRetry: !saved || saved.status === 'failed' || stale,
     },
   };
-  return { report, evidenceKey, completionRevision };
-}
-
-async function reportEvidenceKey(db: PoolClient, row: Study): Promise<string> {
-  const version = (
-    await db.query<{ evidence: string; conversations: string }>(
-      `SELECT
-       (SELECT COALESCE(max(id),0)::text FROM pbl_v3_evidence WHERE study_id=$1) AS evidence,
-       md5(COALESCE(string_agg(r.session_id || ':' || COALESCE(e.seq,0)::text || ':' ||
-         COALESCE(a.deleted_at::text,'') || ':' || md5(COALESCE(r.guided::text,'')),
-         ',' ORDER BY r.session_id),'')) AS conversations
-     FROM pbl_v3_roles r LEFT JOIN agent_sessions a ON a.id=r.session_id
-       LEFT JOIN LATERAL (SELECT max(seq) AS seq FROM agent_session_events
-         WHERE session_id=r.session_id) e ON true WHERE r.study_id=$1`,
-      [row.id],
-    )
-  ).rows[0]!;
-  return createHash('sha256')
-    .update(
-      JSON.stringify([
-        1,
-        row.revision,
-        row.state.lastSequence,
-        version.evidence,
-        version.conversations,
-      ]),
-    )
-    .digest('hex');
+  return { report, completionRevision };
 }
 
 /** Facts come from durable events without requiring an execution environment or changing progress. */
@@ -438,7 +425,7 @@ export async function generateLearningReport(
   id: string,
   signal: AbortSignal,
 ) {
-  const { report, evidenceKey, completionRevision } = await readReport(principal, id);
+  const { report, completionRevision } = await readReport(principal, id);
   if (report.analysis?.status === 'ready' || report.analysis?.status === 'generating')
     return report;
   const store = await LearningStore.open();
@@ -450,13 +437,14 @@ export async function generateLearningReport(
       principal.ownerId,
     ]);
     const current = await store.get(id, principal.ownerId, db);
-    if ((await reportEvidenceKey(db, current)) !== evidenceKey) return false;
+    if (current.revision !== completionRevision || !canViewProjectReport(current.state))
+      return false;
     const claim = await db.query(
-      `INSERT INTO pbl_v3_reports(study_id,completion_revision,attempt,status,evidence_key) VALUES($1,$2,$3,'generating',$4)
-     ON CONFLICT(study_id) DO UPDATE SET completion_revision=$2,attempt=$3,status='generating',document=NULL,updated_at=now(),evidence_key=$4
+      `INSERT INTO pbl_v3_reports(study_id,completion_revision,attempt,status) VALUES($1,$2,$3,'generating')
+     ON CONFLICT(study_id) DO UPDATE SET completion_revision=$2,attempt=$3,status='generating',document=NULL,updated_at=now()
      WHERE pbl_v3_reports.status='failed' OR pbl_v3_reports.updated_at<now()-interval '2 minutes'
-       OR pbl_v3_reports.completion_revision<>$2 OR pbl_v3_reports.evidence_key IS DISTINCT FROM $4 RETURNING study_id`,
-      [id, completionRevision, attempt, evidenceKey],
+       OR pbl_v3_reports.completion_revision<>$2 RETURNING study_id`,
+      [id, completionRevision, attempt],
     );
     return claim.rows.length > 0;
   });
@@ -474,14 +462,14 @@ export async function generateLearningReport(
       },
     };
     await store.pool.query(
-      `UPDATE pbl_v3_reports SET status='ready',document=$3,updated_at=now() WHERE study_id=$1 AND attempt=$2 AND evidence_key=$4`,
-      [id, attempt, JSON.stringify(document), evidenceKey],
+      `UPDATE pbl_v3_reports SET status='ready',document=$3,updated_at=now() WHERE study_id=$1 AND attempt=$2`,
+      [id, attempt, JSON.stringify(document)],
     );
     return learningReport(principal, id);
   } catch {
     await store.pool.query(
-      `UPDATE pbl_v3_reports SET status='failed',updated_at=now() WHERE study_id=$1 AND attempt=$2 AND evidence_key=$3`,
-      [id, attempt, evidenceKey],
+      `UPDATE pbl_v3_reports SET status='failed',updated_at=now() WHERE study_id=$1 AND attempt=$2`,
+      [id, attempt],
     );
     return learningReport(principal, id);
   }

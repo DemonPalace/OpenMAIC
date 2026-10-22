@@ -66,8 +66,6 @@ const greeting: InstalledProject = {
       coder: agent('coder'),
     },
     intro: {
-      kind: 'mentor_say',
-      agent: 'mentor',
       say: 'Introduce the goal: implement greet(name), returning Hello, <name>!. Ask the learner to continue when ready.',
     },
     visibility: {
@@ -242,48 +240,8 @@ function extendedProject(language: 'Python' | 'Java'): InstalledProject {
 }
 const pythonLab = extendedProject('Python');
 const javaLab = extendedProject('Java');
-// Existing studies resolve their original version. Only the new version is offered for new courses.
-function legacyProject(project: InstalledProject): InstalledProject {
-  const legacy = structuredClone(project);
-  legacy.ref.version = '1.0.0';
-  legacy.definition.intro.say =
-    'Introduce the project: implement a greeting, then add safe whitespace handling. Explain that earlier code and one evolving PLAN.md carry into the next milestone. Optional exploration remains available after the required work.';
-  legacy.definition.milestones[1]!.stages = legacy.definition.milestones[1]!.stages.filter(
-    (stage) => stage.kind !== 'dialogue',
-  );
-  legacy.definition.milestones.push({
-    id: 'explore',
-    type: 'task',
-    title: 'Explore your own extension',
-    optional: true,
-    decisions: [],
-    quiz: [],
-    deliverables: [],
-    tests: [],
-    testScope: 'current',
-    publicTestFeedback: {},
-    stages: [
-      {
-        kind: 'produce',
-        agent: 'coder',
-        reads: ['plan', 'code'],
-        writes: 'code',
-        reviewRequired: false,
-        exploration: {
-          introduction:
-            'Choose an extension: support another greeting style or build a small web page. Keep your existing work and return whenever you wish.',
-        },
-        studentActions: ['chat', 'edit', 'create', 'delete', 'rename', 'move', 'restore'],
-      },
-    ],
-  });
-  return legacy;
-}
 const projects = new Map(
-  [greeting, pythonLab, javaLab, legacyProject(pythonLab), legacyProject(javaLab)].map((p) => [
-    `${p.ref.id}@${p.ref.version}`,
-    p,
-  ]),
+  [greeting, pythonLab, javaLab].map((p) => [`${p.ref.id}@${p.ref.version}`, p]),
 );
 export function publicProjects() {
   return [pythonLab, javaLab, greeting].map(({ ref, definition }) => ({

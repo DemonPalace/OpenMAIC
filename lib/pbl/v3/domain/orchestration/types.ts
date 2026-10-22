@@ -145,7 +145,6 @@ export interface MilestoneProgress {
   status: MilestoneStatus;
   stageIndex: number;
   completedStageIndexes: number[];
-  skippedStageIndexes?: number[];
   evaluationIds: string[];
 }
 
@@ -172,28 +171,7 @@ export interface CourseProgress {
 }
 
 export interface PblSessionState {
-  /** Absent only in legacy snapshots before definition-aware migrations. */
-  projectDefinitionRevision?: number;
-  /** Pins the intro selected when this Session was created; absent means the legacy project intro. */
-  releaseOnboardingId?: string;
-  /** Immutable Project Release identity exposed to trusted Session clients. */
-  projectRelease?: {
-    projectReleaseId: string;
-    manifestSha256: string;
-    capabilities: string[];
-  };
   status: SessionStatus;
-  /**
-   * Number of times this Session has reached the end of the Project Release it
-   * was running at the time.
-   *
-   * A later append-only release may reopen a completed Session without erasing
-   * that historical completion. Reports key their generation to this counter,
-   * so an M4 report cannot be mistaken for the final report after M5 is done.
-   * Absent only in snapshots written before append-only releases existed.
-   */
-  completionRevision?: number;
-  introCompleted: boolean;
   position: SessionPosition;
   milestones: MilestoneProgress[];
   collected: Record<string, CollectedMilestoneState>;

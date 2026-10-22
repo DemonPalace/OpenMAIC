@@ -12,48 +12,15 @@ import type { Study } from '@/lib/server/pbl-v3/store';
 const project = installedProject({ id: 'greeting-python', version: '1.0.0' }).definition;
 
 describe('project report boundary', () => {
-  it.each(['greeting-python-lab', 'greeting-java'])(
-    'requires every required milestone in pinned %s, including its recap transition',
-    (id) => {
-      const definition = installedProject({ id, version: '1.0.0' }).definition;
-      const state = startOrchestration(definition).state;
-      expect(canViewProjectReport(definition, state)).toBe(false);
-      state.milestones[0]!.status = 'completed';
-      state.milestones[1]!.status = 'active';
-      state.collected.normalize!.recapCompleted = true;
-      expect(canViewProjectReport(definition, state)).toBe(false);
-      state.milestones[1]!.status = 'completed';
-      expect(canViewProjectReport(definition, state)).toBe(true);
-      // Progress must match by immutable identity, not array position.
-      state.milestones.reverse();
-      expect(canViewProjectReport(definition, state)).toBe(true);
-      state.milestones = state.milestones.filter((m) => m.milestoneId !== 'greeting');
-      expect(canViewProjectReport(definition, state)).toBe(false);
-    },
-  );
-  it('keeps unfinished new projects and releases awaiting more milestones closed', () => {
+  it('opens only after the final project completion, not a milestone or recap flag', () => {
     const definition = installedProject({ id: 'greeting-python-lab', version: '1.1.0' }).definition;
     const state = startOrchestration(definition).state;
-    state.milestones[0]!.status = 'completed';
-    expect(canViewProjectReport(definition, state)).toBe(false);
-    state.milestones[1]!.status = 'completed';
-    expect(canViewProjectReport(definition, state)).toBe(true);
-    expect(
-      canViewProjectReport({ ...definition, completionMode: 'awaiting_more_milestones' }, state),
-    ).toBe(false);
+    expect(canViewProjectReport(state)).toBe(false);
+    for (const progress of state.milestones) progress.status = 'completed';
+    for (const collected of Object.values(state.collected)) collected.recapCompleted = true;
+    expect(canViewProjectReport(state)).toBe(false);
     state.status = 'completed';
-    expect(canViewProjectReport(definition, state)).toBe(true);
-    expect(
-      canViewProjectReport({ ...definition, completionMode: 'awaiting_more_milestones' }, state),
-    ).toBe(false);
-  });
-  it('does not count a project with only optional milestones as vacuously complete', () => {
-    const definition = structuredClone(project);
-    definition.milestones[0]!.optional = true;
-    const state = startOrchestration(definition).state;
-    expect(canViewProjectReport(definition, state)).toBe(false);
-    state.status = 'completed';
-    expect(canViewProjectReport(definition, state)).toBe(true);
+    expect(canViewProjectReport(state)).toBe(true);
   });
 });
 

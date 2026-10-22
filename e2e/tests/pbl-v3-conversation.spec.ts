@@ -79,7 +79,6 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
     recovery: null,
     state: {
       status: 'running',
-      introCompleted: true,
       position: { milestoneIndex: 0, milestoneId: 'greeting', stageIndex: 0 },
       milestones: [{ milestoneId: 'greeting', status: 'active' }],
       collected: { greeting: { decisions: [] } },
@@ -495,7 +494,6 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
   view.decisionSummary = [];
   view.actions = ['chat'];
   view.decisions = [];
-  view.state.introCompleted = true;
   view.state.milestones[0]!.status = 'completed';
   view.state.position = { milestoneIndex: 1, milestoneId: 'normalize', stageIndex: 2 };
   view.revision++;

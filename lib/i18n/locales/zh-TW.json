@@ -2629,6 +2629,7 @@
     "inProgress": "Learning is still in progress.",
     "reportEvidence": "Decisions, artifacts and results",
     "reportConversations": "Learning conversations",
+    "conversationLimited": "為保持流暢，本次檢視省略了部分活動內容；完整記錄仍已儲存。",
     "truncatedEvidence": "Only the most recent records are shown here. Earlier records remain saved.",
     "evidenceVersion": "Recorded version",
     "learner": "Learner",
@@ -2795,6 +2796,7 @@
     "recoverEnvironment": "恢復學習環境",
     "retryOpening": "重試本環節開場",
     "reportCopy": {
+      "waitFinal": "最後一輪復盤回覆儲存完成後，即可產生報告。",
       "generating": "Preparing your project report…",
       "failed": "The analysis could not be generated. Your learning records are saved; you can retry.",
       "retry": "Generate report / retry",

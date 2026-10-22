@@ -298,13 +298,6 @@ const SHIPPED: readonly (readonly [
     true,
     '2e38e3513ae71c4102122b3b4a6136ad27a4e504b6c041d37102df782787ff01',
   ],
-  [
-    'pbl-v3',
-    6,
-    'report-evidence-version',
-    true,
-    'b38c76c19a83604f45116fdf7b4670c404ca9f8ed34ab3596639e2bcc0c42f99',
-  ],
 ];
 
 /**

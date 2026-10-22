@@ -109,9 +109,7 @@ function parseJson(text: string | undefined, name: string): unknown {
 export function projectStages(
   project: InstalledProject | { definition: ProjectDescriptor['definition'] },
 ) {
-  const result: { key: string; stage: StageDefinition }[] = [
-    { key: 'intro:-1', stage: project.definition.intro },
-  ];
+  const result: { key: string; stage: StageDefinition }[] = [];
   for (const milestone of project.definition.milestones)
     milestone.stages.forEach((stage, i) => result.push({ key: `${milestone.id}:${i}`, stage }));
   return result;
@@ -428,13 +426,8 @@ export function assertProjectPlanPromptBudget(project: InstalledProject, planTex
 /** Render all executable teaching contexts, including paths without a teaching binding. */
 function oversizedTeachingPrompt(project: InstalledProject, planText: string) {
   const definition = project.definition;
-  for (const [index, milestone] of definition.milestones.entries()) {
+  for (const milestone of definition.milestones) {
     const contexts = milestone.stages.map((stage, i) => ({ key: `${milestone.id}:${i}`, stage }));
-    if (index === 0)
-      contexts.push(
-        { key: 'intro:-1', stage: definition.intro },
-        ...definition.releaseOnboardings.map(({ intro }) => ({ key: 'intro:-1', stage: intro })),
-      );
     const collected = createCollectedMilestoneState();
     collected.decisions = milestone.decisions.map((id) => {
       const options = definition.decisions.find((decision) => decision.id === id)!.options;

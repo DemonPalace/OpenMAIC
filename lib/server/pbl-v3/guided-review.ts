@@ -55,13 +55,12 @@ export class GuidedSkillReview {
       restored.protocolDigest === protocol.digest &&
       index >= 0 &&
       JSON.stringify(restored.reviewedFiles) === JSON.stringify(files.slice(0, index)) &&
-      (!restored.pending || restored.pending.file === restored.activeFile);
+      (!restored.pending || restored.pending.file === restored.activeFile) &&
+      (!projectWelcome || restored.welcome !== undefined);
     this.state = valid
       ? structuredClone(restored!)
       : { protocolDigest: protocol.digest!, activeFile: '', reviewedFiles: [] };
-    // Existing teaching is not replayed as a new welcome when instructions change.
-    if (projectWelcome)
-      this.state.welcome = restored?.welcome ?? (restored?.activeFile ? 'ready' : 'pending');
+    if (projectWelcome) this.state.welcome = valid ? restored!.welcome : 'pending';
   }
 
   beginRun(

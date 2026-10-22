@@ -1,5 +1,6 @@
 import { recordLearningEvidence } from './evidence';
-import { projectConversation, learningRunFailure } from './conversation';
+import { projectConversation, learningRunFailure, boundConversation } from './conversation';
+import { readConversationHistory, CONVERSATION_BYTES } from './conversation-history';
 import 'server-only';
 import { projectEditAccess } from '@/lib/pbl/v3/edit-access';
 import { reviewQuestion } from './review-question';
@@ -17,7 +18,6 @@ import { isAgentRuntimeConfigured } from '@/lib/config/feature-flags';
 import { assertWorkspaceModelsAuthorized } from '@/lib/server/model-config/runtime';
 import { stageStep } from '@/lib/pbl/v3/presentation';
 import { isPBLV3Reference, type LearningView } from '@/lib/pbl/v3/types';
-import { isExplorationStage } from '@/lib/pbl/v3/domain/project/project-schema';
 import type { AgentRole } from '@/lib/pbl/v3/domain/project/project-schema';
 import { currentStage, currentMilestone } from '@/lib/pbl/v3/domain/orchestration/state';
 import * as transitions from '@/lib/pbl/v3/domain/orchestration/transition';
@@ -355,6 +355,7 @@ export async function commandStudy(
       if (row.revision !== command.revision && !alreadyStarted && !collecting)
         throw sandboxConflict('Progress changed. Refresh before submitting.');
     }
+    if (row.state.status === 'completed') throw sandboxConflict('This project is completed.');
     if (alreadyStarted) return { alreadyStarted: true };
     if (await busy(store, row))
       throw sandboxConflict('Wait for the teaching response, or cancel it first.');
@@ -389,7 +390,6 @@ export async function commandStudy(
       if (command.type === 'chat' && !command.text?.trim())
         throw sandboxInvalid('A learning message is required.');
       await assertWorkspaceModelsAuthorized(principal.ownerId, ['agent']);
-      if (row.state.status === 'completed') throw sandboxConflict('This project is completed.');
       return store.transaction(async (db) => {
         await fenceOwnerWrite(db, row.owner_id);
         await db.query(
@@ -427,11 +427,6 @@ export async function commandStudy(
           // Reuse the actual student turn: retrying is not new feedback or approval.
           result = { sessionId: binding.session_id };
         } else {
-          if (!row.state.introCompleted) {
-            transition = transitions.completeIntro(row.state);
-            row = await store.commit(db, row, transition);
-            transition = { state: row.state, events: [] };
-          }
           result = {
             sessionId: await queueRole(
               store,
@@ -701,16 +696,13 @@ export async function commandStudy(
           await assertLearningPlan(store, row, snapshot.files['PLAN.md']!, true);
       }
       const endingMilestone =
-        row.state.introCompleted &&
         row.state.position.stageIndex ===
-          currentMilestone(definition, row.state)!.stages.length - 1;
+        currentMilestone(definition, row.state)!.stages.length - 1;
       if (stage.kind === 'produce' || endingMilestone) {
         // Establish a durable artifact before acknowledging the student's stage confirmation.
         await saveStudyCheckpoint(service, row);
       }
-      transition = row.state.introCompleted
-        ? transitions.completeCurrentStage(definition, row.state)
-        : transitions.completeIntro(row.state);
+      transition = transitions.completeCurrentStage(definition, row.state);
     } else throw sandboxInvalid('Unknown learning action.');
     return store.transaction(async (db) => {
       await persist(db);
@@ -748,7 +740,13 @@ export async function learningView(principal: OwnerPrincipal, id: string): Promi
   if (binding) {
     const agents = await getAgentSessionStore();
     const meta = await agents.getSession(binding.session_id);
-    latestUserSeq = (await listAgentUserMessages(agents, binding.session_id)).at(-1)?.seq;
+    latestUserSeq =
+      (
+        await store.pool.query<{ seq: number | null }>(
+          "SELECT max(seq) AS seq FROM agent_session_events WHERE session_id=$1 AND type='user_message'",
+          [binding.session_id],
+        )
+      ).rows[0]?.seq ?? undefined;
     const unclosed = succeededWithoutTeachingReceipt(
       row,
       stage,
@@ -769,7 +767,7 @@ export async function learningView(principal: OwnerPrincipal, id: string): Promi
     // Bounded transcript projection; durable role history remains in the runner's entry tree.
     const last = await agents.lastEventSeq(binding.session_id);
     activitySequence = last;
-    const events = await agents.readEventsAfter(binding.session_id, Math.max(0, last - 1000), 1000);
+    const events = await readConversationHistory(store.pool, binding.session_id, last, 1000);
     conversation = projectConversation(
       events,
       binding.role,
@@ -827,7 +825,7 @@ export async function learningView(principal: OwnerPrincipal, id: string): Promi
   )) {
     const last = await agents.lastEventSeq(previous.session_id);
     activitySequence += last;
-    const events = await agents.readEventsAfter(previous.session_id, Math.max(0, last - 500), 500);
+    const events = await readConversationHistory(store.pool, previous.session_id, last, 500);
     conversation.push(
       ...projectConversation(events, previous.role, false).map((entry) => ({
         ...entry,
@@ -847,6 +845,7 @@ export async function learningView(principal: OwnerPrincipal, id: string): Promi
       parts: [{ kind: 'text', id: 'pending-question', text: pendingReview.question }],
     });
   }
+  conversation = boundConversation(conversation, 4 * CONVERSATION_BYTES);
   let environment: LearningView['environment'] = null;
   let environmentService: SandboxService | undefined;
   let files = Object.keys(project.files);
@@ -905,14 +904,13 @@ export async function learningView(principal: OwnerPrincipal, id: string): Promi
     project.buildCommand
   )
     actions.push('compile');
-  const guided =
-    stage.kind === 'mentor_say' || (stage.kind === 'produce' && !isExplorationStage(stage));
+  const guided = stage.kind === 'mentor_say' || stage.kind === 'produce';
   const approvalCurrent = hasStageCompletion(row, stage, binding);
   return {
     id,
     revision: row.revision,
     title: project.definition.title,
-    reportAvailable: canViewProjectReport(project.definition, row.state),
+    reportAvailable: canViewProjectReport(row.state),
     environmentId: row.environment_id,
     environment,
     recovery:

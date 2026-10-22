@@ -75,9 +75,10 @@ It requires no built-in project registration.
 Definition paths select `docs`, `skills`, `skeleton`, `tests`, and `rubric` for
 requirements, pedagogy, starters, tests, and rubric. Starters include
 `skeleton/PLAN.md`. Every agent stage requires a teaching binding keyed by
-`<milestone-id>:<stage-index>` and its role; `intro:-1` binds the retained project
-introduction resources for older readers; the current runtime includes the project
-introduction in the first teaching step. Section names follow `A-teach.md` style and array order controls
+`<milestone-id>:<stage-index>` and its role. Project overview text lives in
+`definition.intro.say`; it is metadata for the welcome inside the first teaching
+step, with no separate intro stage or teaching binding. Every milestone follows
+the same seven steps, with final mentor reflection completing the project. Section names follow `A-teach.md` style and array order controls
 progression. The teaching runner reads the root Skill and active section through
 `read_next_skill` with its existing review/new-learner-turn gates. Only bound
 documents for that role/stage enter context. Non-guided stages receive their
@@ -167,7 +168,7 @@ Each stage's complete
 rendered system prompt plus its guided Skill replies must fit 32 KiB of UTF-8.
 Validation uses the runtime prompt builder, counting role templates, common rules,
 goals, contracts, projected decisions, all intro variants, bound documents/Skills,
-starter plans, package-derived evaluation feedback, exploration/teaching metadata,
+starter plans, package-derived evaluation feedback, teaching metadata,
 server instructions, live teaching-state suffixes and JSON escapes. It includes
 normal assessment introductions and test-failure tutoring even without a teaching binding.
 Oversized prompts are rejected before installation; resources are never silently

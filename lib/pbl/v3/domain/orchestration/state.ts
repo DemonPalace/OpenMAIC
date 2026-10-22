@@ -18,14 +18,7 @@ export function createCollectedMilestoneState(): CollectedMilestoneState {
 
 export function createPblSessionState(project: ProjectDefinition): PblSessionState {
   return {
-    projectDefinitionRevision:
-      typeof project.definitionRevision === 'number' ? project.definitionRevision : 1,
-    ...(project.defaultReleaseOnboardingId === undefined
-      ? {}
-      : { releaseOnboardingId: project.defaultReleaseOnboardingId }),
     status: 'created',
-    completionRevision: 0,
-    introCompleted: false,
     position: { milestoneIndex: 0, milestoneId: null, stageIndex: -1 },
     milestones: project.milestones.map((milestone) => ({
       milestoneId: milestone.id,
@@ -41,19 +34,6 @@ export function createPblSessionState(project: ProjectDefinition): PblSessionSta
     decisionRevisions: {},
     lastSequence: 0,
   };
-}
-
-/** Resolves the immutable onboarding choice made when a Session was created. */
-export function projectIntroForSession(
-  project: ProjectDefinition,
-  state: PblSessionState,
-): ProjectDefinition['intro'] {
-  if (state.releaseOnboardingId === undefined) return project.intro;
-  const onboarding = project.releaseOnboardings.find(({ id }) => id === state.releaseOnboardingId);
-  if (!onboarding) {
-    throw new Error(`release onboarding is unavailable: ${state.releaseOnboardingId}`);
-  }
-  return onboarding.intro;
 }
 
 function initialCourseProgress(

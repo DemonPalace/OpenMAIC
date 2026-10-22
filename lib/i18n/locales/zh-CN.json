@@ -2629,6 +2629,7 @@
     "inProgress": "学习仍在进行中。",
     "reportEvidence": "决策、作品和结果",
     "reportConversations": "学习对话",
+    "conversationLimited": "为保持流畅，本次视图省略了部分活动内容；完整记录仍已保存。",
     "truncatedEvidence": "这里仅显示最近的记录，较早记录仍已保存。",
     "evidenceVersion": "记录版本",
     "learner": "学生",
@@ -2795,6 +2796,7 @@
     "recoverEnvironment": "恢复学习环境",
     "retryOpening": "重试本环节开场",
     "reportCopy": {
+      "waitFinal": "最后一轮复盘回复保存完成后，即可生成报告。",
       "generating": "正在依据项目过程生成报告…",
       "failed": "报告分析未能生成。过程记录已保存，可以重试。",
       "retry": "生成报告／重试",

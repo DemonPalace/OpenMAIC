@@ -8,6 +8,7 @@ export interface LearningConversationEntry {
   at?: number;
   status?: 'running' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted';
   failure?: LearningRunFailure;
+  omitted?: boolean;
   speaker: 'user' | AgentRole;
   boundary?: {
     milestoneId: string;
@@ -42,6 +43,7 @@ export interface LearningConversationEntry {
           | 'skill'
           | 'tool';
         name?: string;
+        omitted?: boolean;
         args?: unknown;
         result?: unknown;
         display?: unknown;

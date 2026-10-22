@@ -3,6 +3,7 @@ import type { PersistedAgentSessionEvent } from '@openmaic/storage';
 import type { AgentRole } from '@/lib/pbl/v3/domain/project/project-schema';
 import type { LearningConversationEntry, LearningRunFailure } from '@/lib/pbl/v3/conversation';
 import { reviewQuestion } from './review-question';
+import { CONVERSATION_BYTES } from './conversation-history';
 
 /** Never send provider diagnostics, addresses or credentials to a learner. */
 export function learningRunFailure(error: unknown): LearningRunFailure {
@@ -92,6 +93,7 @@ export function projectConversation(
   };
   for (const event of events) {
     const data = record(event.data);
+    if (data.pblContentOmitted) getAssistant(event).omitted = true;
     if (event.type === 'pbl_stage_entered') {
       settle(event.ts);
       assistant = undefined;
@@ -211,6 +213,7 @@ export function projectConversation(
           tools.set(data.toolCallId, tool);
           getAssistant(event).parts.push(tool);
         }
+        if (data.pblContentOmitted) tool.omitted = true;
         if (data.args !== undefined) tool.args = data.args;
         if (event.type === 'tool_execution_update') {
           tool.progress =
@@ -260,15 +263,53 @@ export function projectConversation(
     const last = events.at(-1);
     getAssistant({ id: (last?.id ?? 0) + 1, ts: (last?.ts ?? 0) + 1 });
   }
-  return entries
-    .filter(
-      (e) =>
-        e.boundary ||
-        e.parts.length ||
-        e.status === 'running' ||
-        e.status === 'failed' ||
-        e.status === 'cancelled' ||
-        e.status === 'interrupted',
-    )
-    .slice(-60);
+  return boundConversation(
+    entries
+      .filter(
+        (e) =>
+          e.boundary ||
+          e.omitted ||
+          e.parts.length ||
+          e.status === 'running' ||
+          e.status === 'failed' ||
+          e.status === 'cancelled' ||
+          e.status === 'interrupted',
+      )
+      .slice(-60),
+  );
+}
+
+/** Keep recent content whole, including nested tool data; omit older payloads at the shared byte boundary. */
+export function boundConversation(
+  entries: LearningConversationEntry[],
+  budget = CONVERSATION_BYTES,
+) {
+  let remaining = budget;
+  for (const entry of entries.toReversed()) {
+    const kept: Part[] = [];
+    for (const part of entry.parts.toReversed()) {
+      const size = Buffer.byteLength(JSON.stringify(part));
+      if (size <= remaining) {
+        kept.push(part);
+        remaining -= size;
+      } else {
+        entry.omitted = true;
+        if (part.kind === 'tool') {
+          const summary = { ...part };
+          delete summary.args;
+          delete summary.result;
+          delete summary.display;
+          delete summary.progress;
+          summary.omitted = true;
+          const bytes = Buffer.byteLength(JSON.stringify(summary));
+          if (bytes <= remaining) {
+            kept.push(summary);
+            remaining -= bytes;
+          }
+        }
+      }
+    }
+    entry.parts = kept.reverse();
+  }
+  return entries;
 }

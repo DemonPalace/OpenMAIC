@@ -22,7 +22,7 @@ export function TaskDock({
   const { t } = useI18n();
   const id = useId();
   const toggle = useRef<HTMLButtonElement>(null);
-  const key = `${view.id}:${view.state.introCompleted}:${view.state.position.milestoneId}:${view.state.position.stageIndex}`;
+  const key = `${view.id}:${view.state.position.milestoneId}:${view.state.position.stageIndex}`;
   const [openKey, setOpenKey] = useState<string | null>(null);
   const hasDrawer =
     view.state.status !== 'completed' && ['dialogue', 'produce', 'check'].includes(view.stage.kind);

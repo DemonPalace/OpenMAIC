@@ -5,7 +5,6 @@ import type {
   ProjectDefinition,
   StageDefinition,
 } from '@/lib/pbl/v3/domain/project/project-schema';
-import { isExplorationStage } from '@/lib/pbl/v3/domain/project/project-schema';
 import type { CollectedMilestoneState } from '@/lib/pbl/v3/domain/orchestration/types';
 import { projectArtifacts } from '@/lib/pbl/v3/domain/orchestration/artifacts';
 import { buildSystemPrompt } from '@/lib/pbl/v3/domain/orchestration/prompts';
@@ -111,8 +110,7 @@ function buildTeachingPrompt({
   const confirmation = finalRecap
     ? 'The final recap complete_stage tool completes the project and reveals the report button. Do not ask for another Continue click or append another milestone.'
     : 'The learner uses the task bar above the chat input to enter the next step.';
-  const exploring = isExplorationStage(stage);
-  const guided = (stage.kind === 'produce' && !exploring) || stage.kind === 'mentor_say';
+  const guided = stage.kind === 'produce' || stage.kind === 'mentor_say';
   const repairing = stage.kind === 'check' && stage.checker === 'tests' && !!collected.remediation;
   const recapping =
     stage.kind === 'mentor_say' && stage.agent === 'mentor' && stage.skill === 'recap';
@@ -236,7 +234,6 @@ function buildTeachingPrompt({
           ? {
               planUpdateMode: stage.planUpdateMode,
               compileBeforeReview: stage.compileBeforeReview,
-              exploration: stage.exploration,
             }
           : {}),
       },
@@ -261,13 +258,11 @@ function buildTeachingPrompt({
     (guided
       ? '\nThe current teachingContext is authoritative. Earlier stages do not complete this stage. If completionRecorded is true, answer follow-ups without reopening the review. When activeSection is null, read_next_skill first. While welcome is pending, deliver only the welcome and readiness discussion; a later explicit readiness reply opens A via read_next_skill with studentFeedback, without changing the step. Otherwise read sections in order. New unanswered goals require one request_skill_review and real new feedback; already satisfied goals may reuse verified same-version learner feedback using reuseFeedback, including answers that anticipated the next section. State exactly what prior reply covers the goal; never reuse assistant reasoning as learner evidence. A correct answer or clear confident understanding suffices when no error or question remains. Do not add another example or boundary question merely to prolong review. Actual current-version plan/code approval is still required, but an already explicit same-version approval need not be repeated. Only complete_stage records completion; then follow learningRoadmap.confirmation. ' +
         confirmation
-      : exploring
-        ? '\nThis is optional, ongoing exploration. Discuss the learner’s goal, inspect current files, make focused changes and explain how to verify them. There is no fixed review sequence or completion signal. Preserve existing work; viewing the report never ends exploration.'
-        : repairing
-          ? '\nHelp the learner diagnose the observed test failure. Read the current code before making a focused repair. Explain the change and ask the learner to run tests again using the project controls. Never claim the repair passed without a new test result.'
-          : stage.kind === 'check'
-            ? '\nBriefly introduce the current test or quiz and point to its task drawer above the composer. Do not give answers, run checks, or claim results. Wait for the learner to use the controls.'
-            : '\nDiscuss only the current decisions. The learner records choices using the project controls.')
+      : repairing
+        ? '\nHelp the learner diagnose the observed test failure. Read the current code before making a focused repair. Explain the change and ask the learner to run tests again using the project controls. Never claim the repair passed without a new test result.'
+        : stage.kind === 'check'
+          ? '\nBriefly introduce the current test or quiz and point to its task drawer above the composer. Do not give answers, run checks, or claim results. Wait for the learner to use the controls.'
+          : '\nDiscuss only the current decisions. The learner records choices using the project controls.')
   );
 }
 
@@ -280,9 +275,7 @@ function teachingReview(review: TeachingPromptInput['pendingReview']) {
 
 /** The runner refreshes this state at every model-call boundary after tool mutations. */
 export function teachingLiveContext(input: TeachingPromptInput): string {
-  const guided =
-    input.stage.kind === 'mentor_say' ||
-    (input.stage.kind === 'produce' && !isExplorationStage(input.stage));
+  const guided = input.stage.kind === 'mentor_say' || input.stage.kind === 'produce';
   if (!guided) return '';
   return JSON.stringify({
     stageKey: input.stageKey,
@@ -311,8 +304,7 @@ export function teachingLiveSuffix(live: string): string {
 export function renderTeachingPrompt(input: TeachingPromptInput) {
   const systemPrompt = buildTeachingPrompt(input);
   const sections =
-    (input.stage.kind === 'produce' && !isExplorationStage(input.stage)) ||
-    input.stage.kind === 'mentor_say'
+    input.stage.kind === 'produce' || input.stage.kind === 'mentor_say'
       ? input.skill.progression
           .slice(1)
           .map((section) => teachingSection({ ...input, welcome: undefined }, section))

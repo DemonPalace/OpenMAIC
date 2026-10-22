@@ -25,6 +25,28 @@ const message = (text: string) => ({
   },
 });
 describe('student conversation projection', () => {
+  it('bounds aggregate tool payloads in one turn while preserving the latest normal payload whole', () => {
+    const events: PersistedAgentSessionEvent[] = [];
+    const text = 'tool output '.repeat(4000);
+    for (let i = 0; i < 100; i++)
+      events.push(
+        event(i + 1, 'tool_execution_end', {
+          toolName: 'read_file',
+          toolCallId: `call-${i}`,
+          isError: false,
+          result: { content: [{ type: 'text', text }], details: { index: i } },
+        }),
+      );
+    const output = projectConversation(events, 'coder', false);
+    expect(Buffer.byteLength(JSON.stringify(output))).toBeLessThan(600000);
+    expect(output.some((e) => e.omitted)).toBe(true);
+    expect(output[0]!.parts.at(-1)).toMatchObject({
+      kind: 'tool',
+      status: 'succeeded',
+      result: { content: [{ type: 'text', text }], details: { index: 99 } },
+    });
+    expect(events[0].data).toHaveProperty('result.content.0.text', text);
+  });
   it('keeps full long, nested payloads, progress and display for every emitted tool', () => {
     const text = 'full-output\n'.repeat(7000);
     const output = projectConversation(
@@ -486,13 +508,6 @@ describe('general teaching protocols', () => {
     expect(prompt(lastIndex, 6)).not.toContain(
       'The learner uses the task bar above the chat input to enter the next step.',
     );
-    expect(
-      isFinalProjectRecap(
-        { ...definition, completionMode: 'awaiting_more_milestones' },
-        { milestoneIndex: lastIndex, stageIndex: 6 },
-        definition.milestones[lastIndex]!.stages[6]!,
-      ),
-    ).toBe(false);
   });
   it('does not mistake a named pre-decision skill for mentor reflection', () => {
     const skill = stageSkill({

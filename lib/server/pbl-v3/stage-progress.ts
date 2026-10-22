@@ -1,23 +1,12 @@
 import {
-  isExplorationStage,
   type StageDefinition,
   type ProjectDefinition,
 } from '@/lib/pbl/v3/domain/project/project-schema';
 import type { Study, RoleBinding } from './store';
 
-/** Optional milestones in pinned projects do not postpone the required-work report. */
-export function canViewProjectReport(project: ProjectDefinition, state: Study['state']): boolean {
-  if (project.completionMode === 'awaiting_more_milestones') return false;
-  if (state.status === 'completed') return true;
-  const required = project.milestones.filter((milestone) => !milestone.optional);
-  return (
-    required.length > 0 &&
-    required.every(
-      (milestone) =>
-        state.milestones.find((progress) => progress.milestoneId === milestone.id)?.status ===
-        'completed',
-    )
-  );
+/** Report access follows the final committed project recap. */
+export function canViewProjectReport(state: Study['state']): boolean {
+  return state.status === 'completed';
 }
 
 /** A completed review belongs to a stage and its evidence, not the latest chat message. */
@@ -43,9 +32,7 @@ export function hasStageCompletion(
   return false;
 }
 
-/** Also recognizes older text-only runs, so upgrading does not leave a learner
- * with neither a Continue button nor a Retry action. No progress is granted.
- */
+/** Current-run failures without a teaching receipt remain retryable; no progress is granted. */
 export function succeededWithoutTeachingReceipt(
   row: Pick<Study, 'state'>,
   stage: StageDefinition,
@@ -58,7 +45,7 @@ export function succeededWithoutTeachingReceipt(
     status === 'succeeded' &&
     !!latestUserSeq &&
     binding?.stage_key === key &&
-    (stage.kind === 'mentor_say' || (stage.kind === 'produce' && !isExplorationStage(stage))) &&
+    (stage.kind === 'mentor_say' || stage.kind === 'produce') &&
     !hasStageCompletion(row, stage, binding) &&
     binding.guided?.pending?.runId !== `${key}:${latestUserSeq}`
   );
@@ -74,7 +61,6 @@ export function isFinalProjectRecap(
     stage.kind === 'mentor_say' &&
     stage.agent === 'mentor' &&
     position.milestoneIndex === project.milestones.length - 1 &&
-    position.stageIndex === project.milestones[position.milestoneIndex]!.stages.length - 1 &&
-    project.completionMode !== 'awaiting_more_milestones'
+    position.stageIndex === project.milestones[position.milestoneIndex]!.stages.length - 1
   );
 }

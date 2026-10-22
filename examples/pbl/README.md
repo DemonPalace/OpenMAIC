@@ -1,7 +1,7 @@
 # 最小 PBL 课程包
 
 `future-self-lite/` 是独立编写的 Python 项目，不依赖内置项目或静态注册。
-它包含一个留言函数、一个任务里程碑和 `skeleton/skills/docs/tests` 四类资源。
+它包含一个留言函数、一个采用完整七环节的任务里程碑和 `skeleton/skills/docs/tests` 四类资源。
 初始函数留空，学习者完成实现后，评测会检查中文、英文和空名字三种输入。
 
 在仓库根目录运行：
@@ -26,6 +26,9 @@ future-self-lite.maic.zip
     ├── skills/
     │   ├── SKILL.md
     │   ├── A-intro.md
+    │   ├── A-decisions.md
+    │   ├── A-plan.md
+    │   ├── A-recap.md
     │   └── A-implement.md
     ├── docs/brief.md
     └── tests/
@@ -44,10 +47,10 @@ future-self-lite.maic.zip
 PBL_PACKAGE_TOOLCHAINS=1 pnpm exec vitest run tests/pbl/v3/minimal-project-package.test.ts
 ```
 
-测试会实际打包、读取并校验这 9 个源文件，检查教学材料绑定，并使用本机
+测试会实际打包、读取并校验这 12 个源文件，检查教学材料绑定，并使用本机
 Python 执行平台评测运行器：初始代码失败，临时工作区中补全函数后通过。
 源文件中的初始代码保持未完成状态。
 
-本例已在两个独立空 PostgreSQL 数据库上通过真实浏览器导入和重新导出，
-9 个资源文件逐字节一致；服务进程重启后重新导出也一致。还验证了重复导入
-复用资源，以及篡改文件后拒绝导入。本次界面验证没有调用真实模型或云沙箱。
+
+浏览器工作台流程由独立回归测试覆盖；此示例当前资源结构的打包与执行验证以上述测试为准。
+这些验证没有调用真实模型或云沙箱。

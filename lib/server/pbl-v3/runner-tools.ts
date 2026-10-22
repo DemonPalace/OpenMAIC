@@ -40,7 +40,6 @@ import {
   type TeachingPromptInput,
 } from './teaching-prompt';
 import { PROJECT_LIMITS } from '@/lib/pbl/v3/package-policy';
-import { isExplorationStage } from '@/lib/pbl/v3/domain/project/project-schema';
 import { GuidedSkillReview } from './guided-review';
 import { currentTeachingContext, type TeachingHistoryWindow } from './teaching-context';
 import { hasStageCompletion, isFinalProjectRecap } from './stage-progress';
@@ -89,8 +88,7 @@ export async function teachingRunnerConfig(input: {
     bound.feedback_seq > 1 && !latest?.pblOpening,
     latest?.seq ?? 0,
   );
-  const exploring = isExplorationStage(stage);
-  const guided = (stage.kind === 'produce' && !exploring) || stage.kind === 'mentor_say';
+  const guided = stage.kind === 'produce' || stage.kind === 'mentor_say';
   let completionRecorded = hasStageCompletion(row, stage, bound);
   let turnComplete =
     guided &&
@@ -453,8 +451,6 @@ export async function teachingRunnerConfig(input: {
           await assertBuilt(store, current, hash);
           let transition: EngineTransition = { state: current.state, events: [] };
           let evidence: Record<string, unknown> | undefined;
-          if (!current.state.introCompleted)
-            return { value: { readyForStudentConfirmation: true } };
           if (stage.kind === 'mentor_say') {
             if (stage.agent === 'discussion')
               transition = transitions.completeTeaching(project.definition, current.state);

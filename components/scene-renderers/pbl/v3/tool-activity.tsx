@@ -159,6 +159,9 @@ function ToolCard({ part, stack, t }: { part: ToolPart; stack: string; t: Transl
               <pre className={styles.toolCard.payload}>{display}</pre>
             </div>
           ) : null}
+          {part.omitted && (
+            <p className="text-xs text-muted-foreground">{t('pblV3.conversationLimited')}</p>
+          )}
         </div>
       ) : null}
     </div>

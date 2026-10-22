@@ -167,6 +167,11 @@ export function LearningConversation({
     <Conversation className="min-h-0 flex-1 bg-background" aria-label={t('pblV3.learning')}>
       <FollowSend count={sent} />
       <ConversationContent className="gap-5 p-4">
+        {entries.some((entry) => entry.omitted) && (
+          <p role="status" className="text-xs text-muted-foreground">
+            {t('pblV3.conversationLimited')}
+          </p>
+        )}
         {!entries.length && !view.busy && (
           <p className="text-sm text-muted-foreground">{t('pblV3.journey.startConversation')}</p>
         )}

@@ -26,7 +26,8 @@ import { bindPackageReferences } from '@/lib/server/pbl-v3/project-resolver';
 import { MAX_COMMAND_BYTES } from '@/lib/sandbox/types';
 import { enumerateAssetManifest, validatePBLContent, isPBLV3Reference } from '@openmaic/dsl';
 
-const source = (id = 'greeting-python-lab') => installedProject({ id, version: '1.0.0' });
+const source = (id = 'greeting-python-lab') =>
+  installedProject({ id, version: id === 'greeting-python' ? '1.0.0' : '1.1.0' });
 function revised(change: (files: Record<string, string>) => void) {
   const original = packageBuiltin(source());
   const files = { ...original.files };
@@ -56,6 +57,38 @@ async function archive(bundle: ReturnType<typeof packageBuiltin>) {
   return JSZip.loadAsync(await zip.generateAsync({ type: 'uint8array' }));
 }
 describe('self-contained PBL project packages', () => {
+  it('installs only the current samples and rejects obsolete or incomplete learning structures', () => {
+    for (const id of ['greeting-python-lab', 'greeting-java'])
+      expect(() => installedProject({ id, version: '1.0.0' })).toThrow('not installed');
+    for (const field of [
+      'optional',
+      'exploration',
+      'missing recap',
+      'wrong order',
+      'release',
+      'onboarding',
+      'intro',
+    ])
+      expect(() =>
+        validateProjectPackage(
+          revised((files) => {
+            const spec = JSON.parse(files['project.json']);
+            const milestone = spec.definition.milestones[0];
+            if (field === 'optional') milestone.optional = true;
+            else if (field === 'exploration')
+              milestone.stages[3].exploration = { introduction: 'Explore' };
+            else if (field === 'missing recap') milestone.stages.pop();
+            else if (field === 'wrong order') milestone.stages.reverse();
+            else if (field === 'release')
+              spec.definition.completionMode = 'awaiting_more_milestones';
+            else if (field === 'onboarding') spec.definition.releaseOnboardings = [];
+            else spec.teaching[0].stage = 'intro:-1';
+            files['project.json'] = JSON.stringify(spec);
+          }),
+        ),
+      ).toThrow();
+    expect(packageBuiltin(source()).files['project.json']).not.toContain('intro:-1');
+  });
   it.each(['greeting-python', 'greeting-python-lab', 'greeting-java'])(
     'round-trips %s through ZIP without catalog resolution',
     async (id) => {
@@ -76,15 +109,15 @@ describe('self-contained PBL project packages', () => {
   );
   it('consumes the packaged Skill and only its role/stage reference materials', () => {
     const bundle = revised((files) => {
-      files['skills/1/A-teach.md'] = 'COURSE-SPECIFIC TEACHING';
-      files['docs/1.md'] = 'ACTIVE REFERENCE';
-      files['docs/2.md'] = 'FUTURE REFERENCE';
+      files['skills/0/A-teach.md'] = 'COURSE-SPECIFIC TEACHING';
+      files['docs/0.md'] = 'ACTIVE REFERENCE';
+      files['docs/1.md'] = 'FUTURE REFERENCE';
     });
     const { project } = validateProjectPackage(bundle);
     const stage = project.definition.milestones[0].stages[0];
     const skill = packagedStageSkill(project, stage, 'greeting:0', 'discussion');
     expect(skill.content['A-teach.md']).toContain('COURSE-SPECIFIC TEACHING');
-    expect(skill.documents).toEqual([{ path: 'docs/1.md', text: 'ACTIVE REFERENCE' }]);
+    expect(skill.documents).toEqual([{ path: 'docs/0.md', text: 'ACTIVE REFERENCE' }]);
     expect(JSON.stringify(skill)).not.toContain('FUTURE REFERENCE');
     expect(() => packagedStageSkill(project, stage, 'greeting:0', 'coder')).toThrow('unavailable');
   });
@@ -104,7 +137,6 @@ describe('self-contained PBL project packages', () => {
     'title',
     'contract',
     'intro',
-    'onboarding',
     'decision',
     'remediation',
     'starter plan',
@@ -112,7 +144,6 @@ describe('self-contained PBL project packages', () => {
     'project title',
     'language',
     'milestone teaching',
-    'exploration',
   ])('rejects oversized package-controlled %s in the complete teaching prompt', (field) => {
     const bundle = revised((files) => {
       const spec = JSON.parse(files['project.json']);
@@ -122,12 +153,7 @@ describe('self-contained PBL project packages', () => {
       else if (field === 'language') spec.definition.language = large;
       else if (field === 'milestone teaching')
         milestone.teaching = { purpose: large, concepts: ['concept'] };
-      else if (field === 'exploration') {
-        const exploration = spec.definition.milestones.find(
-          (item: { optional?: boolean }) => item.optional,
-        );
-        exploration.stages[0].exploration.introduction = large;
-      } else if (field === 'starter plan') files['skeleton/PLAN.md'] = large;
+      else if (field === 'starter plan') files['skeleton/PLAN.md'] = large;
       else if (field === 'combined fields') {
         spec.definition.agents.mentor.systemPrompt = 'x'.repeat(8000);
         spec.definition.agents.commonRules = 'x'.repeat(8000);
@@ -138,12 +164,7 @@ describe('self-contained PBL project packages', () => {
       else if (field === 'goal' || field === 'title' || field === 'contract')
         milestone[field] = large;
       else if (field === 'intro') spec.definition.intro.say = large;
-      else if (field === 'onboarding') {
-        spec.definition.releaseOnboardings = [
-          { id: 'large-onboarding', intro: { ...spec.definition.intro, say: large } },
-        ];
-        spec.definition.defaultReleaseOnboardingId = 'large-onboarding';
-      } else if (field === 'decision') spec.definition.decisions[0].options[0].summary = large;
+      else if (field === 'decision') spec.definition.decisions[0].options[0].summary = large;
       else {
         // Only the failed-test teaching path reads this contract.
         for (const stage of milestone.stages)

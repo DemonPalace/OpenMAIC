@@ -123,12 +123,12 @@ describe('guided review boundaries', () => {
     resumed.checkpoint('Explain the new concept.', artifact);
   });
 
-  it('does not replay the project welcome for legacy teaching or after a protocol update', () => {
+  it('requires the project welcome when a saved protocol is no longer valid', () => {
     const legacy = new GuidedSkillReview(protocol);
     legacy.beginRun('first:0', [], false, 1);
     legacy.advance('A-teach.md', undefined, artifact);
     const restored = new GuidedSkillReview({ ...protocol, digest: 'updated' }, legacy.state, true);
-    expect(restored.state.welcome).toBe('ready');
+    expect(restored.state.welcome).toBe('pending');
     expect(restored.state.activeFile).toBe('');
     expect(new GuidedSkillReview(protocol).state.welcome).toBeUndefined();
   });

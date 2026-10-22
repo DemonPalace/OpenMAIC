@@ -331,11 +331,7 @@ import {
 import { teachingRunnerConfig } from '@/lib/server/pbl-v3/runner-tools';
 import { touchEnvironment } from '@/lib/server/pbl-v3/environment';
 import { recordLearningEvidence } from '@/lib/server/pbl-v3/evidence';
-import {
-  completeCurrentStage,
-  startOrchestration,
-} from '@/lib/pbl/v3/domain/orchestration/transition';
-import { isExplorationStage } from '@/lib/pbl/v3/domain/project/project-schema';
+import { startOrchestration } from '@/lib/pbl/v3/domain/orchestration/transition';
 import { SandboxService } from '@/lib/server/sandbox/service';
 import { SandboxStore } from '@/lib/server/sandbox/store';
 import { E2BCompatibleSandboxProvider } from '@/lib/server/sandbox/providers/e2b-compatible';
@@ -903,15 +899,15 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
         await send('next');
         await guidedStage();
       }
-      const exploring = await learningView(principal, id);
-      expect(exploring.state.status).toBe('completed');
-      expect(exploring.milestones).toHaveLength(2);
-      expect(exploring.milestones!.every((m) => m.stages.length === 7)).toBe(true);
-      expect(exploring.actions).not.toContain('next');
+      const completed = await learningView(principal, id);
+      expect(completed.state.status).toBe('completed');
+      expect(completed.milestones).toHaveLength(2);
+      expect(completed.milestones!.every((m) => m.stages.length === 7)).toBe(true);
+      expect(completed.actions).not.toContain('next');
       const before = await store.get(id, principal.ownerId);
       const report = await learningReport(principal, id);
       expect(report.requiredComplete).toBe(true);
-      expect(report.outcomes?.filter((outcome) => outcome.milestoneId !== 'explore')).toEqual([
+      expect(report.outcomes).toEqual([
         {
           milestoneId: 'greeting',
           tests: 'passed',
@@ -941,90 +937,6 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
       expect(bindings.filter((b) => b.role === 'planner')).toHaveLength(2);
     },
     120000,
-  );
-  it.each(['greeting-python-lab', 'greeting-java'])(
-    'opens and saves reports after required legacy milestones without completing exploration for %s',
-    async (projectId) => {
-      const selected = installedProject({ id: projectId, version: '1.0.0' });
-      const initial = startOrchestration(selected.definition);
-      // A pinned learner has reached the last required recap. Its confirmation alone
-      // must not bypass the milestone completion transition.
-      initial.state.milestones[0]!.status = 'completed';
-      const milestone = selected.definition.milestones[1]!;
-      initial.state.position = {
-        milestoneIndex: 1,
-        milestoneId: milestone.id,
-        stageIndex: milestone.stages.length - 1,
-      };
-      initial.state.milestones[1]!.status = 'active';
-      initial.state.milestones[1]!.stageIndex = milestone.stages.length - 1;
-      initial.state.collected[milestone.id]!.recapCompleted = true;
-      const created = await store.create(
-        {
-          ownerId: principal.ownerId,
-          stageId: randomUUID(),
-          sceneId: 'scene',
-          projectId,
-          version: '1.0.0',
-        },
-        initial,
-      );
-      const calls = mocked.reportAnalysis.mock.calls.length;
-      const signal = new AbortController().signal;
-      expect((await learningView(principal, created.id)).reportAvailable).toBe(false);
-      expect((await learningEvidence(principal, created.id)).requiredComplete).toBe(false);
-      await expect(learningReport(principal, created.id)).rejects.toMatchObject({ status: 409 });
-      await expect(generateLearningReport(principal, created.id, signal)).rejects.toMatchObject({
-        status: 409,
-      });
-      expect(mocked.reportAnalysis).toHaveBeenCalledTimes(calls);
-      await store.transaction(async (db) => {
-        const row = await store.get(created.id, principal.ownerId, db);
-        await store.commit(db, row, completeCurrentStage(selected.definition, row.state));
-      });
-      const before = await store.get(created.id, principal.ownerId);
-      const view = await learningView(principal, created.id);
-      expect(view.reportAvailable).toBe(true);
-      expect(view.state.status).toBe('waiting_for_student');
-      expect(isExplorationStage(view.stage)).toBe(true);
-      expect(view.actions).toContain('edit');
-      expect(() => completeCurrentStage(selected.definition, before.state)).toThrow(
-        'exploration stays open',
-      );
-      expect((await learningReport(principal, created.id)).requiredComplete).toBe(true);
-      mocked.reportAnalysis.mockResolvedValueOnce({ findings: [], omitted: false });
-      const report = await generateLearningReport(principal, created.id, signal);
-      expect(report.requiredComplete).toBe(true);
-      expect(report.analysis?.status).toBe('ready');
-      expect(await learningReport(principal, created.id)).toEqual(report);
-      expect(await generateLearningReport(principal, created.id, signal)).toEqual(report);
-      expect(mocked.reportAnalysis).toHaveBeenCalledTimes(calls + 1);
-      expect(await store.get(created.id, principal.ownerId)).toEqual(before);
-      expect((await learningView(principal, created.id)).environmentId).toBeNull();
-      await recordLearningEvidence(pool, before, 'learner', 'file-edit', {
-        path: 'extension.py',
-        text: 'A later exploration edit',
-      });
-      const refreshed = await learningReport(principal, created.id);
-      expect(refreshed.analysis?.status).toBe('not_generated');
-      expect(refreshed.facts?.fileEdits).toBe(1);
-      expect(refreshed.evidence.some((e) => e.detail.includes('A later exploration edit'))).toBe(
-        true,
-      );
-      expect(mocked.reportAnalysis).toHaveBeenCalledTimes(calls + 1); // GET is token-free.
-      mocked.reportAnalysis.mockResolvedValueOnce({ findings: [], omitted: false });
-      const regenerated = await generateLearningReport(principal, created.id, signal);
-      expect(regenerated.analysis?.status).toBe('ready');
-      expect(regenerated.facts?.fileEdits).toBe(1);
-      expect(await generateLearningReport(principal, created.id, signal)).toEqual(regenerated);
-      expect(mocked.reportAnalysis).toHaveBeenCalledTimes(calls + 2);
-      await expect(
-        learningReport({ ...principal, ownerId: 'another-owner' }, created.id),
-      ).rejects.toMatchObject({ status: 404 });
-      await expect(
-        generateLearningReport({ ...principal, ownerId: 'another-owner' }, created.id, signal),
-      ).rejects.toMatchObject({ status: 404 });
-    },
   );
   it('pins project identity and isolates learners', async () => {
     const same = await store.create(
@@ -1258,19 +1170,12 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
       expectedAttempt: meta!.attempt,
     });
   });
-  it('opens each stage once without fabricating student feedback, including legacy intro rows', async () => {
+  it('opens each stage once without fabricating student feedback', async () => {
     const study = await freshStudy();
     const original = await store.get(study.id, principal.ownerId);
-    expect(original.state.introCompleted).toBe(true);
     expect(original.state.position.stageIndex).toBe(0);
-    // Old sessions keep their content and position while dropping the separate intro gate.
-    await pool.query(
-      "UPDATE pbl_v3_studies SET state=jsonb_set(state,'{introCompleted}','false') WHERE id=$1",
-      [study.id],
-    );
     const started = (await study.send('begin')) as { sessionId: string };
     const state = await store.get(study.id, principal.ownerId);
-    expect(state.state.introCompleted).toBe(true);
     expect(state.state.position).toEqual(original.state.position);
     const initial = await agents.readEventsAfter(started.sessionId, 0, 100);
     expect(initial.filter((event) => event.type === 'pbl_stage_entered')).toHaveLength(1);
@@ -1414,13 +1319,6 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
       "UPDATE pbl_v3_studies SET state=jsonb_set(state,'{status}','\"completed\"') WHERE id=$1",
       [id],
     );
-    // Existing databases have ready reports without an evidence key after migration.
-    // They must be replaced on explicit generation, never reused as current evidence.
-    await pool.query(
-      `INSERT INTO pbl_v3_reports(study_id,completion_revision,attempt,status,document)
-       VALUES($1,0,'old-format','ready',$2)`,
-      [id, JSON.stringify({ oldFormat: true })],
-    );
     mocked.reportAnalysis.mockReset().mockRejectedValueOnce(new Error('PRIVATE MODEL FAILURE'));
     const signal = new AbortController().signal;
     expect((await learningReport(principal, id)).analysis?.status).toBe('not_generated');
@@ -1450,14 +1348,33 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
       learningReport({ ...principal, ownerId: 'another-owner' }, id),
     ).rejects.toMatchObject({ status: 404 });
   });
-  it('invalidates reports on new Agent evidence and fences an older analysis finishing late', async () => {
+  it('waits for final Agent persistence, saves a stable report, and fences late retry results', async () => {
     const study = await freshStudy();
     const started = (await study.send('begin')) as { sessionId: string };
     await pool.query(
       "UPDATE pbl_v3_studies SET state=jsonb_set(state,'{status}','\"completed\"') WHERE id=$1",
       [study.id],
     );
-    const before = await store.get(study.id, principal.ownerId);
+    const signal = new AbortController().signal;
+    await expect(learningReport(principal, study.id)).rejects.toMatchObject({
+      reason: 'PBL_REPORT_PENDING',
+    });
+    await expect(generateLearningReport(principal, study.id, signal)).rejects.toMatchObject({
+      reason: 'PBL_REPORT_PENDING',
+    });
+    await agents.appendControlEvent(started.sessionId, {
+      ts: Date.now(),
+      type: 'message_end',
+      data: {
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'The final reflection is saved.' }],
+        },
+      },
+    });
+    await pool.query("UPDATE agent_sessions SET status='succeeded' WHERE id=$1", [
+      started.sessionId,
+    ]);
     mocked.reportAnalysis.mockReset();
     let finishOld!: (value: { findings: never[]; omitted: boolean }) => void;
     mocked.reportAnalysis.mockImplementationOnce(
@@ -1466,51 +1383,131 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
           finishOld = resolve;
         }),
     );
-    const signal = new AbortController().signal;
     const older = generateLearningReport(principal, study.id, signal);
     await vi.waitFor(() => expect(mocked.reportAnalysis).toHaveBeenCalledTimes(1));
+    expect((await generateLearningReport(principal, study.id, signal)).analysis?.status).toBe(
+      'generating',
+    );
+    await pool.query(
+      "UPDATE pbl_v3_reports SET updated_at=now()-interval '3 minutes' WHERE study_id=$1",
+      [study.id],
+    );
+    mocked.reportAnalysis.mockResolvedValueOnce({ findings: [], omitted: false });
+    const newer = await generateLearningReport(principal, study.id, signal);
+    finishOld({ findings: [], omitted: false });
+    expect(await older).toEqual(newer);
+    expect(
+      newer.conversations
+        .flatMap((c) => c.messages)
+        .some((m) => m.text === 'The final reflection is saved.'),
+    ).toBe(true);
+    expect(await generateLearningReport(principal, study.id, signal)).toEqual(newer);
+    expect(mocked.reportAnalysis).toHaveBeenCalledTimes(2);
+    await agents.softDeleteSession(started.sessionId, principal.ownerId);
+    expect(await learningReport(principal, study.id)).toEqual(newer);
+  });
+  it('labels reviewed revisions chronologically and reuses labels in saved source evidence', async () => {
+    const study = await freshStudy();
+    const row = await store.get(study.id, principal.ownerId);
+    for (const [i, hash] of ['first', 'second', 'first'].entries()) {
+      await pool.query('INSERT INTO pbl_v3_events(study_id,sequence,event) VALUES($1,$2,$3)', [
+        study.id,
+        row.state.lastSequence + i + 1,
+        JSON.stringify({
+          type: 'artifact.recorded',
+          artifact: {
+            id: `plan-${i}`,
+            kind: 'plan',
+            milestoneId: 'greeting',
+            workspaceRevisionId: hash,
+          },
+          content: `plan ${i}`,
+        }),
+      ]);
+    }
+    await pool.query(
+      "UPDATE pbl_v3_studies SET state=jsonb_set(state,'{lastSequence}',to_jsonb($2::int)) WHERE id=$1",
+      [study.id, row.state.lastSequence + 3],
+    );
+    for (const hash of ['first', 'second', 'unreviewed'])
+      await recordLearningEvidence(pool, row, 'coder', 'artifact', {
+        fingerprint: hash,
+        text: `snapshot ${hash}`,
+      });
+    const report = await learningEvidence(principal, study.id);
+    expect(
+      report.evidence.filter((e) => e.kind === 'artifact.recorded').map((e) => e.version),
+    ).toEqual(['v1', 'v2', 'v1']);
+    expect(report.evidence.filter((e) => e.kind === 'artifact').map((e) => e.version)).toEqual([
+      'v1',
+      'v2',
+      undefined,
+    ]);
+    expect(JSON.stringify(report)).not.toContain('fingerprint');
+  });
+  it('bounds raw tool replay before projection and preserves the latest reply and normal full result', async () => {
+    const study = await freshStudy();
+    const started = (await study.send('begin')) as { sessionId: string };
+    for (let i = 0; i < 30; i++)
+      await agents.appendControlEvent(started.sessionId, {
+        ts: Date.now(),
+        type: 'tool_execution_end',
+        data: {
+          toolName: 'read_file',
+          toolCallId: `tool-${i}`,
+          isError: false,
+          result: {
+            content: [{ type: 'text', text: 'normal payload '.repeat(6000) }],
+            details: { index: i },
+          },
+        },
+      });
+    await agents.appendControlEvent(started.sessionId, {
+      ts: Date.now(),
+      type: 'tool_execution_end',
+      data: {
+        toolName: 'read_file',
+        toolCallId: 'huge',
+        isError: false,
+        result: { content: [{ type: 'text', text: 'OVERSIZED_TOOL_' + 'x'.repeat(1000000) }] },
+      },
+    });
     await agents.appendControlEvent(started.sessionId, {
       ts: Date.now(),
       type: 'message_end',
       data: {
         message: {
           role: 'assistant',
-          content: [{ type: 'text', text: 'Later exploration discussion.' }],
+          content: [{ type: 'text', text: 'The latest reply is visible.' }],
         },
       },
     });
-    const latest = await learningReport(principal, study.id);
-    expect(latest.analysis?.status).toBe('not_generated');
+    const read = vi.spyOn(agents, 'readEventsAfter');
+    onTestFinished(() => read.mockRestore());
+    const view = await learningView(principal, study.id);
+    expect(read).not.toHaveBeenCalled();
+    expect(view.conversation?.some((e) => e.omitted)).toBe(true);
+    expect(Buffer.byteLength(JSON.stringify(view))).toBeLessThan(4 * 1024 * 1024);
+    expect(JSON.stringify(view)).not.toContain('OVERSIZED_TOOL_');
+    expect(JSON.stringify(view)).toContain('The latest reply is visible.');
     expect(
-      latest.conversations
-        .flatMap((c) => c.messages)
-        .some((m) => m.text === 'Later exploration discussion.'),
-    ).toBe(true);
-    expect((await store.get(study.id, principal.ownerId)).revision).toBe(before.revision);
-    mocked.reportAnalysis.mockResolvedValueOnce({ findings: [], omitted: false });
-    const newer = await generateLearningReport(principal, study.id, signal);
-    finishOld({ findings: [], omitted: false });
-    expect(await older).toEqual(newer);
-    expect(await generateLearningReport(principal, study.id, signal)).toEqual(newer);
-    expect(mocked.reportAnalysis).toHaveBeenCalledTimes(2);
-    // A review receipt can precede its display event, without a study revision change.
-    const binding = (await store.binding(started.sessionId))!;
-    const events = await agents.readEventsAfter(started.sessionId, 0, 100);
-    const inputSeq = events.findLast((e) => e.type === 'user_message')!.id;
-    await pool.query('UPDATE pbl_v3_roles SET guided=$2 WHERE session_id=$1', [
-      started.sessionId,
-      JSON.stringify({
-        pending: {
-          runId: `${binding.stage_key}:${inputSeq}`,
-          question: 'A pending review question.',
-        },
-      }),
-    ]);
-    expect((await learningReport(principal, study.id)).analysis?.status).toBe('not_generated');
+      view.conversation
+        ?.flatMap((e) => e.parts)
+        .findLast(
+          (p) =>
+            p.kind === 'tool' &&
+            p.result &&
+            (p.result as { details?: { index?: number } }).details?.index === 29,
+        ),
+    ).toBeDefined();
+    const stored = (
+      await pool.query(
+        "SELECT data FROM agent_session_events WHERE session_id=$1 AND data->>'toolCallId'='huge'",
+        [started.sessionId],
+      )
+    ).rows[0].data;
+    expect(stored.result.content[0].text.length).toBeGreaterThan(1000000);
     await agents.softDeleteSession(started.sessionId, principal.ownerId);
-    const deleted = await learningReport(principal, study.id);
-    expect(deleted.truncated).toBe(true);
-    expect(deleted.conversations).toEqual([]);
   });
   it('bounds long evidence histories and oversized records while retaining complete quantitative totals', async () => {
     const study = await freshStudy();
@@ -1571,6 +1568,9 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
         },
       },
     });
+    await pool.query("UPDATE agent_sessions SET status='succeeded' WHERE id=$1", [
+      started.sessionId,
+    ]);
     const report = await learningReport(principal, study.id);
     expect(report.truncated).toBe(true);
     expect(report.evidence.length).toBeLessThanOrEqual(2000);
@@ -1883,7 +1883,7 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
     expect((await store.binding(queued.sessionId))?.guided?.activeFile).toBe('A-teach.md');
     expect(await agents.listUserMessages(queued.sessionId)).toEqual(inputs);
     // The durable assistant stop is not grounds to early-settle an unclosed teaching turn.
-    // Emulate an older release that incorrectly settled the same prose-only run as succeeded.
+    // Simulate a current runner settling a prose-only turn without its required receipt.
     await pool.query("UPDATE agent_sessions SET status='succeeded' WHERE id=$1", [
       queued.sessionId,
     ]);
@@ -2485,7 +2485,7 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
         JSON.stringify({
           id: randomUUID(),
           fingerprint: 'old',
-          stageKey: 'intro:-1',
+          stageKey: 'greeting:0',
           startedAt: new Date().toISOString(),
         }),
       ],
@@ -2650,7 +2650,6 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
       let row = await store.get(studyId, principal.ownerId);
       row.state.position.stageIndex = 4;
       row.state.milestones[0]!.stageIndex = 4;
-      row.state.introCompleted = true;
       await store.transaction((db) => store.commit(db, row, { state: row.state, events: [] }));
       project.buildCommand = 'python3 -m py_compile greeting.py';
       project.evaluations.greeting = {
@@ -2805,7 +2804,6 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
         ...payload,
       });
     await expect(send('run', { text: 'echo forbidden' })).rejects.toThrow('teaching review');
-    row.state.introCompleted = true;
     row.state.position.stageIndex = 3;
     row.state.milestones[0]!.stageIndex = 3;
     row.state.collected.greeting!.codeReviewCompleted = true;
@@ -2896,7 +2894,7 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
       await expect(
         SandboxService.previewTarget(oldGrant.hash.slice(1), oldGrant.host),
       ).rejects.toMatchObject({ code: 'PBL_WORKSPACE_MANAGED' });
-      const legacyScoped = new URL(
+      const unsupportedScoped = new URL(
         issuePreviewGrant({
           ownerId: principal.ownerId,
           environmentId,
@@ -2906,7 +2904,7 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
         }).url,
       );
       await expect(
-        SandboxService.previewTarget(legacyScoped.hash.slice(1), legacyScoped.host),
+        SandboxService.previewTarget(unsupportedScoped.hash.slice(1), unsupportedScoped.host),
       ).rejects.toMatchObject({ code: 'PBL_WORKSPACE_MANAGED' });
       await store.exclusive(row.id, () => send('stop', { revision: 0 }));
       expect((await workbenchView(principal, row.id)).terminals[0]?.state).toBe('closed');
@@ -2935,7 +2933,6 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
       vi.stubEnv('OPENMAIC_SANDBOX_PREVIEW_ORIGIN', 'https://{id}.preview-example.net');
       const fresh = await freshStudy();
       let row = await store.get(fresh.id, principal.ownerId);
-      row.state.introCompleted = true;
       row.state.position.stageIndex = 3;
       row.state.milestones[0]!.stageIndex = 3;
       row = await store.transaction((db) =>
@@ -3078,8 +3075,7 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
         descriptor.runtime.evaluations[milestone.id] = 'tests/private.json';
       bundle.files['project.json'] = JSON.stringify(descriptor);
       // Build a valid course close to the actual 32 KiB budget, with room for a short question.
-      const introDoc = descriptor.teaching.find((binding) => binding.stage !== 'intro:-1')!
-          .documents[0]!,
+      const introDoc = descriptor.teaching[0]!.documents[0]!,
         introText = bundle.files[introDoc];
       validateProjectPackage(indexProjectFiles(importedId, selected.ref.version, bundle.files));
       let low = 0,
@@ -3235,31 +3231,7 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
           stage = stageFor(row),
           key = stageKey(row);
         const milestone = descriptor.definition.milestones[row.state.position.milestoneIndex]!;
-        if (isExplorationStage(stage)) {
-          expect((await learningReport(principal, created.id)).requiredComplete).toBe(true);
-          await turn('I want to explore a course extension.', async (config) => {
-            expect(config.allowedToolNames.has('read_next_skill')).toBe(false);
-            expect(config.allowedToolNames.has('complete_stage')).toBe(false);
-            expect(config.systemPrompt).toContain(`PACKAGED SKILL ${key}`);
-            expect(config.systemPrompt).toContain(`PACKAGED REFERENCE ${key}`);
-            expect(config.systemPrompt).not.toContain('PACKAGED SKILL greeting:1');
-            const path = java ? 'src/Greeting.java' : 'src/greeting.py';
-            const original = await service.readText(environmentId, path);
-            await invoke(config, 'write_file', {
-              path,
-              text: original + '\n',
-              expectedHash: digest(original),
-            });
-          });
-          await send('checkpoint');
-          mocked.missing.add(environmentId);
-          await send('prepare');
-          const recovered = await learningView(principal, created.id);
-          expect(recovered.environmentId).not.toBe(environmentId);
-          expect(recovered.state.position.milestoneId).toBe(milestone.id);
-          expect((await learningReport(principal, created.id)).requiredComplete).toBe(true);
-          break;
-        } else if (stage.kind === 'mentor_say' || stage.kind === 'produce') {
+        if (stage.kind === 'mentor_say' || stage.kind === 'produce') {
           if (stage.kind === 'produce' && stage.writes === 'plan' && !oversizedPlanSaveChecked) {
             const original = await service.readText(environmentId, 'PLAN.md');
             await expect(

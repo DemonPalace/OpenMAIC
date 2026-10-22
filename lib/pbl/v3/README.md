@@ -55,9 +55,14 @@ each tool card starts folded. Text snapshots replace earlier snapshots; complete
 when prose or a tool takes over. Terminal and interrupted turns settle on replay.
 Tool cards show the full emitted input, output, progress and display payloads, including
 failed results and loaded teaching sections, as plain text. Payloads are not interpreted
-as HTML or Markdown, filtered by tool name, or truncated by the PBL projection.
+as HTML or Markdown or filtered by tool name. Raw replay reads retain at most
+512 KiB of event payloads per role, plus bounded status metadata. Projected parts
+share a 512 KiB per-role budget and a 2 MiB aggregate budget, with bounded
+turn envelopes and omission summaries outside those payload budgets. Recent payloads are kept whole. Oversized
+or older content outside the budget is explicitly marked as omitted, including in
+an expanded tool card; complete events remain in durable storage.
 Recent conversations span the current milestone roles and project mentor; older
-records remain available in the report. Explicit sends re-anchor the conversation;
+records remain saved; the completion report uses bounded excerpts. Explicit sends re-anchor the conversation;
 reading older messages does not force scrolling to the bottom.
 
 Stage guidance, selected decisions, version-bound review and quiz actions use the
@@ -272,16 +277,17 @@ contract; its release synchronization and runtime topology are not copied.
 | Cross-milestone | The same workspace and PLAN continue; project roles change context. Checkpoints record the saved milestone/stage; recovery clears downstream gates if saved work predates current progress. |
 | Report | Available only after the final milestone recap is completed by `complete_stage`. The report button makes one bounded analysis request; the result and its evidence are saved. Returning to the workbench and reopening reads the saved report. No live sandbox is required to read it. |
 
-Pinned legacy projects with an optional exploration milestone retain report access
-after all required milestones are completed; exploration remains open. The server
-uses the same eligibility rule for the report button, evidence and GET/POST report
-access. Releases awaiting more milestones do not unlock a final report.
+PBL v3 is pre-release and does not preserve obsolete development-course definitions.
+Every milestone uses the same seven steps. The project welcome is delivered inside
+its first teaching step, without an independent intro stage or teaching binding.
+Local fixtures may be recreated when their schema changes; the runtime does not
+migrate obsolete study or welcome states.
 
-Saved reports are keyed to the study revision, saved evidence and durable Agent
-history, including pending review receipts. New evidence invalidates the saved
-analysis; GET returns current bounded evidence without calling a model, and an
-explicit report action generates a replacement. Concurrent requests reuse the
-same attempt; an older analysis cannot overwrite a newer attempt.
+The final recap completes the project. Report reads wait until the last Agent turn
+has finished persisting, then use the completed study revision. The saved report is
+a fixed completion snapshot: GET never calls a model, repeated report actions reuse
+it, failed/stale generation is retryable, and attempt fencing prevents a late result
+from replacing a newer retry. Completed studies reject further learning mutations.
 
 Report reads retain at most 1,000 orchestration records, 1,000 saved edit/artifact
 records and 1,000 conversation events across at most 1,000 role bindings. Queries
@@ -401,8 +407,8 @@ reviewed source snapshots and a final source snapshot. Source snapshots retain t
 runtime's 1 MiB bound. Terminal keystrokes are not a separate learning metric; arbitrary
 shell edits are captured by the subsequent review/final snapshot, not per keystroke.
 No-op saves are not counted as edits. Code changes are compared against the preceding
-saved snapshot. Full existing dialogue is paged from its store, without taking only the
-latest 5,000 events or clipping each learner message to 8,000 characters.
+saved snapshot. Report presentation reads bounded recent excerpts from durable
+history, with explicit omission indicators and full-snapshot SQL counts.
 
 Counts describe recorded activity, not scores or proof of understanding. Qualitative
 findings cite saved records; strengths, corrections and collaboration claims also require
@@ -410,9 +416,9 @@ an exact learner quote. Unknown references or invented quotes are rejected. The 
 analysis samples across the journey and explicitly marks omitted/shortened inputs;
 missing historical records cannot be reconstructed. Raw thinking, system stage openings,
 private course protocols, expected test answers and internal workspace fingerprints are
-excluded from the report. Versions appear as v1, v2, etc. Existing public 1.0.0 catalog
-references retain their original definitions so saved stage indexes are not silently
-reinterpreted; new sample selection uses 1.1.0.
+excluded from the report. Reviewed/tested versions are labeled v1, v2, etc. in
+chronological order; matching saved snapshots reuse those labels. Unreviewed source
+edits receive no reviewed-version label.
 
 ### Private evaluation material
 
@@ -425,4 +431,5 @@ Course authors must put expected results in the host-owned case descriptor, neve
 sandbox support scripts. This removes answer disclosure through process arguments and
 staged descriptors; the cooperative shell remains unsuitable as a hostile-code exam
 boundary. PBL thinking bars retain the full emitted text in both streaming and replay; their
-compact preview expands in place, matching OpenPBL.
+compact preview expands in place, matching OpenPBL. Replay presentation follows
+the aggregate bounds above without clipping the retained payloads.

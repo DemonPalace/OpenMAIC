@@ -546,7 +546,7 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
                     requesting={['chat', 'begin', 'retry'].includes(pendingAction ?? '')}
                   />
                   <TaskDock
-                    key={`${view.id}:${view.state.introCompleted}:${view.state.position.milestoneIndex}:${view.state.position.stageIndex}`}
+                    key={`${view.id}:${view.state.position.milestoneIndex}:${view.state.position.stageIndex}`}
                     view={view}
                     working={
                       testStage &&

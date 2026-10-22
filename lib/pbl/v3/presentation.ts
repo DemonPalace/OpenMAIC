@@ -6,7 +6,7 @@ export function learningStep(view: Pick<LearningView, 'state' | 'stage'>): strin
 }
 
 export function stageStep(stage: LearningView['stage']): string {
-  if (stage.kind === 'produce') return stage.exploration ? 'explore' : stage.writes;
+  if (stage.kind === 'produce') return stage.writes;
   if (stage.kind === 'check') return stage.checker;
   if (stage.kind === 'mentor_say') return stage.agent === 'discussion' ? 'teaching' : 'recap';
   return stage.kind;

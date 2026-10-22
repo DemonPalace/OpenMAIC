@@ -11,7 +11,6 @@ test('installed sample opens in the normal classroom and preserves progress afte
   await page.addInitScript(() => localStorage.setItem('locale', 'en-US'));
   const state = {
     status: 'running',
-    introCompleted: false,
     position: { milestoneIndex: 0, milestoneId: 'greeting', stageIndex: 0 },
     milestones: [],
     collected: {
@@ -93,7 +92,7 @@ test('installed sample opens in the normal classroom and preserves progress afte
       return route.fulfill({
         json: {
           studyId: view.id,
-          project: { id: 'greeting-python-lab', version: '1.0.0', title: 'Greeting' },
+          project: { id: 'greeting-python-lab', version: '1.1.0', title: 'Greeting' },
           analysis: {
             status: 'ready',
             omitted: true,
@@ -417,7 +416,6 @@ test('installed sample opens in the normal classroom and preserves progress afte
   await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeEnabled();
   // A late read from PLAN.md must not populate or become savable as greeting.py.
   view.actions = ['chat', 'edit'];
-  view.state.introCompleted = true;
   view.state.position.stageIndex = 3;
   view.stage = {
     kind: 'produce',
@@ -723,31 +721,4 @@ test('installed sample opens in the normal classroom and preserves progress afte
   await page.getByRole('button', { name: 'Learning report', exact: true }).click();
   await expect(report.getByText('A saved learning journey', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Return to learning' }).click();
-
-  // A pinned legacy project can keep optional exploration open while its report
-  // remains available. The server's report eligibility is independent of status.
-  view.state.status = 'waiting_for_student';
-  view.state.position = { milestoneIndex: 1, milestoneId: 'explore', stageIndex: 0 };
-  view.milestones.push({ id: 'explore', title: 'Optional extension', stages: ['explore'] });
-  view.stage = {
-    kind: 'produce',
-    agent: 'coder',
-    writes: 'code',
-    exploration: { introduction: 'Explore an extension.' },
-    reviewRequired: false,
-    reads: [],
-    studentActions: ['chat', 'edit'],
-  } as LearningView['stage'];
-  view.role = 'coder';
-  view.actions = ['chat', 'edit'];
-  view.needsOpening = false;
-  view.environment = { state: 'running', ready: true };
-  await page.reload();
-  await page.getByRole('button', { name: 'Learning report', exact: true }).click();
-  await expect(report.getByText('A saved learning journey', { exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Return to learning' }).click();
-  await expect(report).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Learning report', exact: true })).toBeEnabled();
-  expect(view.state.status).toBe('waiting_for_student');
-  expect(calls.filter((c) => c.type === 'prepare')).toHaveLength(attempts + 1);
 });

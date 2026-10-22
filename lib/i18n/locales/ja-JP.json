@@ -2629,6 +2629,7 @@
     "inProgress": "Learning is still in progress.",
     "reportEvidence": "Decisions, artifacts and results",
     "reportConversations": "Learning conversations",
+    "conversationLimited": "Some activity is omitted from this view to keep it responsive. The complete records remain saved.",
     "truncatedEvidence": "Only the most recent records are shown here. Earlier records remain saved.",
     "evidenceVersion": "Recorded version",
     "learner": "Learner",
@@ -2795,6 +2796,7 @@
     "recoverEnvironment": "Restore learning environment",
     "retryOpening": "Retry step opening",
     "reportCopy": {
+      "waitFinal": "Wait for the final teaching response to finish before preparing the report.",
       "generating": "Preparing your project report…",
       "failed": "The analysis could not be generated. Your learning records are saved; you can retry.",
       "retry": "Generate report / retry",

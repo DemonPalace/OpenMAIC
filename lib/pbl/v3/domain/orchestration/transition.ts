@@ -1,4 +1,3 @@
-import { isExplorationStage } from '../project/project-schema';
 import type {
   CourseReleaseDescriptor,
   ProjectDefinition,
@@ -7,12 +6,7 @@ import type {
 import { recordDecision } from './decisions';
 import type { EngineTransition, OrchestrationEvent } from './events';
 import { createRemediationHint } from './remediation';
-import {
-  createCollectedMilestoneState,
-  createPblSessionState,
-  currentMilestone,
-  currentStage,
-} from './state';
+import { createPblSessionState, currentMilestone, currentStage } from './state';
 import type {
   ArtifactRecord,
   CourseLifecycleStatus,
@@ -67,14 +61,12 @@ export function startOrchestration(
       state: {
         ...initial,
         status: 'completed',
-        completionRevision: (initial.completionRevision ?? 0) + 1,
       },
       events: [{ type: 'session.completed' }],
     };
   const stage = milestone.stages[0];
   const events: OrchestrationEvent[] = [
     { type: 'session.started', projectId: project.id },
-    { type: 'intro.completed' },
     {
       type: 'milestone.entered',
       milestoneId: milestone.id,
@@ -94,9 +86,6 @@ export function startOrchestration(
   ];
   let state: PblSessionState = {
     ...initial,
-    // Introduction is delivered inside the first teaching step; retain this legacy flag
-    // for persisted-session compatibility, without a separate confirmation gate.
-    introCompleted: true,
     status:
       stage?.kind === 'dialogue' || stage?.kind === 'produce' ? 'waiting_for_student' : 'running',
     position: { milestoneIndex: 0, milestoneId: milestone.id, stageIndex: stage ? 0 : -1 },
@@ -253,13 +242,6 @@ export function activateAgent(
     ),
     events: [event],
   };
-}
-
-export function completeIntro(state: PblSessionState): EngineTransition {
-  if (state.introCompleted)
-    throw new InvalidEngineTransitionError('project introduction is already completed');
-  const event: OrchestrationEvent = { type: 'intro.completed' };
-  return { state: appendSequence({ ...state, introCompleted: true }, [event]), events: [event] };
 }
 
 export function completeTeaching(
@@ -546,116 +528,9 @@ export function completeCurrentStage(
   project: ProjectDefinition,
   state: PblSessionState,
 ): EngineTransition {
-  return advanceCurrentStage(project, state, false);
-}
-
-function advanceCurrentStage(
-  project: ProjectDefinition,
-  state: PblSessionState,
-  skipRecap: boolean,
-): EngineTransition {
-  if (!state.introCompleted)
-    throw new InvalidEngineTransitionError(
-      'project introduction must be completed before advancing stages',
-    );
   const milestone = currentMilestone(project, state);
   const stage = currentStage(project, state);
   if (!milestone || !stage) throw new InvalidEngineTransitionError('there is no active stage');
-  const progress = state.milestones[state.position.milestoneIndex];
-  const nextMilestoneAfterCompletedBoundary = project.milestones[state.position.milestoneIndex + 1];
-  if (
-    progress?.status === 'completed' &&
-    progress.completedStageIndexes.includes(state.position.stageIndex) &&
-    nextMilestoneAfterCompletedBoundary
-  ) {
-    const nextMilestoneIndex = state.position.milestoneIndex + 1;
-    const existingNextProgress = state.milestones[nextMilestoneIndex];
-    if (
-      existingNextProgress &&
-      existingNextProgress.milestoneId !== nextMilestoneAfterCompletedBoundary.id
-    ) {
-      throw new InvalidEngineTransitionError(
-        'current Project Release does not preserve the existing milestone prefix',
-        'PROJECT_RELEASE_MILESTONE_PREFIX_MISMATCH',
-      );
-    }
-    if (!existingNextProgress && state.milestones.length !== nextMilestoneIndex) {
-      throw new InvalidEngineTransitionError(
-        'current Project Release is missing more than its direct successor milestone',
-        'PROJECT_RELEASE_MILESTONE_PREFIX_MISMATCH',
-      );
-    }
-    if (!existingNextProgress && state.projectDefinitionRevision !== project.definitionRevision) {
-      throw new InvalidEngineTransitionError(
-        'Session must migrate before entering a successor from a different project definition',
-        'PROJECT_RELEASE_MILESTONE_PREFIX_MISMATCH',
-      );
-    }
-    // Early rollout builds could pin the appended Project Release before its progress row was
-    // materialized. The Runtime already has the authoritative current definition in this branch,
-    // so repair that single direct-successor slot without running another release migration.
-    const boundaryState = existingNextProgress
-      ? state
-      : {
-          ...state,
-          milestones: [
-            ...state.milestones,
-            {
-              milestoneId: nextMilestoneAfterCompletedBoundary.id,
-              status: 'pending' as const,
-              stageIndex: -1,
-              completedStageIndexes: [],
-              evaluationIds: [],
-            },
-          ],
-          collected: {
-            ...state.collected,
-            [nextMilestoneAfterCompletedBoundary.id]:
-              state.collected[nextMilestoneAfterCompletedBoundary.id] ??
-              createCollectedMilestoneState(),
-          },
-        };
-    const firstStage = nextMilestoneAfterCompletedBoundary.stages[0];
-    const events: OrchestrationEvent[] = [
-      {
-        type: 'milestone.entered',
-        milestoneId: nextMilestoneAfterCompletedBoundary.id,
-        milestoneIndex: state.position.milestoneIndex + 1,
-        title: nextMilestoneAfterCompletedBoundary.title,
-      },
-      ...(firstStage
-        ? [
-            {
-              type: 'stage.entered',
-              milestoneId: nextMilestoneAfterCompletedBoundary.id,
-              stageIndex: 0,
-              stageKind: firstStage.kind,
-            } as const,
-          ]
-        : []),
-    ];
-    const nextState = updateMilestone(
-      {
-        ...boundaryState,
-        status:
-          firstStage?.kind === 'dialogue' || firstStage?.kind === 'produce'
-            ? 'waiting_for_student'
-            : 'running',
-        position: {
-          milestoneIndex: nextMilestoneIndex,
-          milestoneId: nextMilestoneAfterCompletedBoundary.id,
-          stageIndex: firstStage ? 0 : -1,
-        },
-      },
-      nextMilestoneIndex,
-      (nextProgress) => ({
-        ...nextProgress,
-        status: 'active',
-        stageIndex: firstStage ? 0 : -1,
-      }),
-    );
-    return { state: appendSequence(nextState, events), events };
-  }
   const collected = state.collected[milestone.id]!;
   if (stage.kind === 'mentor_say' && stage.agent === 'discussion' && !collected.teachingCompleted) {
     throw new InvalidEngineTransitionError(
@@ -666,8 +541,7 @@ function advanceCurrentStage(
     stage.kind === 'mentor_say' &&
     stage.agent === 'mentor' &&
     stage.skill &&
-    !collected.recapCompleted &&
-    !skipRecap
+    !collected.recapCompleted
   ) {
     throw new InvalidEngineTransitionError('guided recap must be confirmed before advancing');
   }
@@ -679,11 +553,6 @@ function advanceCurrentStage(
       'all milestone decisions must be submitted before advancing',
     );
   }
-  if (isExplorationStage(stage))
-    throw new InvalidEngineTransitionError(
-      'exploration stays open; viewing a report is navigation',
-      'EXPLORATION_STAYS_OPEN',
-    );
   if (stage.kind === 'produce' && !collected[stage.writes])
     throw new InvalidEngineTransitionError(`${stage.writes} must be recorded before advancing`);
   if (
@@ -712,40 +581,19 @@ function advanceCurrentStage(
       'COURSE_NOT_COMPLETED',
     );
   }
-  const isCurrentReleaseBoundary =
-    state.position.milestoneIndex === project.milestones.length - 1 &&
-    state.position.stageIndex === milestone.stages.length - 1;
-  if (isCurrentReleaseBoundary && project.completionMode === 'awaiting_more_milestones') {
-    throw new InvalidEngineTransitionError(
-      'the current Project Release is awaiting more milestones',
-      'PROJECT_RELEASE_AWAITS_MORE_MILESTONES',
-    );
-  }
-
-  const stageCompleted: OrchestrationEvent = skipRecap
-    ? {
-        type: 'stage.skipped',
-        milestoneId: milestone.id,
-        stageIndex: state.position.stageIndex,
-        reason: 'project_release_upgrade',
-      }
-    : { type: 'stage.completed', milestoneId: milestone.id, stageIndex: state.position.stageIndex };
+  const stageCompleted: OrchestrationEvent = {
+    type: 'stage.completed',
+    milestoneId: milestone.id,
+    stageIndex: state.position.stageIndex,
+  };
   const nextStageIndex = state.position.stageIndex + 1;
   const nextStage = milestone.stages[nextStageIndex];
   let events: OrchestrationEvent[] = [stageCompleted];
   let nextState = updateMilestone(state, state.position.milestoneIndex, (progress) => ({
     ...progress,
-    ...(skipRecap
-      ? {
-          skippedStageIndexes: [
-            ...new Set([...(progress.skippedStageIndexes ?? []), state.position.stageIndex]),
-          ],
-        }
-      : {}),
-    completedStageIndexes:
-      skipRecap || progress.completedStageIndexes.includes(state.position.stageIndex)
-        ? progress.completedStageIndexes
-        : [...progress.completedStageIndexes, state.position.stageIndex],
+    completedStageIndexes: progress.completedStageIndexes.includes(state.position.stageIndex)
+      ? progress.completedStageIndexes
+      : [...progress.completedStageIndexes, state.position.stageIndex],
   }));
 
   if (nextStage) {
@@ -794,7 +642,6 @@ function advanceCurrentStage(
     nextState = {
       ...nextState,
       status: 'completed',
-      completionRevision: (state.completionRevision ?? 0) + 1,
       position: clearActiveAgent({
         milestoneIndex: state.position.milestoneIndex,
         milestoneId: milestone.id,
@@ -878,19 +725,9 @@ export function allowedStudentActions(
   project: ProjectDefinition,
   state: PblSessionState,
 ): readonly StudentAction[] {
-  if (!state.introCompleted) return ['chat', 'next'];
-  const progress = state.milestones[state.position.milestoneIndex];
-  if (progress?.status === 'completed' && project.milestones[state.position.milestoneIndex + 1]) {
-    // An appended release reopens a formerly final Session at its completed recap. The old stage
-    // contract must not be re-run or edited; the learner has exactly one meaningful action here:
-    // explicitly enter the newly available next milestone.
-    return ['next'];
-  }
+  if (state.status === 'completed') return [];
   const stage = currentStage(project, state);
   if (!stage) return [];
-  const isCurrentReleaseBoundary =
-    state.position.milestoneIndex === project.milestones.length - 1 &&
-    state.position.stageIndex === (project.milestones.at(-1)?.stages.length ?? 0) - 1;
   if (stage.kind === 'mentor_say' || stage.kind === 'dialogue' || stage.kind === 'produce') {
     const collected = state.collected[state.position.milestoneId ?? ''];
     if (
@@ -920,9 +757,7 @@ export function allowedStudentActions(
         stage.writes === 'plan' ? collected?.planReviewCompleted : collected?.codeReviewCompleted;
       if (!reviewCompleted) return stage.studentActions.filter((action) => action !== 'next');
     }
-    return isCurrentReleaseBoundary && project.completionMode === 'awaiting_more_milestones'
-      ? stage.studentActions.filter((action) => action !== 'next')
-      : stage.studentActions;
+    return stage.studentActions;
   }
   if (
     stage.kind === 'check' &&

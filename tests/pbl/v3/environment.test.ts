@@ -16,7 +16,6 @@ const fingerprint = hash(
 );
 function row() {
   const state = startOrchestration(project.definition).state;
-  state.introCompleted = true;
   state.position.stageIndex = 5;
   state.milestones[0]!.completedStageIndexes = [0, 1, 2, 3, 4];
   const collected = state.collected.greeting!;
@@ -90,9 +89,8 @@ describe('restored workspace evidence', () => {
 });
 
 it('rewinds later milestones to the saved position and drops only their current gates', () => {
-  const lab = installedProject({ id: 'greeting-python-lab', version: '1.0.0' });
+  const lab = installedProject({ id: 'greeting-python-lab', version: '1.1.0' });
   const state = startOrchestration(lab.definition).state;
-  state.introCompleted = true;
   state.position = { milestoneIndex: 1, milestoneId: 'normalize', stageIndex: 3 };
   state.milestones[0]!.status = 'completed';
   state.milestones[1]!.status = 'active';
