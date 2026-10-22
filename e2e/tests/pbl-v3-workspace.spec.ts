@@ -465,7 +465,12 @@ test('installed sample opens in the normal classroom and preserves progress afte
   const savesBeforeSwitching = calls.filter((c) => c.type === 'save').length;
   for (let i = 0; i < 2; i++) {
     await page.getByRole('tab', { name: 'PLAN.md', exact: true }).click();
-    await expect(page.getByTestId('pbl-edit-access')).toContainText('PLAN.md is approved');
+    await page.locator('.monaco-editor .view-lines .view-line').first().click();
+    await page.keyboard.press('Backspace');
+    await expect(page.locator('.monaco-editor-overlaymessage')).toContainText(
+      'PLAN.md is approved',
+    );
+    await page.keyboard.press('Escape');
     await page.getByRole('tab', { name: 'greeting.py', exact: true }).click();
     await expect(page.locator('.monaco-editor .view-lines')).toHaveText('print("Saved code")');
   }
@@ -474,12 +479,53 @@ test('installed sample opens in the normal classroom and preserves progress afte
   view.busy = true;
   view.revision++;
   await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
-  await expect(page.getByTestId('pbl-edit-access')).toContainText('The assistant is working');
+  await page.locator('.monaco-editor .view-lines .view-line').first().click();
+  await page.keyboard.type('x');
+  await expect(page.locator('.monaco-editor-overlaymessage')).toContainText(
+    'The assistant is working',
+  );
+  await expect(page.getByTestId('pbl-edit-access')).toHaveCount(0);
+  await expect(page.locator('.monaco-editor .view-lines')).toHaveText('print("Saved code")');
+  const lockMessage = page.locator('.monaco-editor-overlaymessage');
+  await expect.poll(() => lockMessage.evaluate((el) => getComputedStyle(el).opacity)).toBe('1');
+  await expect(lockMessage).toBeInViewport();
+  expect(
+    await lockMessage.locator('.message').evaluate((el) => {
+      const box = el.getBoundingClientRect();
+      return el.contains(document.elementFromPoint(box.x + box.width / 2, box.y + 3));
+    }),
+  ).toBe(true); // The first-line hint must not be clipped by the resizable panel.
+  await page
+    .getByTestId('pbl-v3-workspace')
+    .screenshot({ path: 'test-results/pbl-v3-readonly.png' });
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.monaco-editor-overlaymessage')).not.toBeVisible();
+  await page.keyboard.type('y');
+  await expect(page.locator('.monaco-editor-overlaymessage')).toContainText(
+    'The assistant is working',
+  );
+  await page.keyboard.press('Escape');
   await expect(page.locator('.monaco-editor textarea').first()).not.toBeEditable();
   view.busy = false;
   view.revision++;
   await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
   await expect(page.locator('.monaco-editor textarea').first()).toBeEditable();
+  const hideFiles = page.getByRole('button', { name: 'Hide file tree', exact: true });
+  const fileHeader = hideFiles.locator('..');
+  await expect(fileHeader).toContainText('Project files');
+  const editorWidth = (await page.locator('.monaco-editor').boundingBox())!.width;
+  await hideFiles.click();
+  const showFiles = page.getByRole('button', { name: 'Toggle file explorer', exact: true });
+  await expect(showFiles).toBeVisible();
+  await expect
+    .poll(async () => (await page.locator('.monaco-editor').boundingBox())!.width)
+    .toBeGreaterThan(editorWidth);
+  await expect(page.locator('.monaco-editor .view-lines')).toHaveText('print("Saved code")');
+  await expect(page.locator('.monaco-editor textarea').first()).toBeEditable();
+  await showFiles.click();
+  await expect(hideFiles).toBeVisible();
+  await expect(showFiles).toHaveCount(0);
+  expect(calls.filter((c) => c.type === 'save')).toHaveLength(savesBeforeSwitching);
   await page.getByRole('button', { name: 'Manage source files' }).click();
   await page.getByLabel('Project-relative file path').fill('src/new.py');
   let releaseCreate!: () => void;
@@ -530,7 +576,13 @@ test('installed sample opens in the normal classroom and preserves progress afte
   await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
   await expect(page.locator('.monaco-editor .view-lines')).toHaveText('Unsaved learner work');
   await expect(page.locator('.monaco-editor textarea').first()).not.toBeEditable();
-  await expect(page.getByText('The environment or file changed.', { exact: false })).toBeVisible();
+  await page.locator('.monaco-editor .view-lines .view-line').first().click();
+  await page.keyboard.type('x');
+  await expect(page.locator('.monaco-editor-overlaymessage')).toContainText(
+    'The environment or file changed.',
+  );
+  await expect(page.locator('.monaco-editor .view-lines')).toHaveText('Unsaved learner work');
+  await page.keyboard.press('Escape');
   page.once('dialog', (dialog) => dialog.accept());
   await page.getByRole('button', { name: 'Discard changes and reload' }).click();
   await expect(page.locator('.monaco-editor .view-lines')).toHaveText('print("Current code")');

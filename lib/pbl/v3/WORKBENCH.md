@@ -8,7 +8,9 @@ has an explicit retry; completed projects can reopen reports without a sandbox.
 ## Layout and feedback
 
 The IDE is on the left; conversation, current-step controls and composer are on the
-right. Both panels can be resized or hidden. The header panorama lists milestones;
+right. Both panels can be resized or hidden. The file tree folds independently using
+the left arrow at the right edge of its Project files header. When folded, an
+expand control appears at the start of the editor tabs; the current buffer stays mounted. The header panorama lists milestones;
 the progress control above the composer lists the current milestone's steps.
 Task details open above the composer, with bounded height and internal scrolling.
 
@@ -40,8 +42,10 @@ outside this change; the generic shared sandbox facilities remain separate.
 ## Editing boundaries
 
 `projectEditAccess` is shared by the editor, workbench permissions and host file-save
-admission. The IDE displays its current lock reason instead of leaving an unexplained
-read-only editor. These rules follow the existing OpenPBL stage/writer boundaries:
+admission. Attempting to edit a locked file opens Monaco's existing inline message
+next to the cursor with the current localized reason. The message uses the editor's
+light/dark theme and dismisses on Escape, blur or cursor movement. No persistent
+lock-reason footer consumes editor height. These rules follow the existing OpenPBL stage/writer boundaries:
 
 | Step/state | Student file access |
 | --- | --- |

@@ -13,8 +13,8 @@ import {
   LoaderCircle,
   Check,
   AlertCircle,
-  LockKeyhole,
-  Pencil,
+  ChevronLeft,
+  PanelLeftOpen,
 } from 'lucide-react';
 import { PendingAction } from './pending-action';
 import { projectEditAccess } from '@/lib/pbl/v3/edit-access';
@@ -89,6 +89,7 @@ export function LearningWorkbenchPanel({
     }
   }, [showEvaluation]);
   const explorer = usePanelRef();
+  const [filesCollapsed, setFilesCollapsed] = useState(false);
   const executionSequence = useRef(0),
     current = useRef(view);
   current.current = view;
@@ -315,24 +316,24 @@ export function LearningWorkbenchPanel({
             minSize="15%"
             maxSize="45%"
             collapsible
+            collapsedSize="0%"
+            onResize={({ asPercentage }) => setFilesCollapsed(asPercentage === 0)}
             className="h-full bg-muted/20"
           >
-            <header className="flex shrink-0 flex-wrap items-center gap-1 border-b pbl-chrome px-2 py-1">
-              <button
-                className={button}
-                aria-label={t('pblV3.ide.hideFiles')}
-                title={t('pblV3.ide.toggleFiles')}
-                onClick={() => {
-                  if (explorer.current?.isCollapsed()) explorer.current.expand();
-                  else explorer.current?.collapse();
-                }}
-              >
-                <Files size={15} />
-              </button>
-              <span className="mr-auto text-xs font-semibold">
+            <header className="flex shrink-0 items-center gap-1 border-b pbl-chrome px-2 py-1">
+              <Files size={15} className="shrink-0" aria-hidden="true" />
+              <span className="mr-auto min-w-0 truncate text-xs font-semibold">
                 {t('pblV3.files')}{' '}
                 <span className="font-normal text-muted-foreground">{view.files.length}</span>
               </span>
+              <button
+                className={button}
+                aria-label={t('pblV3.ide.hideFiles')}
+                title={t('pblV3.ide.hideFiles')}
+                onClick={() => explorer.current?.collapse()}
+              >
+                <ChevronLeft size={15} />
+              </button>
             </header>
             <FileExplorer
               files={view.files}
@@ -350,17 +351,16 @@ export function LearningWorkbenchPanel({
           />
           <Panel id="editor" minSize="45%" className="flex h-full min-w-0 flex-col">
             <div className="pbl-chrome flex min-h-9 shrink-0 items-center border-b">
-              <button
-                className={button}
-                aria-label={t('pblV3.ide.toggleFiles')}
-                onClick={() =>
-                  explorer.current?.isCollapsed()
-                    ? explorer.current.expand()
-                    : explorer.current?.collapse()
-                }
-              >
-                <Files size={14} />
-              </button>
+              {filesCollapsed && (
+                <button
+                  className={button}
+                  aria-label={t('pblV3.ide.toggleFiles')}
+                  title={t('pblV3.ide.toggleFiles')}
+                  onClick={() => explorer.current?.expand()}
+                >
+                  <PanelLeftOpen size={14} />
+                </button>
+              )}
               <div
                 role="tablist"
                 aria-label={t('pblV3.ide.openFiles')}
@@ -452,6 +452,7 @@ export function LearningWorkbenchPanel({
                   path={path}
                   value={buffer.text}
                   readOnly={!canSave}
+                  readOnlyReason={t(`pblV3.editAccess.${editReason}`)}
                   onChange={editor.edit}
                   onSave={save}
                 />
@@ -595,18 +596,6 @@ export function LearningWorkbenchPanel({
           </div>
         </div>
       )}
-      <footer
-        role="status"
-        data-testid="pbl-edit-access"
-        className="flex shrink-0 items-start gap-1.5 border-t px-2 py-1.5 text-xs text-muted-foreground"
-      >
-        {canSave ? (
-          <Pencil size={12} className="mt-0.5 shrink-0" />
-        ) : (
-          <LockKeyhole size={12} className="mt-0.5 shrink-0" />
-        )}
-        <span>{t(`pblV3.editAccess.${editReason}`)}</span>
-      </footer>
     </section>
   );
 }

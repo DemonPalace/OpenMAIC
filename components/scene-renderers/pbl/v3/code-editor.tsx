@@ -11,6 +11,7 @@ export function CodeEditor({
   path,
   value,
   readOnly,
+  readOnlyReason,
   onChange,
   onSave,
 }: {
@@ -18,6 +19,7 @@ export function CodeEditor({
   path: string;
   value: string;
   readOnly: boolean;
+  readOnlyReason: string;
   onChange: (text: string) => void;
   onSave: () => void;
 }) {
@@ -69,6 +71,17 @@ export function CodeEditor({
       loading={<p className="p-4 text-sm text-muted-foreground">{t('pblV3.loading')}</p>}
       onChange={handleChange}
       onMount={(editor, monaco) => {
+        // The native readonly textarea suppresses character/paste input events.
+        // Route those attempts through Monaco so its cursor-side message still appears.
+        const attempt = editor.onKeyDown(({ browserEvent: event }) => {
+          if (!editor.getOption(monaco.editor.EditorOption.readOnly)) return;
+          const command = event.metaKey || event.ctrlKey;
+          const typing = event.key.length === 1 && !command && !event.altKey;
+          const clipboard = command && ['v', 'x'].includes(event.key.toLowerCase());
+          if (typing || clipboard || event.isComposing || event.key === 'Process')
+            editor.trigger('readonly-keyboard', 'type', { text: event.key });
+        });
+        editor.onDidDispose(() => attempt.dispose());
         editor.addAction({
           id: 'pbl-save-file',
           label: t('pblV3.saveFile'),
@@ -78,9 +91,11 @@ export function CodeEditor({
       }}
       options={{
         readOnly,
+        readOnlyMessage: { value: readOnlyReason },
         domReadOnly: readOnly,
         ariaLabel: t('pblV3.editor'),
         automaticLayout: true,
+        fixedOverflowWidgets: true,
         minimap: { enabled: false },
         fontSize: 13,
         lineHeight: 21,
