@@ -12,10 +12,7 @@ import { getAgentSessionStore } from '@/lib/server/agent-runtime/store';
 import { listAgentUserMessages } from '@/lib/server/agent-runtime/user-messages';
 import { SandboxStore } from '@/lib/server/sandbox/store';
 import { SandboxService } from '@/lib/server/sandbox/service';
-import { sandboxConflict, sandboxInvalid } from '@/lib/sandbox/errors';
-import { buildSystemPrompt } from '@/lib/pbl/v3/domain/orchestration/prompts';
-import { projectArtifacts } from '@/lib/pbl/v3/domain/orchestration/artifacts';
-import { stageStep } from '@/lib/pbl/v3/presentation';
+import { SandboxError, sandboxConflict, sandboxInvalid } from '@/lib/sandbox/errors';
 import { currentMilestone } from '@/lib/pbl/v3/domain/orchestration/state';
 import * as transitions from '@/lib/pbl/v3/domain/orchestration/transition';
 import type { EngineTransition } from '@/lib/pbl/v3/domain/orchestration/events';
@@ -30,9 +27,17 @@ import {
   invalidateWorkspace,
 } from './runtime';
 import { touchEnvironment, assertEnvironmentReady } from './environment';
-import { assertIncrementalPlan } from './plan';
+import { assertLearningPlan } from './plan';
 import { startBuild, collectBuild, assertBuilt } from './compilation';
-import { stageSkill, teachingRules, interactionRules, assessmentRules } from './skills';
+import { packagedStageSkill } from './project-package';
+import {
+  renderTeachingPrompt,
+  teachingSection,
+  teachingLiveContext,
+  teachingLiveSuffix,
+  type TeachingPromptInput,
+} from './teaching-prompt';
+import { PROJECT_LIMITS } from '@/lib/pbl/v3/package-policy';
 import { isExplorationStage } from '@/lib/pbl/v3/domain/project/project-schema';
 import { GuidedSkillReview } from './guided-review';
 import { currentTeachingContext, type TeachingHistoryWindow } from './teaching-context';
@@ -60,7 +65,7 @@ export async function teachingRunnerConfig(input: {
   const agents = await getAgentSessionStore();
   const userMessages = await listAgentUserMessages(agents, input.sessionId);
   const latest = userMessages.at(-1);
-  const skill = stageSkill(stage);
+  const skill = packagedStageSkill(project, stage, bound.stage_key, bound.role);
   const progression = skill.progression;
   const protocol = {
     progression,
@@ -228,7 +233,7 @@ export async function teachingRunnerConfig(input: {
             throw sandboxConflict('This role cannot write that file.');
           assertProjectSource(project, p.path);
           if (guided) review.assertWritable();
-          if (p.path === 'PLAN.md') await assertIncrementalPlan(store, current, p.text);
+          if (p.path === 'PLAN.md') await assertLearningPlan(store, current, p.text);
           const changed = await (
             await service(signal)
           ).compareAndWriteText(
@@ -351,17 +356,7 @@ export async function teachingRunnerConfig(input: {
               p.studentFeedback,
               review.state.activeFile ? await fingerprint(current, signal) : digest('no-workspace'),
             );
-          const instruction = skill.content[next as keyof typeof skill.content];
-          return {
-            value: {
-              section: next,
-              instruction,
-              delivery:
-                'After delivering this section, put its single open question in request_skill_review. The tool displays the question and records the wait for a real learner reply. Do not end with only a question in ordinary text: that does not create a review receipt. Do not proceed to another section in this turn.',
-              goal: milestone.goal ?? milestone.title,
-              stage: stage.kind === 'mentor_say' ? stage.say : stage.writes,
-            },
-          };
+          return { value: teachingSection({ skill, stage, milestone }, next) };
         },
       ),
     );
@@ -373,6 +368,16 @@ export async function teachingRunnerConfig(input: {
         async (current, p, _callId, signal) => {
           const hash = await fingerprint(current, signal);
           await assertBuilt(store, current, hash);
+          // Refuse an oversized question before persisting a receipt that would block the next turn.
+          const prospective = {
+            ...currentPromptInput(),
+            pendingReview: { question: p.question, studentResponses: [] },
+          };
+          assertPromptBudget(renderTeachingPrompt(prospective).bytes);
+          assertPromptBudget(
+            Buffer.byteLength(systemPrompt + teachingLiveSuffix(teachingLiveContext(prospective))) +
+              sectionBytes,
+          );
           review.checkpoint(p.question, hash);
           return { value: { question: p.question, waitForStudent: true } };
         },
@@ -408,7 +413,7 @@ export async function teachingRunnerConfig(input: {
             if (stage.writes === 'plan' && !files['PLAN.md']?.trim())
               throw sandboxConflict('PLAN.md must contain the learner’s plan.');
             if (stage.writes === 'plan')
-              await assertIncrementalPlan(store, current, files['PLAN.md']!, true);
+              await assertLearningPlan(store, current, files['PLAN.md']!, true);
             if (
               stage.writes === 'code' &&
               !Object.entries(files).some(([path, text]) => path !== 'PLAN.md' && text.trim())
@@ -466,172 +471,55 @@ export async function teachingRunnerConfig(input: {
   let planText: string | undefined;
   if (row.environment_id && 'reads' in stage && stage.reads.includes('plan'))
     planText = await (await service(input.signal)).readText(row.environment_id, 'PLAN.md');
-  const collected = row.state.collected[milestone.id]!;
-  const repairing = stage.kind === 'check' && stage.checker === 'tests' && !!collected.remediation;
-  const recapping =
-    stage.kind === 'mentor_say' && stage.agent === 'mentor' && stage.skill === 'recap';
-  const seed = projectArtifacts({
-    reads: repairing
-      ? ['contract', 'decisions.chosen', 'code']
-      : 'reads' in stage
-        ? stage.reads
-        : [],
+  const promptInput: TeachingPromptInput = {
+    definition: project.definition,
+    stage,
     milestone,
-    state: { decisions: collected.decisions, plan: planText, code: collected.code?.value },
-    decisionCatalog: project.definition.decisions,
+    role: bound.role,
+    stageKey: bound.stage_key,
+    skill,
+    packaged: !!project.coursePackage,
+    collected: row.state.collected[milestone.id]!,
+    planText,
+    milestoneIndex: row.state.position.milestoneIndex,
+    stageIndex: row.state.position.stageIndex,
+    automaticEntry: latest?.pblOpening === true,
+    pendingRun: row.evaluation?.id ?? null,
+  };
+  const currentPromptInput = (): TeachingPromptInput => ({
+    ...promptInput,
+    completionRecorded,
+    activeSection: review.state.activeFile,
+    reviewedSectionCount: review.state.reviewedFiles.length,
+    pendingReview: review.state.pending
+      ? { question: review.state.pending.question, studentResponses: review.studentResponses() }
+      : null,
   });
-  const systemPrompt =
-    buildSystemPrompt({
-      role: bound.role,
-      seed: {
-        ...seed,
-        projectContext: { title: project.definition.title, language: project.definition.language },
-        stageEntry: {
-          automatic: latest?.pblOpening === true,
-          firstMilestone: row.state.position.milestoneIndex === 0,
-          step: row.state.position.stageIndex + 1,
-          totalSteps: milestone.stages.length,
-          steps: milestone.stages.map(stageStep),
-          introduction:
-            row.state.position.milestoneIndex === 0 && row.state.position.stageIndex === 0
-              ? project.definition.intro.say
-              : undefined,
-        },
-        learningRoadmap: {
-          currentStep: stageStep(stage),
-          nextStep: milestone.stages[row.state.position.stageIndex + 1]
-            ? stageStep(milestone.stages[row.state.position.stageIndex + 1]!)
-            : row.state.position.milestoneIndex + 1 < project.definition.milestones.length
-              ? 'next_milestone'
-              : 'project_complete',
-          completionRecorded,
-          confirmation:
-            'The learner uses the task bar above the chat input to enter the next step.',
-        },
-        milestone: { id: milestone.id, title: milestone.title },
-        goal: milestone.goal ?? milestone.title,
-        ...(guided
-          ? {
-              teachingContext: {
-                stageKey: bound.stage_key,
-                completionRecorded,
-                activeSection: review.state.activeFile || null,
-                nextSection:
-                  progression[
-                    review.state.reviewedFiles.length + (review.state.activeFile ? 2 : 1)
-                  ] ?? null,
-                finalSection: protocol.final,
-              },
-            }
-          : {}),
-        ...(guided && review.state.pending
-          ? {
-              currentReview: {
-                question: review.state.pending.question,
-                studentResponses: review.studentResponses(),
-              },
-            }
-          : {}),
-        ...(stage.kind === 'check'
-          ? {
-              assessmentContext: {
-                checker: stage.checker,
-                pendingRun: row.evaluation?.id ?? null,
-                tests: collected.tests
-                  ? { status: collected.tests.status, feedback: collected.tests.publicFeedback }
-                  : null,
-                quiz: collected.quiz
-                  ? {
-                      passed: collected.quiz.passed,
-                      score: collected.quiz.score,
-                      total: collected.quiz.total,
-                    }
-                  : null,
-              },
-            }
-          : {}),
-        ...(recapping
-          ? {
-              recordedEvidence: {
-                tests: collected.tests
-                  ? {
-                      status: collected.tests.status,
-                      feedback: collected.tests.publicFeedback?.slice(0, 8000),
-                      workspaceRevision: collected.tests.revision,
-                      codeArtifactId: collected.tests.codeArtifactId,
-                    }
-                  : null,
-                quiz: collected.quiz
-                  ? {
-                      passed: collected.quiz.passed,
-                      score: collected.quiz.score,
-                      total: collected.quiz.total,
-                      attempt: collected.quiz.attempt,
-                      wrongQuestionIndexes: collected.quiz.wrong,
-                    }
-                  : null,
-              },
-            }
-          : {}),
-        ...(repairing
-          ? { testFeedback: collected.tests?.publicFeedback, remediation: collected.remediation }
-          : {}),
-        ...(stage.kind === 'mentor_say'
-          ? { instruction: stage.say, teaching: milestone.teaching }
-          : {}),
-        ...(stage.kind === 'produce'
-          ? {
-              planUpdateMode: stage.planUpdateMode,
-              compileBeforeReview: stage.compileBeforeReview,
-              exploration: stage.exploration,
-            }
-          : {}),
-      },
-      project: {
-        commonRules: project.definition.agents.commonRules,
-        agents: project.definition.agents,
-      },
-    }) +
-    '\n' +
-    teachingRules +
-    (stage.kind === 'check' ? assessmentRules : interactionRules) +
-    (completionRecorded
-      ? '\nThe current stage is ALREADY complete for the recorded evidence. Answer any follow-up directly and point to the task-bar Continue action. Do not restart teaching, invent a new required question, or require complete_stage again just because the learner sent another message. Actual artifact changes invalidate the affected review and require reviewing that new version before completion.'
-      : '') +
-    (stage.kind === 'mentor_say' || stage.kind === 'dialogue'
-      ? '\nThe current classroom stage is read-only: the learner can discuss concepts or record offered decisions, but cannot edit files or run commands. Ask for conceptual explanations and predicted results. Never require an edit, terminal action or newly executed output to finish this stage. Implementation and test execution belong to their dedicated stages; use only recorded evidence during reflection.'
-      : stage.kind === 'produce' && stage.writes === 'plan'
-        ? '\nPlanning permits changes to PLAN.md only. Source editing, commands and terminals are unavailable. Review the plan and the learner’s reasoning; do not require code implementation or execution for plan approval.'
-        : '') +
-    (guided
-      ? '\nThe current teachingContext is authoritative. Earlier stages do not complete this stage. If completionRecorded is true, answer follow-ups without reopening completed sections and point to the task-bar Continue action. Otherwise, when activeSection is null, begin with read_next_skill. Never tell the learner to Continue before complete_stage succeeds for the current stage and evidence. Use read_next_skill to open one section at a time. After delivering a section use request_skill_review and wait for a NEW student reply. Assess the actual studentResponses bound to currentReview, combining replies when needed. Supply studentFeedback as an explanation of how those replies answer the question; quoting or summarizing is allowed, but never invent a reply. If understanding is missing, clarify rather than advance. A short confirmation is sufficient only when the question asks for confirmation. Once final feedback is sufficient, use complete_stage as the last action instead of adding more questions. A completed tool is only a completion signal; the learner separately confirms progression.'
-      : exploring
-        ? '\nThis is optional, ongoing exploration. Discuss the learner’s goal, inspect current files, make focused changes and explain how to verify them. There is no fixed review sequence or completion signal. Preserve existing work; viewing the report never ends exploration.'
-        : repairing
-          ? '\nHelp the learner diagnose the observed test failure. Read the current code before making a focused repair. Explain the change and ask the learner to run tests again using the project controls. Never claim the repair passed without a new test result.'
-          : stage.kind === 'check'
-            ? '\nBriefly introduce the current test or quiz and point to its task drawer above the composer. Do not give answers, run checks, or claim results. Wait for the learner to use the controls.'
-            : '\nDiscuss only the current decisions. The learner records choices using the project controls.');
+  const {
+    systemPrompt,
+    bytes: promptBytes,
+    sectionBytes,
+  } = renderTeachingPrompt(currentPromptInput());
+  const assertPromptBudget = (bytes: number) => {
+    if (project.coursePackage && bytes > PROJECT_LIMITS.teachingBytes)
+      throw new SandboxError(
+        'PBL_PROMPT_SIZE',
+        400,
+        'Teaching prompt exceeds the 32 KiB budget. Shorten the current plan or teaching context.',
+      );
+  };
+  assertPromptBudget(promptBytes);
   return {
     tools,
     systemPrompt,
     allowedToolNames: new Set(tools.map((t) => t.name)),
     isTurnComplete: () => turnComplete,
     needsTurnReceipt: () => guided && !completionRecorded && !turnComplete,
-    liveContext: () =>
-      guided
-        ? JSON.stringify({
-            stageKey: bound.stage_key,
-            completionRecorded,
-            activeSection: review.state.activeFile || null,
-            nextSection:
-              progression[review.state.reviewedFiles.length + (review.state.activeFile ? 2 : 1)] ??
-              null,
-            finalSection: protocol.final,
-            currentQuestion: review.state.pending?.question ?? null,
-            studentResponses: review.studentResponses(),
-          })
-        : '',
+    liveContext: (entryPrompt = systemPrompt) => {
+      const live = teachingLiveContext(currentPromptInput());
+      assertPromptBudget(Buffer.byteLength(entryPrompt + teachingLiveSuffix(live)) + sectionBytes);
+      return live;
+    },
     historyWindow: { stageKey: bound.stage_key, studentTurns: bound.feedback_seq },
   };
 }
@@ -645,7 +533,7 @@ export function withTeachingTurnBoundary(
   streamFn: StreamFn,
   isComplete: () => boolean,
   historyWindow?: TeachingHistoryWindow,
-  liveContext?: () => string,
+  liveContext?: (systemPrompt?: string) => string,
 ): StreamFn {
   return (model, context, options) => {
     if (!isComplete()) {
@@ -660,13 +548,13 @@ export function withTeachingTurnBoundary(
             message.content.length === 0
           ),
       );
-      const live = liveContext?.();
+      const live = liveContext?.(context.systemPrompt ?? '');
       const current = {
         ...context,
         messages,
         ...(live
           ? {
-              systemPrompt: `${context.systemPrompt ?? ''}\nAuthoritative live teaching state (overrides the entry snapshot): ${live}`,
+              systemPrompt: `${context.systemPrompt ?? ''}${teachingLiveSuffix(live)}`,
             }
           : {}),
       };

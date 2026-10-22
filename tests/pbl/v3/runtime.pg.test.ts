@@ -1,5 +1,5 @@
 /** Real PG + local Python execution. Model decisions are driven explicitly through the role tools. No cloud or live model calls. */
-import { beforeAll, afterAll, describe, expect, it, vi } from 'vitest';
+import { beforeAll, afterAll, describe, expect, it, vi, onTestFinished } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { mkdtemp, readFile, writeFile, mkdir, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -7,6 +7,18 @@ import { join, dirname } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { Pool } from 'pg';
+import { PgAssetStore, ensureAssetSchema } from '@openmaic/storage/asset/pg';
+import { PgAssetByteStore } from '@openmaic/storage/asset/pg-bytes';
+import { PgDocumentStore, ensureDocumentSchema } from '@openmaic/storage/document/pg';
+import { ensureStageMetaSchema, claimStageMeta } from '@/lib/persistence/stage-meta';
+import { ensurePBLProjectSchema } from '@/lib/persistence/pbl-projects';
+import { installProjectPackage } from '@/lib/server/pbl-v3/project-resolver';
+import {
+  packageBuiltin,
+  indexProjectFiles,
+  validateProjectPackage,
+  type ProjectDescriptor,
+} from '@/lib/server/pbl-v3/project-package';
 import { WORKSPACE_FILE_RUNNER } from '@/lib/server/sandbox/workspace-archive';
 import { workbenchCommand, workbenchView } from '@/lib/server/pbl-v3/workbench';
 import { issuePreviewGrant } from '@/lib/server/sandbox/preview';
@@ -36,6 +48,28 @@ const mocked = vi.hoisted(() => ({
 vi.mock('@/lib/persistence/server-provider', () => ({
   getServerPersistenceProvider: async () => ({
     pool: mocked.pool,
+    assetStore: new PgAssetStore(mocked.pool as Pool, {
+      withTransaction: async (fn) => {
+        const db = await (mocked.pool as Pool).connect();
+        try {
+          await db.query('BEGIN');
+          const result = await fn(db);
+          await db.query('COMMIT');
+          return result;
+        } catch (error) {
+          await db.query('ROLLBACK');
+          throw error;
+        } finally {
+          db.release();
+        }
+      },
+      byteStore: new PgAssetByteStore(mocked.pool as Pool),
+    }),
+    assetStoreIn: (db: Pool) =>
+      new PgAssetStore(db, {
+        withTransaction: (fn) => fn(db),
+        byteStore: new PgAssetByteStore(mocked.pool as Pool),
+      }),
     withTransaction: async (fn: (db: unknown) => Promise<unknown>) => {
       const db = await (mocked.pool as Pool).connect();
       try {
@@ -249,7 +283,8 @@ vi.mock('@/lib/server/agent-runtime/agent-driver-model', () => ({
     reservedOutputTokens: 8192,
   }),
 }));
-vi.mock('@/lib/server/agent-runtime/owner-scoped-documents', () => ({
+vi.mock('@/lib/server/agent-runtime/owner-scoped-documents', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/server/agent-runtime/owner-scoped-documents')>()),
   getBackgroundDocumentStore: async () => ({}),
 }));
 vi.mock('@/lib/server/agent-runtime/event-notify-bus', () => ({
@@ -277,10 +312,18 @@ import { installedProject } from '@/lib/server/pbl-v3/catalog';
 import * as catalog from '@/lib/server/pbl-v3/catalog';
 import { SandboxError } from '@/lib/sandbox/errors';
 import { LearningStore } from '@/lib/server/pbl-v3/store';
-import { commandStudy, learningView, digest } from '@/lib/server/pbl-v3/runtime';
+import {
+  commandStudy,
+  openStudy,
+  learningView,
+  digest,
+  stageFor,
+  stageKey,
+} from '@/lib/server/pbl-v3/runtime';
 import { teachingRunnerConfig } from '@/lib/server/pbl-v3/runner-tools';
 import { touchEnvironment } from '@/lib/server/pbl-v3/environment';
 import { startOrchestration } from '@/lib/pbl/v3/domain/orchestration/transition';
+import { isExplorationStage } from '@/lib/pbl/v3/domain/project/project-schema';
 import { SandboxService } from '@/lib/server/sandbox/service';
 import { SandboxStore } from '@/lib/server/sandbox/store';
 import { E2BCompatibleSandboxProvider } from '@/lib/server/sandbox/providers/e2b-compatible';
@@ -530,6 +573,10 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
     pool = new Pool({ connectionString: url, options: `-c search_path=${schema}`, max: 12 });
     mocked.pool = pool;
     await ensureOwnerMergeSchema(pool);
+    await ensureDocumentSchema(pool);
+    await ensureStageMetaSchema(pool);
+    await ensureAssetSchema(pool);
+    await ensurePBLProjectSchema(pool);
     await ensureSandboxEnvironmentSchema(pool);
     await ensureAgentSessionSchema(pool);
     agents = new PgAgentSessionStore(pool, {
@@ -910,7 +957,8 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
         await invoke(config, 'request_skill_review', { question: 'Compare return and print.' });
       });
       await runTools(answer, async (config) => {
-        expect(config.systemPrompt).toContain(answer);
+        expect(config.systemPrompt).toContain('"studentResponseCount":1');
+        expect(config.systemPrompt).not.toContain(answer);
         await invoke(config, 'read_next_skill', { studentFeedback: `Student reply: "${answer}"` });
         await invoke(config, 'request_skill_review', {
           question: 'Explain how the caller uses it.',
@@ -920,15 +968,21 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
         ).rejects.toThrow();
       });
       await runTools(first, async (config) => {
-        expect(config.systemPrompt).toContain(first);
+        expect(config.systemPrompt).toContain('"studentResponseCount":1');
+        expect(config.systemPrompt).not.toContain(first);
         expect(config.systemPrompt).not.toContain(answer);
         // A clarification turn does not replace the pending review or discard its first reply.
         await invoke(config, 'read_next_skill');
       });
       await runTools(second, async (config) => {
-        expect(config.systemPrompt).toContain(first);
-        expect(config.systemPrompt).toContain(second);
+        expect(config.systemPrompt).toContain('"studentResponseCount":2');
+        expect(config.systemPrompt).not.toContain(first);
+        expect(config.systemPrompt).not.toContain(second);
         expect(config.systemPrompt).not.toContain(answer);
+        const sessionId = (await store.roles(studyId))[0]!.session_id;
+        expect((await agents.listUserMessages(sessionId)).map(({ text }) => text)).toEqual(
+          expect.arrayContaining([answer, first, second]),
+        );
         await invoke(config, 'read_next_skill', {
           studentFeedback:
             'Across both replies, the learner distinguishes returning from displaying.',
@@ -1056,8 +1110,7 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
       signal: new AbortController().signal,
     });
     expect(replyConfig.systemPrompt).toContain('"automatic":false');
-    expect(replyConfig.systemPrompt).toContain('"studentResponses":[{');
-    expect(replyConfig.systemPrompt).not.toContain('"studentResponses":[{"seq":0');
+    expect(replyConfig.systemPrompt).toContain('"studentResponseCount":1');
     await agents.finishSession(started.sessionId, 'reply-worker', {
       status: 'succeeded',
       expectedAttempt: reply!.attempt,
@@ -2362,4 +2415,346 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
     }
     await expect(first.send('checkpoint')).resolves.toBeDefined();
   });
+
+  it.each(['greeting-python-lab', 'greeting-java'])(
+    'runs an unregistered imported %s course from pinned resources after its scene changes',
+    async (projectId) => {
+      const selected = installedProject({ id: projectId, version: '1.0.0' });
+      const bundle = packageBuiltin(selected);
+      const descriptor: ProjectDescriptor = JSON.parse(bundle.files['project.json']);
+      const importedId = `imported-${projectId}`;
+      descriptor.id = descriptor.definition.id = importedId;
+      for (const role of ['mentor', 'discussion', 'planner', 'coder'] as const)
+        descriptor.definition.agents[role].systemPrompt = 'Help me with this course task.';
+      for (const binding of descriptor.teaching) {
+        bundle.files[binding.entrypoint] = `PACKAGED SKILL ${binding.stage}`;
+        for (const document of binding.documents)
+          bundle.files[document] = `PACKAGED REFERENCE ${binding.stage}`;
+      }
+      const java = descriptor.runtime.profile === 'java';
+      bundle.files['rubric/expected.txt'] = 'Hello, Ada!\nHello, Lin!\n';
+      bundle.files['tests/private.py'] = java
+        ? 'import pathlib,subprocess,sys\nexpected=pathlib.Path(sys.argv[1]).read_text().splitlines()\nactual=[subprocess.run(["java","-cp",sys.argv[2],"Greeting",name],check=True,text=True,stdout=subprocess.PIPE).stdout.strip() for name in ["  Ada  ","Lin"]]\nassert actual==expected\nprint("private course checks passed")\n'
+        : 'import pathlib,sys\nsys.path.insert(0,str(pathlib.Path.cwd()/"src"))\nfrom greeting import greet\nexpected=pathlib.Path(sys.argv[1]).read_text().splitlines()\nassert [greet(name) for name in ["  Ada  ","Lin"]]==expected\nprint("private course checks passed")\n';
+      bundle.files['tests/private.json'] = JSON.stringify({
+        ...(java ? { prepare: ['javac', '-d', '{build}', 'src/Greeting.java'] } : {}),
+        cases: [
+          {
+            id: 'course-owned-private-check',
+            argv: [
+              'python3',
+              '{resources}/tests/private.py',
+              '{resources}/rubric/expected.txt',
+              ...(java ? ['{build}'] : []),
+            ],
+            stdout: 'private course checks passed\n',
+          },
+        ],
+      });
+      for (const milestone of descriptor.definition.milestones)
+        descriptor.runtime.evaluations[milestone.id] = 'tests/private.json';
+      bundle.files['project.json'] = JSON.stringify(descriptor);
+      // Build a valid course close to the actual 32 KiB budget, with room for a short question.
+      const introDoc = descriptor.teaching.find((binding) => binding.stage !== 'intro:-1')!
+          .documents[0]!,
+        introText = bundle.files[introDoc];
+      validateProjectPackage(indexProjectFiles(importedId, selected.ref.version, bundle.files));
+      let low = 0,
+        high = 4500;
+      while (low < high) {
+        const middle = Math.ceil((low + high) / 2);
+        bundle.files[introDoc] = introText + 'x'.repeat(middle);
+        try {
+          validateProjectPackage(indexProjectFiles(importedId, selected.ref.version, bundle.files));
+          low = middle;
+        } catch {
+          high = middle - 1;
+        }
+      }
+      bundle.files[introDoc] = introText + 'x'.repeat(Math.max(0, low - 256));
+      const projectRef = await installProjectPackage(
+        principal.ownerId,
+        indexProjectFiles(importedId, selected.ref.version, bundle.files),
+      );
+      const stageId = randomUUID();
+      const documents = new PgDocumentStore<
+        import('@/lib/types/stage').Scene,
+        import('@/lib/types/stage').Stage
+      >(pool, { withTransaction: (fn) => store.transaction(fn), trackAssetReferences: true });
+      await documents.saveDocument({
+        stage: { id: stageId, name: 'Imported course', createdAt: 1, updatedAt: 1 },
+        scenes: [
+          {
+            id: 'scene',
+            stageId,
+            type: 'pbl',
+            title: 'Project',
+            order: 0,
+            content: { type: 'pbl', projectV3: projectRef },
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        ],
+      });
+      await claimStageMeta(pool, stageId, principal.ownerId);
+      const created = await store.create(
+        {
+          ownerId: principal.ownerId,
+          stageId,
+          sceneId: 'scene',
+          projectId: importedId,
+          version: projectRef.version,
+          projectRef,
+        },
+        startOrchestration(descriptor.definition),
+      );
+      const originalScene = (await documents.getScene(stageId, 'scene'))!;
+      const replacementRef = await installProjectPackage(
+        principal.ownerId,
+        indexProjectFiles(importedId, selected.ref.version, {
+          ...bundle.files,
+          'docs/0.md': 'Replacement course introduction; existing learners must keep their pin.',
+        }),
+      );
+      await documents.putScene(stageId, {
+        ...originalScene,
+        type: 'pbl',
+        content: { type: 'pbl', projectV3: replacementRef },
+      });
+      // The browser reopens by classroom/scene after every refresh, without a study id.
+      const reopened = await openStudy(principal, stageId, 'scene');
+      expect(reopened.id).toBe(created.id);
+      expect(reopened.project_reference).toEqual(projectRef);
+      expect(reopened.project?.coursePackage?.descriptor.id).toBe(importedId);
+      await expect(
+        openStudy({ ...principal, ownerId: 'foreign-owner' }, stageId, 'scene'),
+      ).rejects.toMatchObject({ status: 404 });
+      await documents.deleteScene(stageId, 'scene');
+      expect((await openStudy(principal, stageId, 'scene')).id).toBe(created.id);
+      const lookup = vi.spyOn(catalog, 'installedProject');
+      onTestFinished(() => lookup.mockRestore());
+      const reloaded = await new LearningStore(pool).get(created.id, principal.ownerId);
+      expect(reloaded.project_reference).toEqual(projectRef);
+      expect(reloaded.project?.coursePackage?.descriptor.id).toBe(importedId);
+      expect(reloaded.project?.files).toEqual(selected.files);
+      const send = async (type: string, payload: Record<string, unknown> = {}) =>
+        commandStudy(principal, created.id, {
+          id: randomUUID(),
+          revision: (await store.get(created.id, principal.ownerId)).revision,
+          type,
+          ...payload,
+        });
+      let oversizedPlanChecked = false;
+      let longReplyChecked = false;
+      let oversizedQuestionChecked = false;
+      let oversizedPlanWriteChecked = false;
+      let oversizedPlanSaveChecked = false;
+      const turn = async (
+        text: string,
+        run: (config: Awaited<ReturnType<typeof teachingRunnerConfig>>) => Promise<void>,
+      ) => {
+        const queued = (await send('chat', { text })) as { sessionId: string };
+        const claimed = await agents.claimNextSession('package-worker', process.pid, {
+          sessionId: queued.sessionId,
+          leaseTtlMs: 30000,
+          maxAttempts: 5,
+        });
+        expect(claimed).toBeTruthy();
+        const request = {
+          sessionId: queued.sessionId,
+          ownerId: principal.ownerId,
+          workerId: 'package-worker',
+          attempt: claimed!.attempt,
+          signal: new AbortController().signal,
+        };
+        const current = await store.get(created.id, principal.ownerId);
+        const active = stageFor(current);
+        if (!oversizedPlanChecked && 'reads' in active && active.reads.includes('plan')) {
+          const path = join(mocked.root, current.environment_id!, 'PLAN.md');
+          const original = await readFile(path, 'utf8');
+          const calls = mocked.modelCalls;
+          try {
+            await writeFile(path, 'Learner plan '.repeat(4000));
+            await expect(teachingRunnerConfig(request)).rejects.toMatchObject({
+              code: 'PBL_PROMPT_SIZE',
+            });
+            expect(mocked.modelCalls).toBe(calls);
+            oversizedPlanChecked = true;
+          } finally {
+            await writeFile(path, original);
+          }
+        }
+        const config = await teachingRunnerConfig(request);
+        await run(config);
+        const inputs = await agents.listUserMessages(queued.sessionId);
+        await agents.markUserMessageDelivered(
+          queued.sessionId,
+          'package-worker',
+          claimed!.attempt,
+          inputs.at(-1)!.seq,
+        );
+        await agents.finishSession(queued.sessionId, 'package-worker', {
+          status: 'succeeded',
+          expectedAttempt: claimed!.attempt,
+        });
+      };
+      await send('prepare');
+      const service = await SandboxService.forOwner(principal);
+      const environmentId = (await store.get(created.id, principal.ownerId)).environment_id!;
+      for (const [path, text] of Object.entries(selected.files))
+        expect(await service.readText(environmentId, path)).toBe(text);
+      expect(await service.listFiles(environmentId)).not.toEqual(
+        expect.arrayContaining([expect.objectContaining({ path: 'tests/private.py' })]),
+      );
+      let evaluations = 0;
+      while ((await store.get(created.id, principal.ownerId)).state.status !== 'completed') {
+        const row = await store.get(created.id, principal.ownerId),
+          stage = stageFor(row),
+          key = stageKey(row);
+        const milestone = descriptor.definition.milestones[row.state.position.milestoneIndex]!;
+        if (isExplorationStage(stage)) {
+          expect((await learningReport(principal, created.id)).requiredComplete).toBe(true);
+          await turn('I want to explore a course extension.', async (config) => {
+            expect(config.allowedToolNames.has('read_next_skill')).toBe(false);
+            expect(config.allowedToolNames.has('complete_stage')).toBe(false);
+            expect(config.systemPrompt).toContain(`PACKAGED SKILL ${key}`);
+            expect(config.systemPrompt).toContain(`PACKAGED REFERENCE ${key}`);
+            expect(config.systemPrompt).not.toContain('PACKAGED SKILL greeting:1');
+            const path = java ? 'src/Greeting.java' : 'src/greeting.py';
+            const original = await service.readText(environmentId, path);
+            await invoke(config, 'write_file', {
+              path,
+              text: original + '\n',
+              expectedHash: digest(original),
+            });
+          });
+          await send('checkpoint');
+          mocked.missing.add(environmentId);
+          await send('prepare');
+          const recovered = await learningView(principal, created.id);
+          expect(recovered.environmentId).not.toBe(environmentId);
+          expect(recovered.state.position.milestoneId).toBe(milestone.id);
+          expect((await learningReport(principal, created.id)).requiredComplete).toBe(true);
+          break;
+        } else if (stage.kind === 'mentor_say' || stage.kind === 'produce') {
+          if (stage.kind === 'produce' && stage.writes === 'plan' && !oversizedPlanSaveChecked) {
+            const original = await service.readText(environmentId, 'PLAN.md');
+            await expect(
+              send('save', {
+                path: 'PLAN.md',
+                text: original + '\n' + 'Learner plan '.repeat(4000),
+                expectedHash: digest(original),
+              }),
+            ).rejects.toMatchObject({ code: 'PBL_PROMPT_SIZE' });
+            expect(await service.readText(environmentId, 'PLAN.md')).toBe(original);
+            oversizedPlanSaveChecked = true;
+          }
+          const teaching = descriptor.teaching.find((binding) => binding.stage === key)!;
+          for (let part = 0; part < teaching.sections.length; part++) {
+            if (part === 1 && !longReplyChecked) {
+              const longReply = 'My explanation of this course section. '.repeat(1500);
+              await turn(longReply, async (config) => {
+                expect(config.systemPrompt).not.toContain(longReply);
+                expect(config.liveContext()).toContain('"studentResponseCount":1');
+              });
+              longReplyChecked = true;
+            }
+            await turn(part ? 'I reviewed this section.' : 'Please start.', async (config) => {
+              const section = await invoke(config, 'read_next_skill', {
+                ...(part ? { studentFeedback: 'I reviewed this section.' } : {}),
+              });
+              expect(JSON.stringify(section)).toContain(`PACKAGED SKILL ${key}`);
+              expect(config.systemPrompt).toContain(`PACKAGED REFERENCE ${key}`);
+              if (part === 0 && stage.kind === 'produce') {
+                const path =
+                  stage.writes === 'plan'
+                    ? 'PLAN.md'
+                    : java
+                      ? 'src/Greeting.java'
+                      : 'src/greeting.py';
+                const original = await service.readText(environmentId, path);
+                if (stage.writes === 'plan' && !oversizedPlanWriteChecked) {
+                  const oversized = original + '\n' + 'Learner plan '.repeat(4000);
+                  await expect(
+                    invoke(config, 'write_file', {
+                      path,
+                      text: oversized,
+                      expectedHash: digest(original),
+                    }),
+                  ).rejects.toMatchObject({ code: 'PBL_PROMPT_SIZE' });
+                  expect(await service.readText(environmentId, path)).toBe(original);
+                  oversizedPlanWriteChecked = true;
+                }
+                await invoke(config, 'write_file', {
+                  path,
+                  text:
+                    stage.writes === 'plan'
+                      ? original +
+                        `\n## ${milestone.title}\nImplement and review the current task.\n`
+                      : java
+                        ? 'public class Greeting { public static String greet(String name) { return "Hello, " + name.trim() + "!"; } public static void main(String[] args) { System.out.println(greet(args[0])); } }'
+                        : 'def greet(name):\n    return f"Hello, {name.strip()}!"\n',
+                  expectedHash: digest(original),
+                });
+                if (stage.compileBeforeReview) {
+                  await invoke(config, 'run_build');
+                  await invoke(config, 'collect_build');
+                }
+              }
+              if (!oversizedQuestionChecked) {
+                await expect(
+                  invoke(config, 'request_skill_review', { question: '请'.repeat(2000) }),
+                ).rejects.toMatchObject({ code: 'PBL_PROMPT_SIZE' });
+                expect(config.isTurnComplete()).toBe(false);
+                oversizedQuestionChecked = true;
+              }
+              await invoke(config, 'request_skill_review', { question: 'Explain this section.' });
+            });
+          }
+          await turn('I reviewed this section.', async (config) => {
+            await invoke(config, 'complete_stage', { studentFeedback: 'I reviewed this section.' });
+          });
+          await send('next');
+        } else if (stage.kind === 'dialogue') {
+          await turn('I understand the course decisions.', async (config) => {
+            expect(config.systemPrompt).toContain(`PACKAGED SKILL ${key}`);
+            expect(config.systemPrompt).toContain(`PACKAGED REFERENCE ${key}`);
+          });
+          for (const decisionId of milestone.decisions) {
+            const decision = descriptor.definition.decisions.find(
+              (item) => item.id === decisionId,
+            )!;
+            await send('decide', { decisionId, chosen: decision.options[0].id });
+          }
+          await send('next');
+        } else if (stage.kind === 'check' && stage.checker === 'tests') {
+          await send('evaluate');
+          await send('collect');
+          const tested = (await store.get(created.id, principal.ownerId)).state.collected[
+            milestone.id
+          ]!.tests;
+          expect(tested?.status).toBe('passed');
+          expect(tested?.publicFeedback).toContain('1 / 1 checks passed');
+          evaluations++;
+          await send('next');
+        } else if (stage.kind === 'check' && stage.checker === 'quiz') {
+          await send('quiz', { answers: milestone.quiz.map((question) => question.answer) });
+          await send('next');
+        } else throw new Error(`Unexpected packaged stage: ${stage.kind}`);
+      }
+      expect(evaluations).toBe(2);
+      expect(oversizedPlanChecked).toBe(true);
+      expect(longReplyChecked).toBe(true);
+      expect(oversizedQuestionChecked).toBe(true);
+      expect(oversizedPlanWriteChecked).toBe(true);
+      expect(oversizedPlanSaveChecked).toBe(true);
+      const finished = await new LearningStore(pool).get(created.id, principal.ownerId);
+      expect(finished.project_reference).toEqual(projectRef);
+      expect(finished.project?.coursePackage?.bundle.files['tests/private.py']).toBe(
+        bundle.files['tests/private.py'],
+      );
+      expect(lookup).not.toHaveBeenCalled();
+    },
+    120000,
+  );
 });

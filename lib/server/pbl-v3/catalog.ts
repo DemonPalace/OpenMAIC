@@ -14,6 +14,10 @@ export interface InstalledProject {
   evaluations: Record<string, ProjectEvaluation>;
   buildCommand?: string;
   previewPorts?: readonly number[];
+  coursePackage?: {
+    bundle: import('@openmaic/dsl').PBLProjectPackage;
+    descriptor: import('./project-package').ProjectDescriptor;
+  };
 }
 const agent = (role: string) => ({
   systemPrompt: `You are the ${role} in a programming learning project. Help the learner understand and do the work. Context: {{seed}}`,

@@ -103,6 +103,13 @@ const SHIPPED: readonly (readonly [
     'd440298e2262b7ce4688848c2a8e23ca7d26b29e2b75cfc7011c0e60308178c5',
   ],
   [
+    'asset',
+    2,
+    'retained-document-assets',
+    true,
+    '69c2f4cfe961b9f95f745e7cd412426d5d42a365ee57aebd8d56209c6739b6d1',
+  ],
+  [
     'legacy-classroom-imports',
     1,
     'baseline',
@@ -248,6 +255,41 @@ const SHIPPED: readonly (readonly [
     'remove-development-checkpoint-blobs',
     true,
     '5e9cf4ab91fc2db5388bde7140533c74f4aece46bab33173fa66ba7dba63bb13',
+  ],
+  [
+    'pbl-projects',
+    1,
+    'validated-project-assets',
+    true,
+    '8ce2ab0cdf1a49271d597e22cd293be301794be34715ccd11ef9a9497f574180',
+  ],
+  [
+    'pbl-v3',
+    1,
+    'learning-runtime',
+    true,
+    '6d7c92c1ee0d4947cb6343b8b07448e37cbfab1eb5d3dfe1ce792b1e112e9019',
+  ],
+  [
+    'pbl-v3',
+    2,
+    'learning-environment-recovery',
+    true,
+    '46120b3270d0e3340c0324a58b5ed8fc7370602ab1a5cff7caed71f4e43a87da',
+  ],
+  [
+    'pbl-v3',
+    3,
+    'pin-project-template',
+    true,
+    'b9bce0aeb8dff49dd070b7d7d38a4365a2769f69f41efdcc2c63764f99eaeb29',
+  ],
+  [
+    'pbl-v3',
+    4,
+    'retain-study-project-assets',
+    true,
+    '7ea873bfa8467cdee69fa265661802fc4517323d0ea91cc5ecabea331a52549f',
   ],
 ];
 

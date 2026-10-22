@@ -22,10 +22,11 @@ import * as transitions from '@/lib/pbl/v3/domain/orchestration/transition';
 import { judgeQuiz } from '@/lib/pbl/v3/domain/orchestration/quiz';
 import type { EngineTransition } from '@/lib/pbl/v3/domain/orchestration/events';
 import { assertProjectSource, projectFiles } from './workspace-files';
-import { assertIncrementalPlan } from './plan';
+import { assertLearningPlan } from './plan';
 import { startBuild, collectBuild } from './compilation';
 import { evaluationCommand, evaluationFor, evaluationOutcome } from './evaluation';
 import { installedProject } from './catalog';
+import { resolveProject } from './project-resolver';
 import { LearningStore, type Study, type RoleBinding } from './store';
 import { hasStageCompletion, succeededWithoutTeachingReceipt } from './stage-progress';
 import {
@@ -42,6 +43,11 @@ export function stageKey(row: Study) {
   return `${row.state.position.milestoneId}:${row.state.position.stageIndex}`;
 }
 export function projectFor(row: Study) {
+  if (row.project) return row.project;
+  if (row.project_reference?.assetId)
+    throw sandboxConflict(
+      'Pinned project resources have not been resolved. Reopen the learning session.',
+    );
   return installedProject({ id: row.project_id, version: row.project_version });
 }
 export function stageFor(row: Study) {
@@ -133,6 +139,9 @@ export function invalidateWorkspace(row: Study, changedPath?: string): EngineTra
 export async function openStudy(principal: OwnerPrincipal, stageId: string, sceneId: string) {
   // Identity must be eligible for execution before any learning instance is created.
   await SandboxService.forOwner(principal);
+  const studies = await LearningStore.open();
+  const existing = await studies.findForScene(principal.ownerId, stageId, sceneId);
+  if (existing) return existing;
   const documents = await getOwnerScopedDocumentStore(principal);
   const scene = await documents.getScene(stageId, sceneId);
   const content = scene?.content as unknown as { type?: string; projectV3?: unknown };
@@ -142,14 +151,21 @@ export async function openStudy(principal: OwnerPrincipal, stageId: string, scen
       404,
       'The classroom does not contain this learning project.',
     );
-  const project = installedProject(content.projectV3);
-  return (await LearningStore.open()).create(
+  const project = await resolveProject(
+    principal.ownerId,
+    stageId,
+    content.projectV3,
+    undefined,
+    sceneId,
+  );
+  return studies.create(
     {
       ownerId: principal.ownerId,
       stageId,
       sceneId,
       projectId: project.ref.id,
       version: project.ref.version,
+      projectRef: project.ref,
     },
     transitions.startOrchestration(project.definition),
   );
@@ -511,7 +527,7 @@ export async function commandStudy(
         throw sandboxConflict('Only PLAN.md can be edited during planning.');
       if (command.path === 'PLAN.md' && !(stage.kind === 'produce' && stage.writes === 'plan'))
         throw sandboxConflict('The approved plan is read-only during coding.');
-      if (command.path === 'PLAN.md') await assertIncrementalPlan(store, row, command.text);
+      if (command.path === 'PLAN.md') await assertLearningPlan(store, row, command.text);
       await service.compareAndWriteText(
         requireEnvironment(row),
         command.path,
@@ -654,6 +670,8 @@ export async function commandStudy(
           throw sandboxConflict(
             'Files changed after review or testing. Review and test the current files first.',
           );
+        if (stage.kind === 'produce' && stage.writes === 'plan')
+          await assertLearningPlan(store, row, snapshot.files['PLAN.md']!, true);
       }
       const endingMilestone =
         row.state.introCompleted &&

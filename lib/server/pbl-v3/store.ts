@@ -1,7 +1,8 @@
 import 'server-only';
 import { randomUUID } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
-import { applySchemaMigrations } from '@openmaic/storage/pg-migrations';
+import { ensurePBLStudySchema } from '@/lib/persistence/pbl-studies';
+import { retainDocumentAssets } from '@openmaic/storage/asset/pg';
 import { PgAgentSessionStore } from '@openmaic/storage/agent-session/pg';
 import { getServerPersistenceProvider } from '@/lib/persistence/server-provider';
 import { withSchemaBootstrapLock } from '@/lib/persistence/schema-bootstrap-lock';
@@ -11,6 +12,11 @@ import type { EngineTransition } from '@/lib/pbl/v3/domain/orchestration/events'
 import type { PblSessionState } from '@/lib/pbl/v3/domain/orchestration/types';
 import type { AgentRole } from '@/lib/pbl/v3/domain/project/project-schema';
 import { SandboxError, sandboxConflict } from '@/lib/sandbox/errors';
+import type { PBLV3Reference } from '@openmaic/dsl';
+import type { InstalledProject } from './catalog';
+import { resolveStudyProject } from './project-resolver';
+import { fenceOwnerWrite } from '@/lib/persistence/owner-merges';
+import { assetPrincipalForOwner } from '@/lib/persistence/owner-assets';
 
 export interface Study extends Record<string, unknown> {
   id: string;
@@ -19,6 +25,9 @@ export interface Study extends Record<string, unknown> {
   scene_id: string;
   project_id: string;
   project_version: string;
+  project_reference?: PBLV3Reference | null;
+  /** Hydrated from durable template bytes on every read, never persisted with learner state. */
+  project?: InstalledProject;
   revision: number;
   state: PblSessionState;
   environment_id: string | null;
@@ -52,45 +61,6 @@ export interface RoleBinding extends Record<string, unknown> {
   guided: import('./guided-review').GuidedSkillState | null;
   completion: { stageKey: string; feedbackSeq: number; userMessageSeq: number } | null;
 }
-export const PBL_MIGRATIONS = {
-  store: 'pbl-v3',
-  migrations: [
-    {
-      version: 1,
-      name: 'learning-runtime',
-      transaction: true,
-      up: `
-CREATE TABLE pbl_v3_studies (
- id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, stage_id TEXT NOT NULL, scene_id TEXT NOT NULL,
- project_id TEXT NOT NULL, project_version TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 0,
- state JSONB NOT NULL, environment_id TEXT, evaluation JSONB,
- UNIQUE(owner_id, stage_id, scene_id)
-);
-CREATE TABLE pbl_v3_roles (
- session_id TEXT PRIMARY KEY, study_id TEXT NOT NULL REFERENCES pbl_v3_studies(id),
- role TEXT NOT NULL CHECK(role IN ('mentor','discussion','planner','coder')),
- context_key TEXT NOT NULL, stage_key TEXT NOT NULL, feedback_seq INTEGER NOT NULL DEFAULT 0, guided JSONB, completion JSONB,
- UNIQUE(study_id, role, context_key)
-);
-CREATE TABLE pbl_v3_commands (
- study_id TEXT NOT NULL REFERENCES pbl_v3_studies(id), id TEXT NOT NULL,
- hash TEXT NOT NULL, result JSONB, stage_key TEXT NOT NULL, PRIMARY KEY(study_id,id)
-);
-CREATE TABLE pbl_v3_events (
- study_id TEXT NOT NULL REFERENCES pbl_v3_studies(id), sequence INTEGER NOT NULL,
- event JSONB NOT NULL, PRIMARY KEY(study_id,sequence)
-);`,
-    },
-    {
-      version: 2,
-      name: 'learning-environment-recovery',
-      transaction: true,
-      up: `ALTER TABLE pbl_v3_studies
-        ADD COLUMN environment_checked_at TIMESTAMPTZ,
-        ADD COLUMN environment_recovery JSONB;`,
-    },
-  ],
-};
 
 const admitted = new WeakMap<Pool, number>();
 
@@ -99,7 +69,7 @@ export class LearningStore {
   static async open() {
     const { pool } = await getServerPersistenceProvider(process.env.DATABASE_URL ?? '');
     await getAgentSessionStore();
-    await withSchemaBootstrapLock(pool, (db) => applySchemaMigrations(db, PBL_MIGRATIONS));
+    await withSchemaBootstrapLock(pool, ensurePBLStudySchema);
     return new LearningStore(pool);
   }
   async get(id: string, ownerId: string, db: Pool | PoolClient = this.pool): Promise<Study> {
@@ -109,7 +79,19 @@ export class LearningStore {
     );
     if (!result.rows[0])
       throw new SandboxError('PBL_NOT_FOUND', 404, 'Learning session is unavailable.');
-    return result.rows[0];
+    const row = result.rows[0];
+    if (row.project_reference?.assetId)
+      row.project = await resolveStudyProject(ownerId, row.stage_id, row.project_reference, row.id);
+    return row;
+  }
+  async findForScene(ownerId: string, stageId: string, sceneId: string): Promise<Study | null> {
+    const result = await this.pool.query<{ id: string }>(
+      `SELECT s.id FROM pbl_v3_studies s JOIN stage_meta m ON m.stage_id=s.stage_id
+       WHERE s.owner_id=$1 AND s.stage_id=$2 AND s.scene_id=$3
+         AND m.owner_id=$1 AND m.deleted_at IS NULL`,
+      [ownerId, stageId, sceneId],
+    );
+    return result.rows[0] ? this.get(result.rows[0].id, ownerId) : null;
   }
   async binding(sessionId: string): Promise<RoleBinding | null> {
     return (
@@ -130,13 +112,29 @@ export class LearningStore {
       sceneId: string;
       projectId: string;
       version: string;
+      projectRef?: PBLV3Reference;
     },
     initial: EngineTransition,
   ) {
     return this.transaction(async (db) => {
+      const ref = input.projectRef;
+      if (ref?.assetId) {
+        await fenceOwnerWrite(db, input.ownerId);
+        const classroom = await db.query(
+          `SELECT d.id FROM document_stages d JOIN stage_meta m ON m.stage_id=d.id
+           WHERE d.id=$1 AND m.owner_id=$2 AND m.deleted_at IS NULL FOR UPDATE OF d`,
+          [input.stageId, input.ownerId],
+        );
+        if (!classroom.rows.length)
+          throw new SandboxError(
+            'PBL_PROJECT_UNAVAILABLE',
+            404,
+            'The owning classroom is unavailable.',
+          );
+      }
       const inserted = await db.query<Study>(
-        `INSERT INTO pbl_v3_studies(id,owner_id,stage_id,scene_id,project_id,project_version,state)
-        VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(owner_id,stage_id,scene_id) DO NOTHING RETURNING *`,
+        `INSERT INTO pbl_v3_studies(id,owner_id,stage_id,scene_id,project_id,project_version,state,project_reference)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(owner_id,stage_id,scene_id) DO NOTHING RETURNING *`,
         [
           randomUUID(),
           input.ownerId,
@@ -145,6 +143,7 @@ export class LearningStore {
           input.projectId,
           input.version,
           JSON.stringify(initial.state),
+          JSON.stringify(input.projectRef ?? null),
         ],
       );
       const row =
@@ -157,6 +156,43 @@ export class LearningStore {
         ).rows[0]!;
       if (row.project_id !== input.projectId || row.project_version !== input.version)
         throw sandboxConflict('This learning instance is pinned to a different project version.');
+      if ((row.project_reference?.checksum ?? null) !== (input.projectRef?.checksum ?? null))
+        throw sandboxConflict('This learning instance is pinned to different project content.');
+      if (ref?.assetId) {
+        const pinned = row.project_reference!;
+        const installed = await db.query(
+          `SELECT 1 FROM pbl_project_installations p JOIN asset_entries e ON e.id=p.asset_id
+           WHERE p.asset_id=$3 AND e.principal=$4 AND e.content_hash=p.content_hash AND e.revision=1
+             AND p.checksum=$5 AND p.project_id=$6 AND p.project_version=$7
+             AND (NOT $8::boolean OR EXISTS (SELECT 1 FROM document_scenes s
+               WHERE s.stage_id=$1 AND s.id=$2
+                 AND s.data->'content'->'projectV3'->>'assetId'=p.asset_id
+                 AND s.data->'content'->'projectV3'->>'checksum'=p.checksum))
+           FOR UPDATE OF e`,
+          [
+            input.stageId,
+            input.sceneId,
+            pinned.assetId,
+            assetPrincipalForOwner(input.ownerId).key,
+            pinned.checksum,
+            pinned.id,
+            pinned.version,
+            inserted.rows.length > 0,
+          ],
+        );
+        if (!installed.rows.length)
+          throw new SandboxError(
+            'PBL_PROJECT_UNAVAILABLE',
+            404,
+            'The pinned project is unavailable or the scene changed before admission.',
+          );
+        await retainDocumentAssets(db, {
+          stageId: row.stage_id,
+          referenceId: row.id,
+          assetIds: [pinned.assetId!],
+          principals: [assetPrincipalForOwner(input.ownerId).key],
+        });
+      }
       if (inserted.rows.length) await this.events(db, row.id, initial);
       return row;
     });
@@ -224,7 +260,7 @@ export class LearningStore {
     if (!result.rows[0])
       throw sandboxConflict('Learning progress changed. Refresh before retrying.');
     await this.events(db, row.id, transition);
-    return result.rows[0];
+    return { ...result.rows[0], ...(row.project ? { project: row.project } : {}) };
   }
   private async events(db: PoolClient, id: string, transition: EngineTransition) {
     const first = transition.state.lastSequence - transition.events.length + 1;
