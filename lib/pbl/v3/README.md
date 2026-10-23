@@ -53,8 +53,16 @@ these drafts are not submitted learning records or durable checkpoints.
 
 The teaching panel uses the host's existing OpenPBL-derived chat skin, Markdown
 renderer and sticky scrolling, with four role identities and ordered turn parts.
-Existing runner event snapshots update replies through the learning poll; no second
-stream, runner or chat database is introduced. The host's ThinkingBlock and WaitingBar
+One owner-scoped SSE connection updates the teaching conversation, progress and
+workbench together, using the existing durable runner log and PostgreSQL notification
+bus. Commands and learner messages remain HTTP requests. The browser no longer runs
+learning, workbench or environment refresh intervals. Reconnecting receives a current,
+bounded replacement snapshot; it never replays a teaching command or restarts a runner.
+The stream pauses while the page is hidden and reconnects with bounded backoff after
+transport failures. The existing SSE queue and per-owner stream limits remain in force.
+Server observation collects provider commands that lack completion callbacks; a slower
+idle reconciliation repairs lost notifications and checks environment health. Neither
+subscription nor passive observation renews a sandbox or records student feedback. The host's ThinkingBlock and WaitingBar
 and the OpenPBL-derived PBL tool cards render a one-line thinking
 preview, expandable full thinking text, pre-content waiting, ordered calls and elapsed
 times inside role turns. Tool groups start open and remain under manual fold control;
@@ -202,11 +210,11 @@ bundles currently retain the English fallback for these additions.
   collection. Changed input invalidates the result; unknown execution is not a
   failed student test. Learning progress survives page refresh independently of
   the execution environment. File durability requires a successful checkpoint.
-- Learner commands, file access, tools and visible-workspace polling renew the
-  environment, throttled to once per 20 seconds. Polling never counts as student
-  feedback or changes the learning revision. Closed/hidden workspaces do not get
-  an indefinite keepalive. Provider uncertainty leaves progress readable and does
-  not authorize another allocation.
+- Learner commands, file access and tools renew the environment, throttled to
+  once per 20 seconds. Passive SSE snapshots do not renew it, count as student
+  feedback or change the learning revision. Provider uncertainty leaves progress
+  readable and does not authorize another allocation. Idle/close lifecycle policy
+  remains the provider lifecycle workstream.
 - Entry setup automatically reconciles an unavailable environment and restores
   the latest checkpoint into a new allocation for the same study/workspace. Its
   allocation ID is durable before provisioning, so retries reuse it. Old role

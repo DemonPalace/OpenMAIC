@@ -43,6 +43,7 @@ const mocked = vi.hoisted(() => ({
   objects: new Map<string, Uint8Array>(),
   responses: [] as Array<Array<Record<string, unknown>>>,
   reportAnalysis: vi.fn(),
+  liveNotifications: false,
   modelCalls: 0,
   modelRequests: [] as ModelMessage[][],
   modelSystems: [] as (string | undefined)[],
@@ -292,10 +293,17 @@ vi.mock('@/lib/server/agent-runtime/owner-scoped-documents', async (importOrigin
   ...(await importOriginal<typeof import('@/lib/server/agent-runtime/owner-scoped-documents')>()),
   getBackgroundDocumentStore: async () => ({}),
 }));
-vi.mock('@/lib/server/agent-runtime/event-notify-bus', () => ({
-  notifyDurableAgentEvent: async () => {},
-  subscribeAgentEventWakeup: () => () => {},
-}));
+vi.mock('@/lib/server/agent-runtime/event-notify-bus', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('@/lib/server/agent-runtime/event-notify-bus')>();
+  return {
+    ...actual,
+    notifyDurableAgentEvent: (...args: Parameters<typeof actual.notifyDurableAgentEvent>) =>
+      mocked.liveNotifications ? actual.notifyDurableAgentEvent(...args) : Promise.resolve(),
+    subscribeAgentEventWakeup: (...args: Parameters<typeof actual.subscribeAgentEventWakeup>) =>
+      mocked.liveNotifications ? actual.subscribeAgentEventWakeup(...args) : () => {},
+  };
+});
 vi.mock('@/lib/ai/llm', () => ({
   streamLLM: (options: { messages: ModelMessage[]; system?: string }) => {
     mocked.modelSystems.push(options.system);
@@ -2520,7 +2528,7 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
       }),
     ).rejects.toThrow('changed');
   });
-  it('renews on learner activity without changing progress and throttles repeated polls', async () => {
+  it('renews on learner activity without changing progress and throttles repeated active reads', async () => {
     const study = await freshStudy();
     const before = await store.get(study.id, principal.ownerId);
     const count = mocked.renewals.length;
@@ -2530,6 +2538,97 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
     expect(mocked.renewals.slice(count)).toEqual([before.environment_id]);
     expect((await store.get(study.id, principal.ownerId)).revision).toBe(before.revision);
   });
+  it('passively streams progress and workspace state without renewing or changing learner progress', async () => {
+    const study = await freshStudy();
+    const before = await store.get(study.id, principal.ownerId);
+    const count = mocked.renewals.length;
+    const observation = await learningView(principal, study.id, { passive: true });
+    expect(observation.environment?.ready).toBe(true);
+    const inspect = vi.spyOn(E2BCompatibleSandboxProvider.prototype, 'inspect');
+    const read = vi.spyOn(SandboxService.prototype, 'readText');
+    try {
+      await learningView(principal, study.id, { passive: true, observation });
+      const work = await workbenchView(principal, study.id, { passive: true });
+      expect(work.environmentId).toBe(before.environment_id);
+      expect(inspect).not.toHaveBeenCalled();
+      expect(read).not.toHaveBeenCalled();
+      expect(mocked.renewals.length).toBe(count);
+      const after = await store.get(study.id, principal.ownerId);
+      expect(after.revision).toBe(before.revision);
+      expect(after.state).toEqual(before.state);
+    } finally {
+      inspect.mockRestore();
+      read.mockRestore();
+      await pool.query("UPDATE sandbox_environments SET state='destroyed' WHERE id=$1", [
+        before.environment_id,
+      ]);
+    }
+  });
+
+  it('pushes a new role opening and runner text through real PG notifications without a browser poll', async () => {
+    const { learningEventResponse } = await import('@/lib/server/pbl-v3/event-stream');
+    const { startAgentEventNotifyBus } =
+      await import('@/lib/server/agent-runtime/event-notify-bus');
+    mocked.liveNotifications = true;
+    const bus = startAgentEventNotifyBus();
+    await bus.connecting;
+    const study = await freshStudy();
+    const response = await learningEventResponse(principal, study.id, new AbortController().signal);
+    const reader = response.body!.getReader();
+    const readUntil = async (marker: string) => {
+      let text = '';
+      const reading = (async () => {
+        while (!text.includes(marker)) {
+          const chunk = await reader.read();
+          if (chunk.done) throw new Error('Learning stream ended early');
+          text += new TextDecoder().decode(chunk.value);
+        }
+        return text;
+      })();
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      try {
+        return await Promise.race([
+          reading,
+          new Promise<never>((_, reject) => {
+            timeout = setTimeout(() => reject(new Error('PG push missed its deadline')), 3_000);
+          }),
+        ]);
+      } finally {
+        if (timeout) clearTimeout(timeout);
+      }
+    };
+    try {
+      await readUntil('event: learning');
+      const renewals = mocked.renewals.length;
+      const queued = (await study.send('begin')) as { sessionId: string };
+      await readUntil('"busy":true');
+      const count = mocked.renewals.length;
+      await store.transaction(async (db) => {
+        await store.agentStore(db).appendControlEvent(queued.sessionId, {
+          ts: Date.now(),
+          type: 'message_update',
+          data: {
+            message: {
+              role: 'assistant',
+              content: [{ type: 'text', text: 'Live lesson notification proof.' }],
+            },
+          },
+        });
+      });
+      expect(await readUntil('Live lesson notification proof.')).toContain('event: learning');
+      expect(mocked.renewals.length).toBe(count);
+      expect(count).toBeGreaterThanOrEqual(renewals);
+    } finally {
+      await reader.cancel();
+      await bus.stop();
+      mocked.liveNotifications = false;
+      const final = await store.get(study.id, principal.ownerId);
+      await pool.query("UPDATE sandbox_environments SET state='destroyed' WHERE id=$1", [
+        final.environment_id,
+      ]);
+    }
+  }, 15_000);
+
   it('rejects teaching submissions to an expired environment without posting or allocating', async () => {
     const study = await freshStudy();
     const original = await store.get(study.id, principal.ownerId);
@@ -2655,7 +2754,7 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
     }
   });
 
-  it('keeps teaching tools available while a background poll renews the same environment', async () => {
+  it('keeps teaching tools available while a concurrent active refresh renews the same environment', async () => {
     const study = await freshTeachingStudy();
     const queued = (await study.send('chat')) as { sessionId: string };
     const meta = await agents.claimNextSession('renewal-worker', process.pid, {
@@ -2702,7 +2801,7 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
         entered();
         await gate;
       });
-    const polling = learningView(principal, study.id);
+    const refreshing = learningView(principal, study.id);
     try {
       await ready;
       const teaching = invoke(config, 'request_skill_review', {
@@ -2718,7 +2817,7 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
       expect((await store.binding(queued.sessionId))?.guided).toBeTruthy();
     } finally {
       release();
-      await polling;
+      await refreshing;
       renew.mockRestore();
       attempt.mockRestore();
       await agents.finishSession(queued.sessionId, 'renewal-worker', {
