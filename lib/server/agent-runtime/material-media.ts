@@ -5,6 +5,7 @@ import {
   storeGeneratedAsset,
   type StoreGeneratedAssetInput,
 } from '@/lib/server/store-generated-asset';
+import { mayNameAPoolAsset } from '@/lib/media/media-placeholder';
 import { COURSE_STAGE_ID_DESCRIPTION } from './course-stage';
 import {
   resolveRawMaterial,
@@ -16,7 +17,9 @@ import { getSessionMaterial, resolveSessionMaterialRawAsset } from './session-ma
 
 const Params = Type.Object({
   materialId: Type.String({
-    description: 'The id of an image, video or audio material, from list_materials.',
+    description:
+      'The mat_ id of an image, video or audio material, from list_materials. An ast_ id is ' +
+      'already a stored asset src and needs no copy.',
   }),
   stageId: Type.String({ description: COURSE_STAGE_ID_DESCRIPTION }),
   scope: Type.Optional(
@@ -75,6 +78,25 @@ export function buildMaterialMediaTool(deps: MaterialMediaDeps): AgentTool<never
             )
           : resolveRawMaterial);
       const material = await resolve(deps.sessionId, params.materialId, params.scope ?? 'session');
+      if (!material && mayNameAPoolAsset(params.materialId.trim())) {
+        // A stored asset id is not a material. Nothing is looked up, copied or
+        // vouched for here: the reply only says where such an id belongs, so
+        // it grants no access the caller did not already have.
+        return {
+          content: [
+            {
+              type: 'text',
+              text:
+                `"${params.materialId}" is a stored asset id, not a material id. An ast_ id from ` +
+                'generate_image, generate_video or an earlier use_material_media call is already a ' +
+                'usable src: put it on the media element directly with patch_stage, or pass it in ' +
+                'generate_scene media. use_material_media takes a mat_ id from list_materials.',
+            },
+          ],
+          details: { materialId: params.materialId, error: 'asset-id-not-material' },
+          isError: true,
+        };
+      }
       if (!material?.hasBytes) {
         return {
           content: [{ type: 'text', text: 'Media material not found or has no media bytes.' }],
