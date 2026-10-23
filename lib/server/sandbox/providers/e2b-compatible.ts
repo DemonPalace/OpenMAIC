@@ -581,7 +581,11 @@ export class E2BCompatibleSandboxProvider implements SandboxProvider {
     };
   }
 
-  async *exportWorkspace(resourceId: string, operationId: string): AsyncIterable<Uint8Array> {
+  async *exportWorkspace(
+    resourceId: string,
+    operationId: string,
+    signal?: AbortSignal,
+  ): AsyncIterable<Uint8Array> {
     const sandbox = await this.connect(resourceId, operationId);
     const path = `/tmp/openmaic-archive-${randomUUID()}.tar`;
     const policy = checkpointPolicy();
@@ -594,7 +598,7 @@ export class E2BCompatibleSandboxProvider implements SandboxProvider {
       const stream = await sandbox.files.read(path, {
         format: 'stream',
         requestTimeoutMs: 120_000,
-        signal: AbortSignal.timeout(120_000),
+        signal: signal ?? AbortSignal.timeout(120_000),
       });
       const reader = stream.getReader();
       let size = 0;
@@ -604,13 +608,33 @@ export class E2BCompatibleSandboxProvider implements SandboxProvider {
           if (done) break;
           size += value.byteLength;
           if (size > checkpointArchiveLimit(policy))
-            throw sandboxConflict('Workspace archive exceeds its configured limit.');
+            throw new SandboxError(
+              'CHECKPOINT_ARCHIVE_LIMIT',
+              409,
+              'Workspace archive exceeds its configured limit.',
+            );
           yield value;
         }
       } finally {
         await reader.cancel().catch(() => {});
         reader.releaseLock();
       }
+    } catch (error) {
+      const tag =
+        error instanceof CommandExitError
+          ? /OPENMAIC_CHECKPOINT_ERROR:(limit|unsupported|changed|permission|disk-full)/.exec(
+              error.stderr,
+            )?.[1]
+          : undefined;
+      const codes: Record<string, string> = {
+        limit: 'CHECKPOINT_ARCHIVE_LIMIT',
+        unsupported: 'CHECKPOINT_UNSUPPORTED_FILES',
+        changed: 'CHECKPOINT_CHANGED',
+        permission: 'CHECKPOINT_WORKSPACE_PERMISSION',
+        'disk-full': 'CHECKPOINT_WORKSPACE_FULL',
+      };
+      if (tag) throw new SandboxError(codes[tag], 409, 'Workspace export could not complete.');
+      throw error;
     } finally {
       await sandbox.files.remove(path).catch(() => {});
     }

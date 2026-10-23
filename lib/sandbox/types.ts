@@ -63,7 +63,11 @@ export interface SandboxLifecycleCapabilities {
 
 export interface SandboxProvider {
   readonly capabilities: SandboxLifecycleCapabilities;
-  exportWorkspace(resourceId: string, operationId: string): AsyncIterable<Uint8Array>;
+  exportWorkspace(
+    resourceId: string,
+    operationId: string,
+    signal?: AbortSignal,
+  ): AsyncIterable<Uint8Array>;
   importWorkspace(
     resourceId: string,
     operationId: string,

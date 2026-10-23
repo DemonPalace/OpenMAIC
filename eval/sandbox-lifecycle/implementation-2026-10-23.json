@@ -1,0 +1,153 @@
+{
+  "date": "2026-10-23",
+  "branch": "fix/1995-sandbox-lifecycle",
+  "issue": 1995,
+  "scope": "PBL inactivity, active-task protection, checkpoint reclamation and recovery",
+  "defaultIdleTimeoutMs": 300000,
+  "liveTestIdleTimeoutMs": 60000,
+  "lifecycleScanMs": 30000,
+  "providerLeaseMs": 300000,
+  "checkpointStorage": "Local S3-compatible storage",
+  "database": "Dedicated PostgreSQL schema; integration suites use disposable schemas",
+  "browserScenario": {
+    "courseId": "pbl-13928b5f-af91-4cdd-a6d3-fcba2fed19c0",
+    "studyId": "2c87d0cc-e40a-4a7b-843c-88dc694076d9",
+    "fixture": "The test harness moved the study to coding to exercise an acknowledged learner save before a teaching-boundary checkpoint. This is a lifecycle scenario, not a complete teaching journey.",
+    "results": [
+      {
+        "label": "automatic-entry-and-agent",
+        "at": "2026-10-23T10:03:04.538Z",
+        "environmentId": "cb2bae7e-0459-4ffc-948c-7bd3f5c0972f",
+        "roleRun": "failed",
+        "failure": "incomplete"
+      },
+      {
+        "label": "manual-wheel-heartbeat",
+        "at": "2026-10-23T10:03:36.629Z"
+      },
+      {
+        "label": "acknowledged-save-before-stage-checkpoint",
+        "at": "2026-10-23T10:03:40.425Z"
+      },
+      {
+        "label": "other-scene-does-not-renew-activity",
+        "at": "2026-10-23T10:04:15.948Z"
+      },
+      {
+        "label": "checkpoint-before-release",
+        "at": "2026-10-23T10:04:47.369Z",
+        "oldEnvironmentId": "cb2bae7e-0459-4ffc-948c-7bd3f5c0972f"
+      },
+      {
+        "label": "scene-return-restores-acknowledged-file",
+        "at": "2026-10-23T10:04:55.070Z",
+        "environmentId": "987836b5-1a5e-41b6-b665-263634ec8eae"
+      },
+      {
+        "label": "visible-polling-does-not-reallocate",
+        "at": "2026-10-23T10:06:56.502Z"
+      },
+      {
+        "label": "new-user-input-restores",
+        "at": "2026-10-23T10:07:10.910Z",
+        "environmentId": "64b1e555-3bf3-435f-b38c-3480cf553d69"
+      },
+      {
+        "label": "course-exit-stops-activity",
+        "at": "2026-10-23T10:07:46.187Z"
+      },
+      {
+        "label": "all-live-resources-reclaimed",
+        "at": "2026-10-23T10:08:23.518Z"
+      }
+    ]
+  },
+  "realAgentScenario": {
+    "courseId": "pbl-a441f030-daaf-4118-afd2-a882dfeac5dd",
+    "studyId": "683a96b1-06fa-4828-ba86-14f500add7a2",
+    "fixture": "Fresh, unmodified greeting-python-lab project with real Paratera DeepSeek-V4.1-Flash; no stage fixture.",
+    "results": [
+      {
+        "turn": "begin",
+        "at": "2026-10-23T10:18:12.180Z",
+        "roleRun": {
+          "status": "succeeded",
+          "canRetry": false,
+          "failure": null
+        }
+      }
+    ]
+  },
+  "validation": {
+    "pblUnitTests": {
+      "passed": 165,
+      "skipped": 4
+    },
+    "postgresIntegrationTests": {
+      "passed": 64,
+      "includes": [
+        "Python and Java two-milestone teaching paths",
+        "dirty checkpoint without progress-revision changes",
+        "passive polling does not renew",
+        "active task retention and post-task grace",
+        "archive failure retains environment and exposes retry",
+        "cross-tab activity and competing reclaimers",
+        "browserless build collection and idempotent collection",
+        "uncertain replacement cleanup",
+        "overdue orphan cancellation and lease fencing",
+        "retry starts a fresh deadline without new learner feedback",
+        "completed-project file recovery and compute-free report reads",
+        "maintenance ownership isolation",
+        "cancellable lock waiting without retaining PG connections"
+      ]
+    },
+    "startupAndClassroomTests": {
+      "passed": 126
+    },
+    "typecheck": "passed",
+    "i18n": "12 locales aligned",
+    "boundedFailurePostgresTests": {
+      "passed": 77,
+      "includes": [
+        "persistent failure deadline survives another maintenance instance",
+        "previous checkpoint preserved and loss notice survives restore",
+        "deterministic failure classification and retry suppression",
+        "real activity cancels failure grace",
+        "periodic checkpoint failures do not start an idle release timer",
+        "durable discard intent before uncertain deletion",
+        "old writes fenced until replacement",
+        "failed discard metadata save prevents intentional deletion",
+        "stalled upload cancellation releases environment lock and fences late checkpoint commit"
+      ]
+    },
+    "boundedFailureUnitTests": {
+      "passed": 175,
+      "skipped": 72,
+      "note": "PG tests are intentionally skipped by the hermetic unit invocation and run separately"
+    },
+    "s3AdapterTests": {
+      "passed": 36
+    }
+  },
+  "observations": [
+    "Scene return restored the exact acknowledged file",
+    "Visible idle polling did not reallocate reclaimed compute",
+    "Fresh user input restored reclaimed compute",
+    "Navigating to another scene or out of the course stopped activity reports",
+    "All live test environments were confirmed destroyed after the scenarios",
+    "During development, live tools exposed maintenance lock contention and an old-message retry deadline; both have real-PG regressions, and the fresh real-model turn succeeded after fixes"
+  ],
+  "limitations": [
+    "Cloud verification uses a small Python workspace, one browser scenario and local object storage; concurrent capacity and production object-storage latency are not measured",
+    "Unexpected provider or application failure can lose changes since the last successful checkpoint; periodic dirty checkpoints require no active managed writer",
+    "After the configured idle archive-failure grace, release may discard changes newer than the last successful checkpoint; a durable loss notice identifies the recoverable version. If control metadata cannot be saved, provider-lease expiry is the compute fallback."
+  ],
+  "subIssues": {
+    "parent": 1995,
+    "lifecycle": 2007,
+    "runtime": 2008,
+    "hosted": 2009
+  },
+  "archiveFailureGraceMs": 300000,
+  "checkpointTransferTimeoutMs": 120000
+}

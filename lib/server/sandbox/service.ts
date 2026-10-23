@@ -76,6 +76,17 @@ export class SandboxService {
     );
   }
 
+  /** Host maintenance of an existing study binding, without inventing a verified user identity.
+   * The caller holds the study lock and grants only checkpoint/destroy workspace operations.
+   */
+  static async forLearningMaintenance(studyId: string, ownerId: string, environmentId: string) {
+    const store = await SandboxStore.open();
+    await store.assertLearningBinding(studyId, ownerId, environmentId);
+    const config = await resolvedSandboxConfig();
+    const { E2BCompatibleSandboxProvider } = await import('./providers/e2b-compatible');
+    return new SandboxService(ownerId, config, store, new E2BCompatibleSandboxProvider(config));
+  }
+
   /** An explicit, expiring delegation created by an authenticated sandbox owner. */
   async grantSession(id: string, sessionId: unknown, writes: unknown, commands: unknown) {
     if (
@@ -780,7 +791,12 @@ export class SandboxService {
     }
   }
 
-  async saveWorkspace(id: string, expectedRevision: unknown, release = false) {
+  async saveWorkspace(
+    id: string,
+    expectedRevision: unknown,
+    release = false,
+    signal = AbortSignal.timeout(120_000),
+  ) {
     if (!Number.isSafeInteger(expectedRevision) || (expectedRevision as number) < 0)
       throw sandboxInvalid('An expected checkpoint revision is required (0 for the first save).');
     await this.mutation(id, 'checkpoint');
@@ -790,7 +806,8 @@ export class SandboxService {
       const checkpoint = await this.store.saveCheckpoint(
         row,
         expectedRevision as number,
-        this.provider.exportWorkspace(row.resource_id, row.id),
+        this.provider.exportWorkspace(row.resource_id, row.id, signal),
+        signal,
       );
       // Durability is established BEFORE resource deletion. Delete uncertainty retains the checkpoint.
       if (release) await this.destroyUnlocked(id);
