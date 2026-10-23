@@ -1528,6 +1528,32 @@ describe('patch_stage robustness', () => {
     expect(textOf(swapped)).toContain('carries id "act-2" of the action at index 1');
   });
 
+  it('drops audio on speech actions with a new or missing id after a whole-array set', async () => {
+    const current = richState();
+    const patch = tool(dslTools(current.store), 'patch_stage');
+    const result = await patch.execute('replace-all', {
+      target: '/scenes/1',
+      intent: 'Rewrite narration',
+      ops: [
+        {
+          op: 'set',
+          path: '/actions',
+          value: [
+            { type: 'speech', text: 'Hello again', audioId: 'asset-old', audioUrl: 'u' },
+            { id: 'act-new', type: 'speech', text: 'More', audioId: 'asset-old' },
+          ],
+        },
+      ],
+    } as never);
+    expect(result).not.toHaveProperty('isError');
+    const actions = current.get().scenes[0]!.actions!;
+    expect(actions[0]).toMatchObject({ id: expect.any(String), text: 'Hello again' });
+    for (const action of actions) {
+      expect(action).not.toHaveProperty('audioId');
+      expect(action).not.toHaveProperty('audioUrl');
+    }
+  });
+
   it('reports a bad action list instead of throwing on null actions', async () => {
     const current = richState();
     const patch = tool(dslTools(current.store), 'patch_stage');

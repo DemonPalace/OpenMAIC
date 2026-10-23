@@ -895,6 +895,24 @@ function currentIndexListing(scene: Scene, path: string | undefined): string {
   return '';
 }
 
+/**
+ * A speech action without an id, or with an id no action had at batch start,
+ * is a new identity: any audio it carries was never generated for its text,
+ * so drop it. Runs before missing ids are minted.
+ */
+function clearUnverifiedSpeechAudio(start: Scene, after: Scene): void {
+  const known = new Set(
+    ((start.actions ?? []) as Array<Action | null>).map((action) => action?.id),
+  );
+  for (const action of (after.actions ?? []) as Array<Action | null>) {
+    if (action?.type !== 'speech') continue;
+    if (typeof action.id === 'string' && action.id && known.has(action.id)) continue;
+    const legacy = action as typeof action & { audioUrl?: string };
+    delete legacy.audioId;
+    delete legacy.audioUrl;
+  }
+}
+
 /** Actions are server-identified like elements: fill a missing id. */
 function assignMissingActionIds(scene: Scene): void {
   if (!Array.isArray(scene.actions)) return;
@@ -1087,6 +1105,7 @@ export function buildDslCourseTools(deps: CourseToolDeps): AgentTool<never, neve
         }
         opDetails.push(applied.details);
       }
+      clearUnverifiedSpeechAudio(resolved.scene, next);
       assignMissingActionIds(next);
       // Each op is checked against the previous op's output; re-check the
       // final canvas against the BATCH START so an earlier op cannot launder
