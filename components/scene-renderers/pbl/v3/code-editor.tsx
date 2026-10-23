@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import Editor, { loader } from '@monaco-editor/react';
 import { useTheme } from '@/lib/hooks/use-theme';
 import { useI18n } from '@/lib/hooks/use-i18n';
@@ -11,6 +11,7 @@ export function CodeEditor({
   path,
   value,
   readOnly,
+  readOnlyReason,
   onChange,
   onSave,
 }: {
@@ -18,9 +19,19 @@ export function CodeEditor({
   path: string;
   value: string;
   readOnly: boolean;
+  readOnlyReason: string;
   onChange: (text: string) => void;
   onSave: () => void;
 }) {
+  const change = useRef({ readOnly, onChange });
+  // Update before Monaco synchronizes controlled values in passive effects.
+  useLayoutEffect(() => {
+    change.current = { readOnly, onChange };
+  }, [readOnly, onChange]);
+  const handleChange = useCallback((text: string | undefined) => {
+    // Read-only setValue emits Monaco changes too; only user-editable values are edits.
+    if (!change.current.readOnly) change.current.onChange(text ?? '');
+  }, []);
   const save = useRef(onSave);
   useEffect(() => {
     save.current = onSave;
@@ -50,6 +61,7 @@ export function CodeEditor({
     )[extension] ?? 'plaintext';
   return (
     <Editor
+      key={`${studyId}/${path}`}
       height="100%"
       width="100%"
       path={`${studyId}/${path}`}
@@ -57,8 +69,19 @@ export function CodeEditor({
       value={value}
       theme={resolvedTheme === 'dark' ? 'vs-dark' : 'light'}
       loading={<p className="p-4 text-sm text-muted-foreground">{t('pblV3.loading')}</p>}
-      onChange={(text) => onChange(text ?? '')}
+      onChange={handleChange}
       onMount={(editor, monaco) => {
+        // The native readonly textarea suppresses character/paste input events.
+        // Route those attempts through Monaco so its cursor-side message still appears.
+        const attempt = editor.onKeyDown(({ browserEvent: event }) => {
+          if (!editor.getOption(monaco.editor.EditorOption.readOnly)) return;
+          const command = event.metaKey || event.ctrlKey;
+          const typing = event.key.length === 1 && !command && !event.altKey;
+          const clipboard = command && ['v', 'x'].includes(event.key.toLowerCase());
+          if (typing || clipboard || event.isComposing || event.key === 'Process')
+            editor.trigger('readonly-keyboard', 'type', { text: event.key });
+        });
+        editor.onDidDispose(() => attempt.dispose());
         editor.addAction({
           id: 'pbl-save-file',
           label: t('pblV3.saveFile'),
@@ -68,9 +91,11 @@ export function CodeEditor({
       }}
       options={{
         readOnly,
+        readOnlyMessage: { value: readOnlyReason },
         domReadOnly: readOnly,
         ariaLabel: t('pblV3.editor'),
         automaticLayout: true,
+        fixedOverflowWidgets: true,
         minimap: { enabled: false },
         fontSize: 13,
         lineHeight: 21,

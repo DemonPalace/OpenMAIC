@@ -4,6 +4,7 @@ export class SandboxRequestError extends Error {
     message: string,
     readonly status: number,
     readonly code?: string,
+    readonly reason?: string,
   ) {
     super(message);
   }
@@ -25,6 +26,7 @@ export async function sandboxRequest<T>(url: string, method = 'GET', body?: unkn
       sandboxErrorMessage(json.error),
       response.status,
       json.error?.code,
+      json.error?.reason,
     );
   return json.data;
 }

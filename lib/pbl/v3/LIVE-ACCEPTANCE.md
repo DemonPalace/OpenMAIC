@@ -1,5 +1,7 @@
 # Live provider acceptance — 2026-10-20
 
+Historical scope: the preview and manual checkpoint controls described below belonged to the earlier prototype. Current v3 removes learner checkpoint controls and all project-preview wiring; these records remain evidence for their stated revision only.
+
 This run used the actual application, PostgreSQL, DeepSeek teaching model, Aliyun
 E2B-compatible code template and S3-compatible checkpoint storage. No model,
 provider, application route or preview response was mocked in the live checks below.

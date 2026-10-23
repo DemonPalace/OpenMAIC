@@ -159,19 +159,20 @@ const dialogueStageSchema = z.object({
   policy: stagePolicySchema.optional(),
 });
 
-const produceStageSchema = z.object({
-  kind: z.literal('produce'),
-  agent: z.enum(['planner', 'coder']),
-  reads: z.array(artifactRefSchema),
-  writes: z.enum(['plan', 'code']),
-  reviewRequired: z.boolean().default(false),
-  compileBeforeReview: z.boolean().optional(),
-  planUpdateMode: z.literal('incremental').optional(),
-  exploration: z.object({ introduction: nonEmptyString }).strict().optional(),
-  skill: stageSkillId.optional(),
-  studentActions: z.array(studentActionSchema),
-  policy: stagePolicySchema.optional(),
-});
+const produceStageSchema = z
+  .object({
+    kind: z.literal('produce'),
+    agent: z.enum(['planner', 'coder']),
+    reads: z.array(artifactRefSchema),
+    writes: z.enum(['plan', 'code']),
+    reviewRequired: z.boolean().default(false),
+    compileBeforeReview: z.boolean().optional(),
+    planUpdateMode: z.literal('incremental').optional(),
+    skill: stageSkillId.optional(),
+    studentActions: z.array(studentActionSchema),
+    policy: stagePolicySchema.optional(),
+  })
+  .strict();
 
 const checkStageSchema = z.object({
   kind: z.literal('check'),
@@ -195,18 +196,11 @@ export const stageDefinitionSchema = z.discriminatedUnion('kind', [
 ]);
 export type StageDefinition = z.infer<typeof stageDefinitionSchema>;
 
-const releaseOnboardingSchema = z
-  .object({
-    id: nonEmptyString,
-    intro: mentorSayStageSchema.extend({ agent: z.literal('mentor') }),
-  })
-  .strict();
-
 const milestoneSchema = z
   .object({
     id: nonEmptyString,
     type: z.enum(['learn', 'task']),
-    optional: z.boolean().optional(),
+    optional: z.literal(false).default(false),
     title: nonEmptyString,
     goal: nonEmptyString.optional(),
     teaching: z
@@ -241,7 +235,6 @@ export const workspaceAccessPolicySchema = z.object({
   operations: z.array(z.enum(['read', 'write', 'list', 'evaluate'])).min(1),
   include: z.array(nonEmptyString).default([]),
   exclude: z.array(nonEmptyString).default([]),
-  writableProtectedPaths: z.array(z.literal('pom.xml')).optional(),
 });
 export type WorkspaceAccessPolicy = z.infer<typeof workspaceAccessPolicySchema>;
 
@@ -260,7 +253,6 @@ export const evaluationFailureKindSchema = z.enum([
 export const projectSchema = z
   .object({
     schemaVersion: z.literal(1).default(1),
-    definitionRevision: z.number().int().positive().optional(),
     id: nonEmptyString,
     title: nonEmptyString,
     language: nonEmptyString,
@@ -307,12 +299,7 @@ export const projectSchema = z
       planner: agentDefinitionSchema,
       coder: agentDefinitionSchema,
     }),
-    intro: mentorSayStageSchema.extend({ agent: z.literal('mentor') }),
-    // Reviewed corrections to prior teaching text and milestone-owned test/skill assets.
-    releaseCorrections: z.array(nonEmptyString).optional(),
-    completionMode: z.enum(['final', 'awaiting_more_milestones']).default('final'),
-    releaseOnboardings: z.array(releaseOnboardingSchema).default([]),
-    defaultReleaseOnboardingId: nonEmptyString.optional(),
+    intro: z.object({ say: nonEmptyString }).strict(),
     visibility: z
       .object({
         roleViews: z.object({
@@ -334,37 +321,8 @@ export const projectSchema = z
       })
       .default({ strategy: 'snapshot', evaluatorUsesImmutableRevision: true }),
   })
-  .passthrough()
+  .strict()
   .superRefine((project, context) => {
-    const correctionIds = project.releaseCorrections ?? [];
-    if (
-      new Set(correctionIds).size !== correctionIds.length ||
-      correctionIds.some((id) => !project.milestones.some((milestone) => milestone.id === id))
-    ) {
-      context.addIssue({
-        code: 'custom',
-        message: 'release corrections must name unique existing milestones',
-        path: ['releaseCorrections'],
-      });
-    }
-    const onboardingIds = project.releaseOnboardings.map(({ id }) => id);
-    if (new Set(onboardingIds).size !== onboardingIds.length) {
-      context.addIssue({
-        code: 'custom',
-        message: 'release onboarding ids must be unique',
-        path: ['releaseOnboardings'],
-      });
-    }
-    if (
-      project.defaultReleaseOnboardingId !== undefined &&
-      !onboardingIds.includes(project.defaultReleaseOnboardingId)
-    ) {
-      context.addIssue({
-        code: 'custom',
-        message: 'default release onboarding must reference the onboarding catalog',
-        path: ['defaultReleaseOnboardingId'],
-      });
-    }
     const openmaicService = project.services.find(
       (service) => service.serviceType === 'openmaic-classroom',
     );
@@ -406,57 +364,37 @@ export const projectSchema = z
       });
     }
 
-    for (const policy of project.workspaceAccessPolicies) {
-      if (
-        policy.writableProtectedPaths?.length &&
-        (policy.milestoneIds.length === 0 ||
-          policy.milestoneIds.some(
-            (id) =>
-              !project.milestones
-                .find((milestone) => milestone.id === id)
-                ?.stages.some(isExplorationStage),
-          ))
-      ) {
-        context.addIssue({
-          code: 'custom',
-          message: 'protected build file writes must be scoped to exploration milestones',
-        });
-      }
-    }
     for (const [milestoneIndex, milestone] of project.milestones.entries()) {
+      const stages = milestone.stages;
       if (
-        milestone.stages.some(isExplorationStage) &&
-        (milestone.optional !== true ||
-          milestone.stages.length !== 1 ||
-          milestone.tests.length > 0 ||
-          milestone.decisions.length > 0 ||
-          milestone.quiz.length > 0)
-      ) {
+        !(
+          stages.length === 7 &&
+          stages[0]?.kind === 'mentor_say' &&
+          stages[0].agent === 'discussion' &&
+          stages[1]?.kind === 'dialogue' &&
+          stages[2]?.kind === 'produce' &&
+          stages[2].agent === 'planner' &&
+          stages[2].writes === 'plan' &&
+          stages[3]?.kind === 'produce' &&
+          stages[3].agent === 'coder' &&
+          stages[3].writes === 'code' &&
+          stages[4]?.kind === 'check' &&
+          stages[4].checker === 'tests' &&
+          stages[5]?.kind === 'check' &&
+          stages[5].checker === 'quiz' &&
+          stages[6]?.kind === 'mentor_say' &&
+          stages[6].agent === 'mentor' &&
+          stages[6].skill === 'recap'
+        )
+      )
         context.addIssue({
           code: 'custom',
-          message: 'exploration requires one optional stage without scored tasks',
-          path: ['milestones', milestoneIndex],
+          message:
+            'Each milestone must use the seven teaching, decision, plan, code, test, quiz and recap steps.',
+          path: ['milestones', milestoneIndex, 'stages'],
         });
-      }
+
       for (const [stageIndex, stage] of milestone.stages.entries()) {
-        if (
-          isExplorationStage(stage) &&
-          (stage.agent !== 'coder' ||
-            stage.writes !== 'code' ||
-            stage.reviewRequired ||
-            stage.skill ||
-            stage.compileBeforeReview ||
-            stage.planUpdateMode ||
-            stage.studentActions.some((action) =>
-              ['next', 'decide', 'evaluate', 'quiz', 'reset'].includes(action),
-            ))
-        ) {
-          context.addIssue({
-            code: 'custom',
-            message: 'exploration uses a continuous coder without fixed workflow gates',
-            path: ['milestones', milestoneIndex, 'stages', stageIndex],
-          });
-        }
         if (
           stage.kind === 'produce' &&
           stage.planUpdateMode === 'incremental' &&
@@ -494,12 +432,3 @@ export const projectSchema = z
   });
 
 export type ProjectDefinition = z.infer<typeof projectSchema>;
-
-export function isExplorationStage(stage: StageDefinition | undefined): stage is Extract<
-  StageDefinition,
-  { kind: 'produce' }
-> & {
-  exploration: { introduction: string };
-} {
-  return stage?.kind === 'produce' && stage.exploration !== undefined;
-}

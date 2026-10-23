@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { test, expect } from '@playwright/test';
 import type { LearningView } from '@/lib/pbl/v3/types';
 
@@ -10,7 +11,6 @@ test('installed sample opens in the normal classroom and preserves progress afte
   await page.addInitScript(() => localStorage.setItem('locale', 'en-US'));
   const state = {
     status: 'running',
-    introCompleted: false,
     position: { milestoneIndex: 0, milestoneId: 'greeting', stageIndex: 0 },
     milestones: [],
     collected: {
@@ -31,18 +31,27 @@ test('installed sample opens in the normal classroom and preserves progress afte
     id: 'learning-browser',
     revision: 0,
     title: 'A friendly greeting',
+    reportAvailable: false,
     environmentId: null as string | null,
     environment: null as LearningView['environment'],
     recovery: null as LearningView['recovery'],
     state,
+    milestones: [
+      {
+        id: 'greeting',
+        title: 'Greeting',
+        stages: ['teaching', 'dialogue', 'plan', 'code', 'tests', 'quiz', 'recap'],
+      },
+    ],
     stage: {
       kind: 'mentor_say',
-      agent: 'mentor',
+      agent: 'discussion',
       say: 'Welcome',
       reads: [],
       studentActions: ['chat', 'next'],
     },
-    role: 'mentor',
+    role: 'discussion',
+    needsOpening: true,
     actions: ['chat'],
     files: ['PLAN.md', 'greeting.py'],
     busy: false,
@@ -50,27 +59,66 @@ test('installed sample opens in the normal classroom and preserves progress afte
     roleRun: null as LearningView['roleRun'],
     decisions: [],
     questions: [] as LearningView['questions'],
-    evaluation: null,
+    evaluation: null as LearningView['evaluation'],
   };
   let failPreparation = false;
   let file = 'Write your plan here.';
+  const savedFiles = new Map<string, { text: string; hash: string }>();
+  let rejectAutosave = false;
+  let conflictAutosaveProgress = false;
+  const saveAttempts: { id: string; revision: number; text: string; expectedHash: string }[] = [];
+  let readGate: Promise<void> | null = null,
+    chatGate: Promise<void> | null = null,
+    createGate: Promise<void> | null = null;
+  let readEntered = () => {},
+    chatEntered = () => {},
+    createEntered = () => {};
+
   const workCalls: { action: string; path?: string }[] = [];
-  let previewOpen = false;
   let workEpoch = 0;
   const calls: { type: string; path?: string; text?: string; expectedHash?: string }[] = [];
   await page.route('**/api/pbl/v3**', async (route) => {
     const req = route.request(),
       url = new URL(req.url());
     const body = req.method() === 'POST' ? req.postDataJSON() : null;
+    if (body?.command?.type === 'chat' && chatGate) {
+      const gate = chatGate;
+      chatGate = null;
+      chatEntered();
+      await gate;
+    }
     if (url.searchParams.has('samples')) return route.continue();
     if (body?.action === 'sample') return route.continue(); // actual course creation and persistence
-    if (url.pathname === '/api/pbl/v3/report')
+    if (url.pathname === '/api/pbl/v3/report') {
+      if (req.method() === 'POST') expect(req.headers()['content-type']).toBe('application/json');
       return route.fulfill({
         json: {
           studyId: view.id,
-          project: { id: 'greeting-python-lab', version: '1.0.0', title: 'Greeting' },
+          project: { id: 'greeting-python-lab', version: '1.1.0', title: 'Greeting' },
+          analysis: {
+            status: 'ready',
+            omitted: true,
+            findings: [
+              {
+                category: 'journey',
+                title: 'A saved learning journey',
+                detail: 'The plan records your implementation choices.',
+                evidence: ['event:7'],
+              },
+            ],
+          },
+          facts: {
+            learnerTurns: 3,
+            assistantTurns: 3,
+            decisions: 1,
+            decisionChanges: 0,
+            testRuns: 1,
+            quizAttempts: 2,
+            fileEdits: 1,
+            interruptedRuns: 0,
+          },
           revision: view.revision,
-          requiredComplete: false,
+          requiredComplete: true,
           milestones: [
             {
               id: 'greeting',
@@ -83,10 +131,11 @@ test('installed sample opens in the normal classroom and preserves progress afte
           evidence: [
             {
               sequence: 7,
+              at: 30,
               kind: 'artifact.recorded',
               milestoneId: 'greeting',
               detail: 'Saved plan evidence',
-              version: 'saved-version',
+              version: 'v1',
             },
           ],
           outcomes: [
@@ -98,27 +147,50 @@ test('installed sample opens in the normal classroom and preserves progress afte
             },
           ],
           counts: { 'artifact.recorded': 1 },
-          conversations: [],
-          truncated: false,
+          conversations: [
+            {
+              role: 'mentor',
+              milestone: 'project',
+              truncated: false,
+              messages: [
+                { sequence: 1, at: 10, role: 'assistant', text: 'Report timeline opening' },
+                { sequence: 2, at: 60, role: 'assistant', text: 'Report timeline reflection' },
+              ],
+            },
+            {
+              role: 'coder',
+              milestone: 'greeting',
+              truncated: false,
+              messages: [{ sequence: 1, at: 40, role: 'user', text: 'Report timeline correction' }],
+            },
+            {
+              role: 'planner',
+              milestone: 'greeting',
+              truncated: false,
+              messages: [{ sequence: 1, at: 20, role: 'user', text: 'Report timeline plan' }],
+            },
+          ],
+          truncated: true,
         },
       });
+    }
     if (url.pathname === '/api/pbl/v3/workspace') {
       if (body?.command) {
         const command = body.command;
-        if (['run', 'terminal', 'preview'].includes(command.action))
-          expect(command.epoch).toBe(workEpoch);
+        if (command.action === 'create' && createGate) {
+          const gate = createGate;
+          createGate = null;
+          createEntered();
+          await gate;
+        }
+        if (['run', 'terminal'].includes(command.action)) expect(command.epoch).toBe(workEpoch);
         workCalls.push(command);
         view.revision++;
         if (command.action === 'create') view.files.push(command.path);
         if (command.action === 'rename')
           view.files = view.files.map((p) => (p === command.path ? command.destination : p));
         if (command.action === 'delete') view.files = view.files.filter((p) => p !== command.path);
-        if (command.action === 'preview') {
-          previewOpen = true;
-          return route.fulfill({ json: { url: 'https://preview.example.test/' } });
-        }
         if (command.action === 'stop') {
-          previewOpen = false;
           workEpoch++;
         }
         return route.fulfill({ json: { accepted: true } });
@@ -132,16 +204,39 @@ test('installed sample opens in the normal classroom and preserves progress afte
           planning: false,
           canManageFiles: view.actions.includes('edit'),
           canRun: view.actions.includes('edit'),
-          ports: [8000],
           commands: [],
           terminals: [],
-          checkpoint: null,
         },
       });
     }
-    if (req.method() === 'GET' && url.searchParams.has('file'))
-      return route.fulfill({ json: { text: file, hash: 'a'.repeat(64) } });
+    if (req.method() === 'GET' && url.searchParams.has('file')) {
+      if (readGate) {
+        const gate = readGate;
+        readGate = null;
+        readEntered();
+        await gate;
+      }
+      return route.fulfill({
+        json: savedFiles.get(url.searchParams.get('file')!) ?? {
+          text: url.searchParams.get('file') === 'PLAN.md' ? file : 'print("Starter")',
+          hash: 'a'.repeat(64),
+        },
+      });
+    }
     if (body?.command) {
+      if (body.command.type === 'save') {
+        saveAttempts.push(body.command);
+        if (conflictAutosaveProgress) {
+          conflictAutosaveProgress = false;
+          view.revision++;
+          return route.fulfill({
+            status: 409,
+            json: { error: { code: 'SANDBOX_CONFLICT', reason: 'PROGRESS_CHANGED' } },
+          });
+        }
+      }
+      if (body.command.type === 'save' && rejectAutosave)
+        return route.fulfill({ status: 503, json: { error: { code: 'SANDBOX_UNAVAILABLE' } } });
       expect(body.command.revision).toBe(view.revision);
       calls.push(body.command);
       const command = body.command;
@@ -158,21 +253,35 @@ test('installed sample opens in the normal classroom and preserves progress afte
         view.environmentId = '12345678-1234-1234-1234-123456789012';
         view.environment = { state: 'running', ready: true };
       }
+      if (command.type === 'begin') {
+        view.needsOpening = false;
+        view.messages.push({
+          role: 'assistant',
+          text: 'Welcome to your greeting project.\n\n### The project\nBuild a small greeting application.\n\n### This milestone\nMake the greeting return a value.\n\n### How learning works\n- **Seven steps:** Teaching, decisions, planning, coding, tests, quiz and reflection.\n- **Agents guide you:** Discuss, ask questions, and review the plan and code together.\n\nAny questions about the project or process? If not, are you ready to begin?',
+        });
+      }
       if (command.type === 'chat') {
         view.messages.push(
           { role: 'user', text: command.text },
           { role: 'assistant', text: 'What should greet(name) return?' },
         );
       }
-      if (command.type === 'save') file = command.text;
+      if (command.type === 'save') {
+        file = command.text;
+        savedFiles.set(command.path, {
+          text: command.text,
+          hash: createHash('sha256').update(command.text).digest('hex'),
+        });
+      }
       if (command.type === 'quiz') {
-        const passed = command.answers[0] === 0;
+        const passed =
+          command.answers.length === 2 && command.answers.every((answer: number) => answer === 0);
         view.state.collected.greeting.quiz = {
           id: command.id,
           attempt: (view.state.collected.greeting.quiz?.attempt ?? 0) + 1,
           passed,
-          score: passed ? 1 : 0,
-          total: 1,
+          score: passed ? 2 : 1,
+          total: 2,
           wrong: passed ? [] : [0],
         };
         view.actions = passed ? ['quiz', 'next'] : ['quiz'];
@@ -187,19 +296,58 @@ test('installed sample opens in the normal classroom and preserves progress afte
   await page.getByRole('button', { name: 'Open selected sample' }).click();
   await expect(page).toHaveURL(/\/classroom\/pbl-/, { timeout: 60000 });
   await expect(page.getByTestId('pbl-v3-workspace')).toBeVisible({ timeout: 60000 });
-  const beforeReport = calls.length;
-  await page.getByRole('button', { name: 'Learning report', exact: true }).click();
-  await expect(page.getByRole('region', { name: 'Learning report' })).toContainText(
-    'Learning is still in progress.',
+  await expect(page.getByRole('button', { name: 'Learning report', exact: true })).toHaveCount(0);
+  await expect(page.getByText('1/7', { exact: true }).first()).toBeVisible();
+  await expect(page.getByText('Welcome to your greeting project.', { exact: true })).toBeVisible();
+  for (const name of ['The project', 'This milestone', 'How learning works'])
+    await expect(page.getByRole('heading', { name, exact: true })).toBeVisible();
+  await expect(page.getByText('Seven steps:', { exact: true })).toBeVisible();
+  await expect(
+    page.getByText('Any questions about the project or process? If not, are you ready to begin?', {
+      exact: true,
+    }),
+  ).toBeVisible();
+  expect(calls.filter((c) => c.type === 'prepare')).toHaveLength(1);
+  expect(calls.filter((c) => c.type === 'begin')).toHaveLength(1);
+  expect(calls.filter((c) => c.type === 'chat' || c.type === 'next')).toHaveLength(0);
+  expect(view.state.position).toEqual({
+    milestoneIndex: 0,
+    milestoneId: 'greeting',
+    stageIndex: 0,
+  });
+  await expect(page.getByRole('button', { name: 'Retry project setup', exact: true })).toHaveCount(
+    0,
   );
-  await page.getByRole('region', { name: 'Learning report' }).locator('summary').click();
-  await expect(page.getByText('Saved plan evidence')).toBeVisible();
-  await page
-    .getByRole('region', { name: 'Learning report' })
-    .screenshot({ path: 'test-results/pbl-v3-report.png' });
-  expect(calls.length).toBe(beforeReport);
-  await page.getByRole('button', { name: 'Return to learning' }).click();
-  await page.getByRole('button', { name: 'Prepare project environment' }).click();
+  // Read-only Monaco model switches and server value refreshes are not learner edits.
+  let releaseRead!: () => void;
+  readGate = new Promise<void>((resolve) => {
+    releaseRead = resolve;
+  });
+  const fileReadStarted = new Promise<void>((resolve) => {
+    readEntered = resolve;
+  });
+  await page.getByRole('button', { name: 'greeting.py', exact: true }).click();
+  await fileReadStarted;
+  await expect(page.getByRole('tab', { name: 'greeting.py', exact: true })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  );
+  await expect(
+    page.getByTestId('pbl-pending-action').filter({ hasText: 'Reading file…' }),
+  ).toBeVisible();
+  releaseRead();
+  await expect(page.locator('.monaco-editor .view-lines')).toHaveText('print("Starter")');
+  await page.getByRole('tab', { name: 'PLAN.md', exact: true }).click();
+  await expect(page.locator('.monaco-editor .view-lines')).toHaveText('Write your plan here.');
+  await page.getByRole('tab', { name: 'greeting.py', exact: true }).click();
+  await expect(page.locator('.monaco-editor .view-lines')).toHaveText('print("Starter")');
+  await page.getByRole('tab', { name: 'PLAN.md', exact: true }).click();
+  await expect(page.getByRole('tab', { name: /●/ })).toHaveCount(0);
+  expect(calls.filter((c) => c.type === 'save')).toHaveLength(0);
+  await expect(page.getByRole('tab', { name: 'Project application' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Project application', exact: true })).toHaveCount(
+    0,
+  );
   // Hold an old progress GET until after a teaching command installs a newer revision.
   let releaseView!: () => void, viewStarted!: () => void;
   const viewGate = new Promise<void>((resolve) => {
@@ -221,7 +369,26 @@ test('installed sample opens in the normal classroom and preserves progress afte
   await page.getByRole('button', { name: 'Refresh progress' }).click();
   await viewSeen;
   await page.getByLabel('Your message').fill('Please introduce the project.');
+  let releaseChat!: () => void;
+  chatGate = new Promise<void>((resolve) => {
+    releaseChat = resolve;
+  });
+  const chatStarted = new Promise<void>((resolve) => {
+    chatEntered = resolve;
+  });
   await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await chatStarted;
+  await expect(
+    page.getByTestId('pbl-pending-action').filter({ hasText: 'Sending message…' }),
+  ).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Send', exact: true })).toHaveAttribute(
+    'aria-busy',
+    'true',
+  );
+  await expect(page.getByTestId('workbench-waiting-bar')).toHaveCount(1);
+  expect(calls.filter((c) => c.type === 'chat')).toHaveLength(0);
+  releaseChat();
+
   await expect(page.getByText('What should greet(name) return?', { exact: true })).toBeVisible();
   const staleViewResponse = page.waitForResponse(
     (response) => response.headers()['x-pbl-stale-fixture'] === '1',
@@ -239,7 +406,7 @@ test('installed sample opens in the normal classroom and preserves progress afte
   await expect(page.getByText('What should greet(name) return?', { exact: true })).toBeVisible();
   expect(calls.filter((c) => c.type === 'prepare')).toHaveLength(1);
   expect(calls.filter((c) => c.type === 'chat')).toHaveLength(1);
-  await expect(page.getByRole('button', { name: 'Continue', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /^Continue(?: to|$)/ })).toHaveCount(0);
   await page.screenshot({ path: 'test-results/pbl-v3-workspace.png', fullPage: true });
   view.roleRun = { status: 'failed', failure: 'authentication', canRetry: true };
   const learningAlert = page.getByTestId('pbl-v3-workspace').getByRole('alert');
@@ -254,16 +421,15 @@ test('installed sample opens in the normal classroom and preserves progress afte
   expect(calls.filter((c) => c.type === 'chat')).toHaveLength(1);
   await page.getByLabel('Your message').fill('Continue after restoring my environment.');
   view.environment = { state: 'destroyed', ready: false };
+  failPreparation = true;
   await page.getByRole('button', { name: 'Refresh progress' }).click();
-  await expect(page.getByText('The environment is unavailable.', { exact: false })).toBeVisible();
+  await expect(page.getByTestId('pbl-environment-setup')).toContainText('could not be prepared');
   const blocked = page.getByTestId('pbl-input-blocked');
-  await expect(blocked).toContainText('Restore it to send; your draft is kept.');
+  await expect(blocked).toContainText('retry above; your draft is kept.');
   await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeDisabled();
   const submitted = calls.filter((c) => c.type === 'chat').length;
   await page.getByLabel('Your message').press('Enter');
   expect(calls.filter((c) => c.type === 'chat')).toHaveLength(submitted);
-  failPreparation = true;
-  await blocked.getByRole('button', { name: 'Restore learning environment', exact: true }).click();
   await expect(
     page
       .getByRole('alert')
@@ -272,10 +438,10 @@ test('installed sample opens in the normal classroom and preserves progress afte
   await expect(page.getByLabel('Your message')).toHaveValue(
     'Continue after restoring my environment.',
   );
-  await expect(
-    blocked.getByRole('button', { name: 'Restore learning environment', exact: true }),
-  ).toBeEnabled();
-  await blocked.getByRole('button', { name: 'Restore learning environment', exact: true }).click();
+  const attempts = calls.filter((c) => c.type === 'prepare').length;
+  await page.getByRole('button', { name: 'Refresh progress' }).click();
+  expect(calls.filter((c) => c.type === 'prepare')).toHaveLength(attempts);
+  await page.getByRole('button', { name: 'Retry project setup', exact: true }).click();
   await expect(blocked).toHaveCount(0);
   await expect(page.getByLabel('Your message')).toHaveValue(
     'Continue after restoring my environment.',
@@ -286,6 +452,16 @@ test('installed sample opens in the normal classroom and preserves progress afte
   await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeEnabled();
   // A late read from PLAN.md must not populate or become savable as greeting.py.
   view.actions = ['chat', 'edit'];
+  view.state.position.stageIndex = 3;
+  view.stage = {
+    kind: 'produce',
+    agent: 'coder',
+    writes: 'code',
+    reviewRequired: true,
+    reads: [],
+    studentActions: ['chat', 'edit', 'next'],
+  } as LearningView['stage'];
+  view.role = 'coder';
   await page.getByRole('button', { name: 'Refresh progress' }).click();
   let releasePlan!: () => void, planStarted!: () => void;
   const planGate = new Promise<void>((resolve) => {
@@ -303,8 +479,10 @@ test('installed sample opens in the normal classroom and preserves progress afte
     }
     await route.fulfill({
       json: {
-        text: path === 'PLAN.md' ? 'Late plan response' : 'print("Current code")',
-        hash: (path === 'PLAN.md' ? 'b' : 'c').repeat(64),
+        ...(savedFiles.get(path) ?? {
+          text: path === 'PLAN.md' ? 'Late plan response' : 'print("Current code")',
+          hash: (path === 'PLAN.md' ? 'b' : 'c').repeat(64),
+        }),
       },
     });
   });
@@ -318,35 +496,148 @@ test('installed sample opens in the normal classroom and preserves progress afte
   releasePlan();
   await lateResponse;
   await expect(page.locator('.monaco-editor .view-lines')).toHaveText('print("Current code")');
-  await expect(page.getByRole('button', { name: 'Save file', exact: true })).toBeEnabled();
+  await expect(page.locator('.monaco-editor textarea').first()).toBeEditable();
   await page.locator('.monaco-editor .view-lines .view-line').first().click();
   await page.keyboard.press('ControlOrMeta+A');
   await page.keyboard.type('print("Saved code")');
   await expect(page.locator('.monaco-editor .view-lines')).toHaveText('print("Saved code")');
-  await page.getByRole('button', { name: 'Save file', exact: true }).click();
+  await expect.poll(() => calls.some((c) => c.type === 'save')).toBe(true);
   expect(calls.at(-1)).toMatchObject({
     type: 'save',
     path: 'greeting.py',
     text: 'print("Saved code")',
     expectedHash: 'c'.repeat(64),
   });
+  const saved = page
+    .getByTestId('pbl-ide')
+    .getByRole('status')
+    .filter({ hasText: /^Saved$/ });
+  await expect(saved).toBeVisible();
+  conflictAutosaveProgress = true;
+  await page.locator('.monaco-editor .view-lines .view-line').first().click();
+  await page.keyboard.press('ControlOrMeta+A');
+  await page.keyboard.insertText('print("A retained draft")');
+  const retrySave = page.getByRole('button', { name: 'Save failed · Retry', exact: true });
+  await expect(retrySave).toBeVisible();
+  const rejectedSave = saveAttempts.at(-1)!;
+  expect(rejectedSave.revision).toBe(view.revision - 1);
+  await page.locator('.monaco-editor .view-lines .view-line').first().click();
+  await page.keyboard.press('ControlOrMeta+A');
+  await page.keyboard.insertText('print("Saved code after retry")');
+  await expect(page.locator('.monaco-editor .view-lines')).toHaveText(
+    'print("Saved code after retry")',
+  );
+  await retrySave.click();
+  await expect(saved).toBeVisible();
+  expect(saveAttempts.at(-1)).toMatchObject({
+    revision: rejectedSave.revision + 1,
+    text: 'print("Saved code after retry")',
+    expectedHash: rejectedSave.expectedHash,
+  });
+  expect(saveAttempts.at(-1)!.id).not.toBe(rejectedSave.id);
+  const savesBeforeSwitching = calls.filter((c) => c.type === 'save').length;
+  for (let i = 0; i < 2; i++) {
+    await page.getByRole('tab', { name: 'PLAN.md', exact: true }).click();
+    await page.locator('.monaco-editor .view-lines .view-line').first().click();
+    await page.keyboard.press('Backspace');
+    await expect(page.locator('.monaco-editor-overlaymessage')).toContainText(
+      'PLAN.md is approved',
+    );
+    await page.keyboard.press('Escape');
+    await page.getByRole('tab', { name: 'greeting.py', exact: true }).click();
+    await expect(page.locator('.monaco-editor .view-lines')).toHaveText(
+      'print("Saved code after retry")',
+    );
+  }
+  await expect(page.getByRole('tab', { name: /●/ })).toHaveCount(0);
+  expect(calls.filter((c) => c.type === 'save')).toHaveLength(savesBeforeSwitching);
+  view.busy = true;
+  view.revision++;
+  await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
+  await page.locator('.monaco-editor .view-lines .view-line').first().click();
+  await page.keyboard.type('x');
+  await expect(page.locator('.monaco-editor-overlaymessage')).toContainText(
+    'The assistant is working',
+  );
+  await expect(page.getByTestId('pbl-edit-access')).toHaveCount(0);
+  await expect(page.locator('.monaco-editor .view-lines')).toHaveText(
+    'print("Saved code after retry")',
+  );
+  const lockMessage = page.locator('.monaco-editor-overlaymessage');
+  await expect.poll(() => lockMessage.evaluate((el) => getComputedStyle(el).opacity)).toBe('1');
+  await expect(lockMessage).toBeInViewport();
+  expect(
+    await lockMessage.locator('.message').evaluate((el) => {
+      const box = el.getBoundingClientRect();
+      return el.contains(document.elementFromPoint(box.x + box.width / 2, box.y + 3));
+    }),
+  ).toBe(true); // The first-line hint must not be clipped by the resizable panel.
+  await page
+    .getByTestId('pbl-v3-workspace')
+    .screenshot({ path: 'test-results/pbl-v3-readonly.png' });
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.monaco-editor-overlaymessage')).not.toBeVisible();
+  await page.keyboard.type('y');
+  await expect(page.locator('.monaco-editor-overlaymessage')).toContainText(
+    'The assistant is working',
+  );
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.monaco-editor textarea').first()).not.toBeEditable();
+  view.busy = false;
+  view.revision++;
+  await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
+  await expect(page.locator('.monaco-editor textarea').first()).toBeEditable();
+  const hideFiles = page.getByRole('button', { name: 'Hide file tree', exact: true });
+  const fileHeader = hideFiles.locator('..');
+  await expect(fileHeader).toContainText('Project files');
+  const editorWidth = (await page.locator('.monaco-editor').boundingBox())!.width;
+  await hideFiles.click();
+  const showFiles = page.getByRole('button', { name: 'Toggle file explorer', exact: true });
+  await expect(showFiles).toBeVisible();
+  await expect
+    .poll(async () => (await page.locator('.monaco-editor').boundingBox())!.width)
+    .toBeGreaterThan(editorWidth);
+  await expect(page.locator('.monaco-editor .view-lines')).toHaveText(
+    'print("Saved code after retry")',
+  );
+  await expect(page.locator('.monaco-editor textarea').first()).toBeEditable();
+  await showFiles.click();
+  await expect(hideFiles).toBeVisible();
+  await expect(showFiles).toHaveCount(0);
+  expect(calls.filter((c) => c.type === 'save')).toHaveLength(savesBeforeSwitching);
   await page.getByRole('button', { name: 'Manage source files' }).click();
   await page.getByLabel('Project-relative file path').fill('src/new.py');
+  let releaseCreate!: () => void;
+  createGate = new Promise<void>((resolve) => {
+    releaseCreate = resolve;
+  });
+  const createStarted = new Promise<void>((resolve) => {
+    createEntered = resolve;
+  });
   await page.getByRole('button', { name: 'Create file', exact: true }).click();
+  await createStarted;
+  await expect(
+    page.getByTestId('pbl-pending-action').filter({ hasText: 'Creating file…' }),
+  ).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'new.py', exact: true })).toHaveCount(0);
+  releaseCreate();
+
   await expect(page.getByRole('tab', { name: 'new.py', exact: true })).toHaveAttribute(
     'aria-selected',
     'true',
   );
   await expect(page.locator('.monaco-editor .view-lines')).toHaveText('print("Current code")');
-  await expect(page.getByRole('button', { name: 'Save file', exact: true })).toBeEnabled();
+  await expect(page.locator('.monaco-editor textarea').first()).toBeEditable();
+  rejectAutosave = true;
   await page.locator('.monaco-editor .view-lines .view-line').first().click();
   await page.keyboard.press('ControlOrMeta+A');
   await page.keyboard.type('Unsaved learner work');
-  await page.getByRole('button', { name: 'Run & output', exact: true }).click();
-  await page.getByLabel('Project command', { exact: true }).fill('python3 src/new.py');
-  await expect(page.getByRole('button', { name: 'Run command', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Run & output', exact: true })).toHaveCount(0);
+  await expect(page.getByLabel('Project command', { exact: true })).toHaveCount(0);
   await page.getByRole('tab', { name: 'greeting.py', exact: true }).click();
-  await expect(page.locator('.monaco-editor .view-lines')).toHaveText('print("Current code")');
+  await expect(page.locator('.monaco-editor .view-lines')).toHaveText(
+    'print("Saved code after retry")',
+  );
   await page.getByRole('tab', { name: 'new.py ●', exact: true }).click();
   await expect(page.locator('.monaco-editor .view-lines')).toHaveText('Unsaved learner work');
   await page.getByRole('button', { name: 'Expand project workspace' }).click();
@@ -365,77 +656,63 @@ test('installed sample opens in the normal classroom and preserves progress afte
   view.environmentId = '22345678-1234-1234-1234-123456789012';
   await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
   await expect(page.locator('.monaco-editor .view-lines')).toHaveText('Unsaved learner work');
-  await expect(page.getByRole('button', { name: 'Save file', exact: true })).toBeDisabled();
-  await expect(page.getByText('The environment or file changed.', { exact: false })).toBeVisible();
+  await expect(page.locator('.monaco-editor textarea').first()).not.toBeEditable();
+  await page.locator('.monaco-editor .view-lines .view-line').first().click();
+  await page.keyboard.type('x');
+  await expect(page.locator('.monaco-editor-overlaymessage')).toContainText(
+    'The environment or file changed.',
+  );
+  await expect(page.locator('.monaco-editor .view-lines')).toHaveText('Unsaved learner work');
+  await page.keyboard.press('Escape');
   page.once('dialog', (dialog) => dialog.accept());
   await page.getByRole('button', { name: 'Discard changes and reload' }).click();
   await expect(page.locator('.monaco-editor .view-lines')).toHaveText('print("Current code")');
+  rejectAutosave = false;
   await page.getByLabel('Project-relative file path').fill('src/moved.py');
   await page.getByRole('button', { name: 'Rename / move file' }).click();
   await expect(page.getByRole('tab', { name: 'moved.py', exact: true })).toHaveAttribute(
     'aria-selected',
     'true',
   );
-  await page.getByLabel('Project command', { exact: true }).fill('python3 src/moved.py');
-  await page.getByRole('button', { name: 'Run command', exact: true }).click();
-  await expect.poll(() => workCalls.some((c) => c.action === 'run')).toBe(true);
-  await page.getByRole('tab', { name: 'Project application', exact: true }).click();
+  // Hiding shell controls must not remove trusted course build feedback.
+  view.actions.push('compile');
+  await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Build output', exact: true })).toBeVisible();
   await expect(
-    page.getByText(
-      'Start the project web server in the terminal or Run panel, then connect to a configured port below.',
-    ),
+    page.getByRole('button', { name: 'Build / check syntax', exact: true }),
   ).toBeVisible();
-  await expect(page.locator('iframe[title="Project application"]')).toHaveCount(0);
-  await page.route('https://preview.example.test/**', (route) =>
-    route.fulfill({
-      contentType: 'text/html',
-      body: '<h1>Project application</h1><button onclick="this.textContent=\'Clicked\'">Try</button>',
-    }),
+  view.evaluation = { id: 'course-build', state: 'running', stdout: '', stderr: '' };
+  view.revision++;
+  await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
+  await expect(page.getByTestId('pbl-build-status').locator('.animate-spin')).toHaveCount(1);
+  view.evaluation.state = 'exited';
+  view.revision++;
+  await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
+  await expect(page.getByTestId('pbl-build-status')).toHaveCount(0);
+  view.evaluation = null;
+  // The current activity exposes no shell or arbitrary-command controls.
+  await expect(page.getByRole('button', { name: 'Terminal', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Open terminal', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Run command', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Stop commands and close terminals' })).toHaveCount(
+    0,
   );
-  await page.getByRole('button', { name: 'Preview port 8000' }).click();
-  const frame = page.frameLocator('iframe[title="Project application"]');
-  await expect(frame.getByRole('heading', { name: 'Project application' })).toBeVisible();
-  await frame.getByRole('button', { name: 'Try' }).click();
-  await expect(frame.getByRole('button', { name: 'Clicked' })).toBeVisible();
-  expect(previewOpen).toBe(true);
-  await page.getByRole('button', { name: 'Expand project workspace' }).click();
-  await page.getByTestId('pbl-workbench-split').evaluate((el) => {
-    el.scrollTop = 0;
-  });
+  expect(workCalls.some((c) => ['run', 'terminal', 'stop'].includes(c.action))).toBe(false);
+  await expect(page.getByRole('button', { name: 'Project application', exact: true })).toHaveCount(
+    0,
+  );
+  await expect(page.locator('iframe[title="Project application"]')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Save checkpoint', exact: true })).toHaveCount(0);
   await page
     .getByTestId('pbl-v3-workspace')
     .screenshot({ path: 'test-results/pbl-v3-workbench.png' });
-  await page.getByRole('button', { name: 'Return to classroom layout' }).click();
-  await page.getByRole('button', { name: 'Stop commands and close terminals' }).click();
-  await expect(page.locator('iframe[title="Project application"]')).toHaveCount(0);
-  expect(previewOpen).toBe(false);
-  // A creation response already in flight cannot reopen a preview after Stop.
-  let releasePreview!: () => void, previewEntered!: () => void;
-  const previewGate = new Promise<void>((resolve) => {
-    releasePreview = resolve;
-  });
-  const previewReady = new Promise<void>((resolve) => {
-    previewEntered = resolve;
-  });
-  await page.route('**/api/pbl/v3/workspace', async (route) => {
-    const command =
-      route.request().method() === 'POST' ? route.request().postDataJSON()?.command : null;
-    if (command?.action !== 'preview') return route.fallback();
-    expect(command.epoch).toBe(workEpoch);
-    previewEntered();
-    await previewGate;
-    return route.fulfill({ json: { url: 'https://preview.example.test/late' } });
-  });
-  await page.getByRole('button', { name: 'Preview port 8000' }).click();
-  await previewReady;
-  await page.getByRole('button', { name: 'Stop commands and close terminals' }).click();
-  await expect.poll(() => workEpoch).toBe(2);
-  releasePreview();
-  await expect(page.getByRole('button', { name: 'Run command', exact: true })).toBeEnabled();
-  await expect(page.locator('iframe[title="Project application"]')).toHaveCount(0);
-  await page.getByRole('button', { name: 'Save checkpoint', exact: true }).click();
-  await expect.poll(() => calls.some((c) => c.type === 'checkpoint')).toBe(true);
-  view.questions = [{ q: 'What does return do?', options: ['Returns a value', 'Prints a value'] }];
+  view.questions = [
+    { q: 'What does return do?', options: ['Returns a value', 'Prints a value'] },
+    {
+      q: 'When do editor changes reach the workspace?',
+      options: ['After saving', 'While typing only'],
+    },
+  ];
   view.actions = ['quiz'];
   view.stage = {
     kind: 'check',
@@ -445,10 +722,17 @@ test('installed sample opens in the normal classroom and preserves progress afte
   view.state.position.stageIndex = 5;
   await page.getByRole('button', { name: 'Refresh progress' }).click();
   await page.getByRole('button', { name: /Current task details/ }).click();
+  // Selecting the last question first must not count sparse array slots as answers.
+  await page.getByRole('radio', { name: 'After saving' }).check();
+  await expect(page.getByRole('button', { name: 'Submit answers' })).toBeDisabled();
+  await page.reload();
+  await page.getByRole('button', { name: /Current task details/ }).click();
+  await expect(page.getByRole('radio', { name: 'After saving' })).toBeChecked();
+  await expect(page.getByRole('button', { name: 'Submit answers' })).toBeDisabled();
   await page.getByRole('radio', { name: 'Prints a value' }).check();
   await page.getByRole('button', { name: 'Submit answers' }).click();
   await expect(
-    page.getByText('0/1 correct. Review your answers and try again.', { exact: true }),
+    page.getByText('1/2 correct. Review your answers and try again.', { exact: true }),
   ).toBeVisible();
   await page.reload();
   // The drawer closes on reload; its recorded quiz result remains available on reopening.
@@ -457,13 +741,65 @@ test('installed sample opens in the normal classroom and preserves progress afte
     { timeout: 15000 },
   );
   await expect(
-    page.getByText('0/1 correct. Review your answers and try again.', { exact: true }),
+    page.getByText('1/2 correct. Review your answers and try again.', { exact: true }),
   ).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Continue', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /^Continue(?: to|$)/ })).toHaveCount(0);
   await page.getByRole('radio', { name: 'Returns a value' }).check();
   await page.getByRole('button', { name: 'Submit answers' }).click();
   await expect(
-    page.getByText('Quiz passed: 1/1 correct. You can continue.', { exact: true }),
+    page.getByText('Quiz passed: 2/2 correct. You can continue.', { exact: true }),
   ).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Continue', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: /^Continue(?: to|$)/ })).toBeEnabled();
+  view.state.status = 'completed';
+  view.reportAvailable = true;
+  view.environment = { state: 'destroyed', ready: false };
+  view.stage = {
+    kind: 'mentor_say',
+    agent: 'mentor',
+    skill: 'recap',
+    reads: [],
+    studentActions: [],
+  } as LearningView['stage'];
+  view.role = 'mentor';
+  view.actions = [];
+  view.state.position.stageIndex = 6;
+  await page.getByRole('button', { name: 'Refresh progress' }).click();
+  await expect(page.getByTestId('pbl-environment-setup')).toHaveCount(0);
+  expect(calls.filter((c) => c.type === 'prepare')).toHaveLength(attempts + 1);
+  await page.getByRole('button', { name: 'Expand project workspace' }).click();
+  await page.getByRole('button', { name: 'Learning report', exact: true }).click();
+  const report = page.getByRole('region', { name: 'Learning report' });
+  await expect(report.getByText('A saved learning journey', { exact: true })).toBeVisible();
+  await expect(
+    report.getByText(
+      'Some records were shortened or omitted from this analysis. The saved evidence below remains available.',
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(
+    report.getByText('Only the most recent records are shown here. Earlier records remain saved.', {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await report.getByRole('button', { name: 'Evidence 7', exact: true }).click();
+  await expect(report.getByText('Saved plan evidence')).toBeVisible();
+  expect(
+    await report
+      .locator('details[id^="report-source-turn-"]')
+      .evaluateAll((items) => items.map((item) => item.id)),
+  ).toEqual([
+    'report-source-turn-0-1',
+    'report-source-turn-2-1',
+    'report-source-turn-1-1',
+    'report-source-turn-0-2',
+  ]);
+  await report.evaluate((el) => {
+    el.scrollTop = 0;
+  });
+  await report.screenshot({ path: 'test-results/pbl-v3-report.png' });
+  await page.getByRole('button', { name: 'Return to learning' }).click();
+  await expect(report).toHaveCount(0);
+  await page.getByRole('button', { name: 'Learning report', exact: true }).click();
+  await expect(report.getByText('A saved learning journey', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Return to learning' }).click();
 });

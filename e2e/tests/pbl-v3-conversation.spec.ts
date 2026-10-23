@@ -57,7 +57,7 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
         type: 'pbl',
         title: 'Practice project',
         order: 1,
-        content: { type: 'pbl', projectV3: { id: 'greeting-python-lab', version: '1.0.0' } },
+        content: { type: 'pbl', projectV3: { id: 'greeting-python-lab', version: '1.1.0' } },
         actions: [],
       },
     ],
@@ -79,7 +79,6 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
     recovery: null,
     state: {
       status: 'running',
-      introCompleted: true,
       position: { milestoneIndex: 0, milestoneId: 'greeting', stageIndex: 0 },
       milestones: [{ milestoneId: 'greeting', status: 'active' }],
       collected: { greeting: { decisions: [] } },
@@ -103,7 +102,7 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
         id: 'normalize',
         title: 'Extend the greeting',
         optional: false,
-        stages: ['teaching', 'plan', 'code', 'tests', 'quiz', 'recap'],
+        stages: ['teaching', 'dialogue', 'plan', 'code', 'tests', 'quiz', 'recap'],
       },
     ],
     role: 'discussion',
@@ -132,21 +131,51 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
       },
     ],
   } as unknown as LearningView;
+  let failDecision = true;
+  let decisionGate: Promise<void> | null = null;
+  let decisionEntered = () => {};
   let openings = 0;
   let failOpening = true;
   let advances = 0;
   let collections = 0;
   let failCollection = true;
   let testRun = 0;
+  let evaluateGate: Promise<void> | null = null;
+  let evaluateEntered = () => {};
+  let collectGate: Promise<void> | null = null;
+  let collectEntered = () => {};
   await page.route('**/api/pbl/v3**', async (route) => {
     const command =
       route.request().method() === 'POST' ? route.request().postDataJSON()?.command : undefined;
+    if (command?.type === 'save')
+      return route.fulfill({ status: 503, json: { error: { code: 'SANDBOX_UNAVAILABLE' } } });
+    if (command?.type === 'decide') {
+      if (decisionGate) {
+        const gate = decisionGate;
+        decisionGate = null;
+        decisionEntered();
+        await gate;
+      }
+      if (failDecision) {
+        failDecision = false;
+        return route.fulfill({ status: 503, json: { error: { code: 'SANDBOX_UNAVAILABLE' } } });
+      }
+      view.state.collected.greeting!.decisions = [{ id: 'storage', chosen: 'list', revision: 1 }];
+      view.revision++;
+      return route.fulfill({ json: { view } });
+    }
     if (command?.type === 'chat') {
       // The server preserves a completed review while answering a follow-up.
       view.activitySequence!++;
       return route.fulfill({ json: { view } });
     }
     if (command?.type === 'evaluate') {
+      if (evaluateGate) {
+        const gate = evaluateGate;
+        evaluateGate = null;
+        evaluateEntered();
+        await gate;
+      }
       testRun++;
       view.evaluation = {
         id: `test-run-${testRun}`,
@@ -159,6 +188,12 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
       return route.fulfill({ json: { view } });
     }
     if (command?.type === 'collect') {
+      if (collectGate) {
+        const gate = collectGate;
+        collectGate = null;
+        collectEntered();
+        await gate;
+      }
       collections++;
       expect(command.evaluationId).toBe(view.evaluation?.id);
       if (failCollection) {
@@ -252,14 +287,12 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
           environmentId: view.environmentId,
           revision: view.revision,
           epoch: 0,
-          canEdit: false,
+          canEdit: view.actions.includes('edit'),
           canManageFiles: false,
           canRun: false,
-          planning: false,
-          ports: [],
+          planning: view.stage.kind === 'produce' && view.stage.writes === 'plan',
           commands: [],
           terminals: [],
-          checkpoint: null,
         },
       });
     if (new URL(route.request().url()).pathname.endsWith('/report'))
@@ -281,6 +314,27 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
   await page.goto(`/classroom/${stageId}`);
   await page.getByTestId('scene-title').filter({ hasText: 'Practice project' }).click();
   await expect(page.getByTestId('pbl-v3-workspace')).toBeVisible();
+  await page.getByRole('button', { name: 'Learning path', exact: true }).click();
+  const milestoneMenu = page.getByRole('navigation', { name: 'Learning path' });
+  await expect(milestoneMenu.getByText('Implement a greeting', { exact: true })).toBeVisible();
+  await expect(milestoneMenu.getByText('Extend the greeting', { exact: true })).toBeVisible();
+  await expect(milestoneMenu.getByText('Teaching', { exact: true })).toHaveCount(0);
+  await expect(milestoneMenu.locator('li[data-state="active"]')).toHaveCount(1);
+  await expect(milestoneMenu.locator('li[data-state="pending"]')).toHaveCount(1);
+  const chipBox = (await page
+    .getByRole('button', { name: 'Learning path', exact: true })
+    .boundingBox())!;
+  const menuBox = (await milestoneMenu.boundingBox())!;
+  expect(menuBox.y).toBeGreaterThanOrEqual(chipBox.y + chipBox.height);
+  expect(menuBox.y).toBeLessThan(chipBox.y + chipBox.height + 12);
+  await page.keyboard.press('Escape');
+  await expect(milestoneMenu).toHaveCount(0);
+  await page.getByLabel('Milestone learning steps', { exact: true }).click();
+  await expect(
+    page.getByLabel('Milestone learning steps', { exact: true }).locator('..').locator('ol li'),
+  ).toHaveCount(7);
+  await page.getByLabel('Milestone learning steps', { exact: true }).press('Escape');
+
   await expect(
     page
       .getByRole('region', { name: 'Current learning step' })
@@ -347,6 +401,29 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
   const composerBefore = await page.getByLabel('Your message', { exact: true }).boundingBox();
   await task.getByRole('button', { name: /Current task details/ }).click();
   await expect(details.getByText('Where will tasks live?')).toBeVisible();
+  let releaseDecision!: () => void;
+  decisionGate = new Promise<void>((resolve) => {
+    releaseDecision = resolve;
+  });
+  const decisionStarted = new Promise<void>((resolve) => {
+    decisionEntered = resolve;
+  });
+  const choice = details.getByRole('button', { name: 'A Python list', exact: true });
+  await choice.click();
+  await decisionStarted;
+  await expect(choice).toHaveAttribute('aria-pressed', 'true');
+  await expect(choice).toHaveAttribute('aria-busy', 'true');
+  await expect(
+    page.getByTestId('pbl-pending-action').filter({ hasText: 'Submitting decision…' }),
+  ).toBeVisible();
+  await expect(task.getByText('2/7', { exact: true })).toBeVisible();
+  releaseDecision();
+  await expect(choice).toHaveAttribute('aria-pressed', 'false');
+  await expect(choice).toBeEnabled();
+  await choice.click();
+  await expect(choice).toHaveAttribute('aria-pressed', 'true');
+  await expect(choice).toBeEnabled();
+
   await expect(details.getByRole('listitem')).toHaveCount(0);
   expect((await page.getByLabel('Your message', { exact: true }).boundingBox())?.y).toBe(
     composerBefore?.y,
@@ -383,17 +460,55 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
   ).toBeVisible();
   await details.getByRole('button', { name: 'Close task details' }).click({ timeout: 7000 });
   await expect(details).toHaveCount(0);
+  view.actions = ['chat', 'edit'];
+  view.revision++;
+  await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
+  const planEditor = page.locator('.monaco-editor textarea').first();
+  await expect(page.locator('.monaco-editor .view-lines')).toContainText('Greeting plan');
+  await expect(planEditor).toBeEditable();
+  await page.locator('.monaco-editor .view-lines .view-line').first().click();
+  await page.keyboard.press('End');
+  await page.keyboard.type('My unsaved plan across scenes');
+  await expect(page.locator('.monaco-editor .view-lines')).toContainText(
+    'My unsaved plan across scenes',
+  );
+  const draftText = await page.locator('.monaco-editor .view-lines').textContent();
+  await expect(
+    page.getByRole('button', { name: 'Save failed · Retry', exact: true }),
+  ).toBeVisible();
+  const beforeDraftReturn = openings;
+  view.needsOpening = true;
+  await page.getByTestId('scene-title').filter({ hasText: 'Course overview' }).click();
+  await page.getByTestId('scene-title').filter({ hasText: 'Practice project' }).click();
+  await expect(page.locator('.monaco-editor .view-lines')).toHaveText(draftText!);
+  expect(openings).toBe(beforeDraftReturn);
+  view.needsOpening = false;
+  view.revision++;
+  await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
+  page.once('dialog', (dialog) => dialog.accept());
+  await page.getByRole('button', { name: 'Discard changes and reload', exact: true }).click();
+  await expect(page.locator('.monaco-editor .view-lines')).toContainText('Greeting plan');
   view.stage = originalStage;
   view.role = 'discussion';
   view.task = originalTask;
   view.decisionSummary = [];
   view.actions = ['chat'];
   view.decisions = [];
-  view.state.introCompleted = true;
+  view.state.milestones[0]!.status = 'completed';
   view.state.position = { milestoneIndex: 1, milestoneId: 'normalize', stageIndex: 2 };
   view.revision++;
   await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
-  await expect(task.getByText('3/6', { exact: true })).toBeVisible();
+  await expect(task.getByText('3/7', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Learning path', exact: true }).click();
+  await expect(milestoneMenu.locator('li[data-state="done"]')).toContainText(
+    'Implement a greeting',
+  );
+  await expect(milestoneMenu.locator('li[data-state="active"]')).toContainText(
+    'Extend the greeting',
+  );
+  await page.keyboard.press('Escape');
+  view.state.milestones[0]!.status = 'active';
+
   view.state.position = { milestoneIndex: 0, milestoneId: 'greeting', stageIndex: 0 };
   view.revision++;
   await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
@@ -414,7 +529,7 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
     {
       kind: 'thinking',
       id: 'thought',
-      text: 'Consider the input.\nTrace the returned value.',
+      text: 'Inspect the input.\nConsider the return value.',
       streaming: true,
       startedAt: 1000,
     },
@@ -425,13 +540,18 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
   await expect(conversation.getByTestId('workbench-waiting-bar')).toHaveCount(0);
   await expect(thinking).toHaveAttribute('data-streaming', 'true');
   await expect(thinking.getByRole('button')).toHaveAttribute('aria-expanded', 'false');
+  await expect(thinking.getByRole('button')).toBeEnabled();
+  await expect(thinking.getByRole('button')).toContainText('Consider the return value.');
+  await expect(thinking.locator('pre')).toHaveCount(0);
   await thinking.getByRole('button').click();
-  await expect(thinking.locator('pre')).toContainText('Consider the input.');
+  await expect(thinking.locator('pre')).toContainText(
+    'Inspect the input.\nConsider the return value.',
+  );
   finished.parts = [
     {
       kind: 'thinking',
       id: 'thought',
-      text: 'Consider the input.\nTrace the returned value.',
+      text: 'Inspect the input.\nConsider the return value and output.',
       streaming: false,
       startedAt: 1000,
       endedAt: 3000,
@@ -442,6 +562,7 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
       action: 'read',
       status: 'running',
       args: { path: 'src/main.py' },
+      progress: { kind: 'read', text: 'Reading the full file', percent: 50, data: { lines: 60 } },
       startedAt: 3000,
     },
     {
@@ -456,33 +577,57 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
   view.activitySequence++;
   await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
   await expect(thinking.getByRole('button')).toHaveAttribute('aria-expanded', 'true');
+  await expect(thinking.locator('pre')).toContainText('Consider the return value and output.');
   await expect(thinking).not.toHaveAttribute('data-streaming', 'true');
+  await thinking.getByRole('button').click();
   const tools = conversation.getByTestId('workbench-tool-group');
   await expect(tools).toBeVisible();
   await expect(tools.getByTestId('workbench-tool-card')).toHaveCount(2);
   await tools.getByTestId('workbench-tool-card').first().getByRole('button').click();
   await expect(tools.locator('pre').first()).toContainText('src/main.py');
+  await expect(tools.getByText('Reading the full file', { exact: true })).toBeVisible();
+  await expect(tools.locator('pre').last()).toContainText('60');
   for (const part of finished.parts)
     if (part.kind === 'tool') {
       part.status = 'succeeded';
       part.endedAt = 5000;
+      if (part.id === 'read') {
+        part.result =
+          Array.from({ length: 55 }, (_, index) => `Line ${index + 1}`).join('\n') +
+          '\n<img src=x onerror="window.toolPayloadExecuted=true">';
+        part.display = { received: 'Complete structured display', nested: { count: 55 } };
+      }
     }
+  // Completed tools do not mean the Agent turn is finished. Keep a live tail
+  // while the next model response is pending, preserving the earlier output.
+  view.activitySequence++;
+  await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
+  await expect(conversation.getByTestId('workbench-waiting-bar')).toHaveCount(1);
+  await expect(tools.locator('[data-scroll="true"]')).toContainText('Line 55');
+  await expect(tools.getByText('Complete structured display', { exact: false })).toBeVisible();
+  await expect(tools.locator('img')).toHaveCount(0);
   finished.parts.push(...originalParts);
+  view.activitySequence++;
+  await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
+  await expect(conversation.getByText('Where does the value go?', { exact: true })).toBeVisible();
+  await expect(conversation.getByTestId('workbench-waiting-bar')).toHaveCount(1);
+  // Queued work still needs an indicator when all projected turns are settled.
+  finished.status = 'succeeded';
+  view.activitySequence++;
+  await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
+  await expect(conversation.getByTestId('workbench-waiting-bar')).toHaveCount(1);
   finished.status = 'succeeded';
   view.busy = false;
   view.activitySequence++;
   await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
   await expect(conversation.getByTestId('workbench-waiting-bar')).toHaveCount(0);
   await expect(conversation.getByText('Where does the value go?', { exact: true })).toBeVisible();
-  // Settled tools auto-fold independently of their card details. Reopen the
-  // group before addressing its inert descendants, as a learner would.
-  await expect(tools).toHaveAttribute('data-open', 'false');
+  // OpenPBL groups stay open after settlement, until the learner folds them.
+  await expect(tools).toHaveAttribute('data-open', 'true');
   const toolGroupToggle = tools.getByRole('button', {
     name: '2 tool calls · Completed',
     exact: true,
   });
-  await toolGroupToggle.click();
-  await expect(tools).toHaveAttribute('data-open', 'true');
   const firstToolToggle = tools.getByTestId('workbench-tool-card').first().getByRole('button');
   await expect(firstToolToggle).toHaveAttribute('aria-expanded', 'true');
   await expect(tools.locator('pre').first()).toContainText('src/main.py');
@@ -490,6 +635,9 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
   await expect(firstToolToggle).toHaveAttribute('aria-expanded', 'false');
   await toolGroupToggle.click();
   await expect(tools).toHaveAttribute('data-open', 'false');
+  await expect(tools.getByTestId('workbench-tool-card')).toHaveCount(0);
+  finished.status = 'running';
+  view.busy = true;
   view.conversation![1]!.parts.push({
     kind: 'text',
     id: 'streaming',
@@ -499,6 +647,7 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
   view.activitySequence++;
   await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
   await expect(conversation.getByText('A partial explanation', { exact: true })).toHaveCount(1);
+  await expect(conversation.getByTestId('workbench-waiting-bar')).toHaveCount(1);
   const partial = view.conversation![1]!.parts.at(-1)!;
   if (partial.kind === 'text') {
     partial.text = 'A completed explanation';
@@ -508,7 +657,9 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
   await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
   await expect(conversation.getByText('A completed explanation', { exact: true })).toHaveCount(1);
   await expect(conversation.getByText('A partial explanation', { exact: true })).toHaveCount(0);
+  await expect(conversation.getByTestId('workbench-waiting-bar')).toHaveCount(1);
   finished.status = 'cancelled';
+  view.busy = false;
   view.activitySequence++;
   await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
   await expect(conversation.getByRole('status')).toContainText('This teaching turn was cancelled.');
@@ -525,7 +676,7 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
   delete finished.failure;
   view.activitySequence++;
   await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
-  await thinking.getByRole('button').click();
+  await expect(thinking.getByRole('button')).toBeEnabled();
   await expect(thinking.getByRole('button')).toHaveAttribute('aria-expanded', 'false');
 
   await expect(page.locator('.monaco-editor .view-lines')).toContainText('Greeting plan');
@@ -538,10 +689,15 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
   });
   await page.screenshot({ path: 'test-results/pbl-v3-conversation.png' });
   await page.getByRole('button', { name: 'Return to classroom layout' }).click();
+  await page.getByRole('button', { name: 'Toggle code workspace', exact: true }).click();
   await page.getByTestId('scene-title').filter({ hasText: 'Course overview' }).click();
   await expect(page.getByTestId('pbl-v3-workspace')).toHaveCount(0);
   await page.getByTestId('scene-title').filter({ hasText: 'Practice project' }).click();
   await expect(page.getByText('Return sends a value to the caller.')).toBeVisible();
+  await expect(page.getByLabel('Your message', { exact: true })).toHaveValue('My draft answer');
+  await expect(
+    page.getByRole('button', { name: 'Toggle code workspace', exact: true }),
+  ).toHaveAttribute('aria-pressed', 'false');
   await page.reload();
   // The host may select its first scene on reload; select the same installed PBL again.
   await page.getByTestId('scene-title').filter({ hasText: 'Practice project' }).click();
@@ -550,8 +706,9 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
     'aria-expanded',
     'false',
   );
-  await expect(page.getByTestId('workbench-tool-group')).toHaveAttribute('data-open', 'false');
+  await expect(page.getByTestId('workbench-tool-group')).toHaveAttribute('data-open', 'true');
   await expect(page.getByTestId('workbench-waiting-bar')).toHaveCount(0);
+  await expect(page.getByLabel('Your message', { exact: true })).toHaveValue('My draft answer');
   // The test control and verdict stay outside the drawer. Execution is not
   // progression: automatic collection must first save the server verdict.
   view.stage = {
@@ -577,7 +734,22 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
       greens.includes(await runTests.evaluate((el) => getComputedStyle(el).backgroundColor)),
     )
     .toBe(true);
+  let releaseEvaluate = () => {};
+  evaluateGate = new Promise<void>((resolve) => {
+    releaseEvaluate = resolve;
+  });
+  const evaluateStarted = new Promise<void>((resolve) => {
+    evaluateEntered = resolve;
+  });
   await runTests.click();
+  await evaluateStarted;
+  expect(view.evaluation).toBeNull();
+  await expect(summary).toHaveAttribute('data-state', 'running');
+  await expect(summary).toHaveAttribute('aria-busy', 'true');
+  await expect(summary.locator('.animate-spin')).toHaveCount(1);
+  await expect(task.getByRole('button', { name: 'Running tests…', exact: true })).toBeDisabled();
+  releaseEvaluate();
+  await expect.poll(() => testRun).toBe(1);
   await expect(summary).toHaveAttribute('data-state', 'running');
   await expect(summary.locator('.animate-spin')).toHaveCount(1);
   await expect(task.getByRole('button', { name: 'Running tests…', exact: true })).toBeDisabled();
@@ -591,8 +763,21 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
   await expect(retryResult).toBeEnabled();
   await expect(summary).toHaveAttribute('data-state', 'unavailable');
   expect(collections).toBe(1); // Failed collection cannot create an automatic retry loop.
+  let releaseCollect = () => {};
+  collectGate = new Promise<void>((resolve) => {
+    releaseCollect = resolve;
+  });
+  const collectStarted = new Promise<void>((resolve) => {
+    collectEntered = resolve;
+  });
   await retryResult.click();
+  await collectStarted;
+  await expect(summary).toHaveAttribute('data-state', 'collecting');
+  await expect(summary.locator('.animate-spin')).toHaveCount(1);
+  releaseCollect();
   await expect(summary).toHaveAttribute('data-state', 'failed');
+  await expect(summary).toHaveAttribute('aria-busy', 'false');
+  await expect(summary.locator('.animate-spin')).toHaveCount(0);
   await expect(summary).toContainText('1/2 passed');
   await expect(
     task.getByRole('button', { name: 'Continue to Check your understanding', exact: true }),
@@ -604,6 +789,33 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
   ).toBeVisible();
   await expect(details.getByRole('listitem')).toHaveCount(2);
   await expect(details.getByText('PRIVATE STDERR', { exact: true })).toHaveCount(0);
+  view.state.collected.greeting!.tests!.failureKind = 'compile';
+  view.state.collected.greeting!.tests!.publicDiagnostics!.kind = 'compile';
+  view.state.collected.greeting!.tests!.publicDiagnostics!.locations = [
+    { file: 'src/Greeting.java', line: 7, code: 'cannot_find_symbol' },
+  ];
+  view.revision++;
+  await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
+  await expect(details.getByTestId('pbl-test-locations')).toContainText('src/Greeting.java:7');
+  await expect(details.getByTestId('pbl-test-locations')).toContainText('Symbol not found');
+  await expect(summary).toContainText('Code could not compile');
+  view.evaluation = {
+    id: 'repair-build',
+    state: 'running',
+    purpose: 'compile',
+    stdout: '',
+    stderr: '',
+  };
+  view.busy = true;
+  view.revision++;
+  await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
+  await expect(summary).toContainText('Build / check syntax');
+  await expect(summary).not.toContainText('Running tests');
+  await expect(summary.locator('.animate-spin')).toHaveCount(1);
+  view.evaluation = null;
+  view.busy = false;
+  view.revision++;
+  await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
   await details.getByRole('button', { name: 'Close task details' }).click({ timeout: 7000 });
   await runTests.click();
   await expect(summary).toHaveAttribute('data-state', 'running');
@@ -634,9 +846,23 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
   await expect(task.getByText('6/7', { exact: true })).toBeVisible();
   await expect(summary).toHaveCount(0);
 
+  await page.setViewportSize({ width: 850, height: 480 });
+  await page.getByRole('button', { name: 'Expand project workspace' }).click();
+  await expect(page.getByLabel('Your message', { exact: true })).toBeInViewport();
+  await task.getByRole('button', { name: /Current task details/ }).click();
+  await expect(details.getByRole('button', { name: 'Close task details' })).toBeInViewport();
+  await page.keyboard.press('Escape');
+  await expect(details).toHaveCount(0);
+  await expect(task.getByRole('button', { name: /Current task details/ })).toBeFocused();
+  await page.getByRole('button', { name: 'Return to classroom layout' }).click();
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole('button', { name: 'Expand project workspace' }).click();
-  await expect(page.getByLabel('Your message', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Your message', { exact: true })).toBeInViewport();
+  const splitSize = await page.getByTestId('pbl-workbench-split').evaluate((el) => ({
+    height: el.clientHeight,
+    contents: el.firstElementChild!.getBoundingClientRect().height,
+  }));
+  expect(splitSize.contents).toBeLessThanOrEqual(splitSize.height + 1);
   await page.getByTestId('pbl-v3-frame').evaluate((el) => {
     el.scrollTop = 0;
   });

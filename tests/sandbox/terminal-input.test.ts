@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { SandboxRequestError } from '@/components/sandbox/client';
 import { createTerminalInput } from '@/components/sandbox/terminal-input';
 afterEach(() => vi.useRealTimers());
 describe('terminal input transport', () => {
@@ -51,6 +52,52 @@ describe('terminal input transport', () => {
     t.input('again\n');
     await vi.advanceTimersByTimeAsync(200);
     expect(send).toHaveBeenCalledTimes(1);
+    expect(fail).toHaveBeenCalledOnce();
+  });
+  it('retries only a confirmed pre-dispatch busy rejection and preserves subsequent input order', async () => {
+    vi.useFakeTimers();
+    const send = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new SandboxRequestError('busy', 409, 'SANDBOX_CONFLICT', 'ENVIRONMENT_BUSY'),
+      )
+      .mockResolvedValue(undefined);
+    const fail = vi.fn();
+    const t = createTerminalInput(send, fail);
+    t.input('a');
+    await vi.advanceTimersByTimeAsync(25);
+    t.input('b');
+    await vi.advanceTimersByTimeAsync(300);
+    expect(send.mock.calls).toEqual([
+      [{ action: 'input', data: 'a' }],
+      [{ action: 'input', data: 'a' }],
+      [{ action: 'input', data: 'b' }],
+    ]);
+    expect(fail).not.toHaveBeenCalled();
+    t.dispose();
+  });
+  it('cancels a busy retry when disposed and never retries a permission rejection', async () => {
+    vi.useFakeTimers();
+    const send = vi
+      .fn()
+      .mockRejectedValue(
+        new SandboxRequestError('busy', 409, 'SANDBOX_CONFLICT', 'ENVIRONMENT_BUSY'),
+      );
+    const t = createTerminalInput(send, vi.fn());
+    t.input('a');
+    await vi.advanceTimersByTimeAsync(25);
+    t.dispose();
+    await vi.advanceTimersByTimeAsync(500);
+    expect(send).toHaveBeenCalledOnce();
+    const denied = vi
+      .fn()
+      .mockRejectedValue(
+        new SandboxRequestError('denied', 409, 'SANDBOX_CONFLICT', 'WORKBENCH_ACCESS_DENIED'),
+      );
+    const fail = vi.fn();
+    createTerminalInput(denied, fail).input('a');
+    await vi.advanceTimersByTimeAsync(500);
+    expect(denied).toHaveBeenCalledOnce();
     expect(fail).toHaveBeenCalledOnce();
   });
   it('bounds queued UTF8 bytes and drops disposed input', async () => {

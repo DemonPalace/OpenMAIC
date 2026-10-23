@@ -29,7 +29,7 @@ export async function touchEnvironment(store: LearningStore, row: Study, service
     )
       return env;
     if (!reconciled) {
-      env = await service.reconcile(env.id);
+      env = await service.reconcile(env.id, false);
       reconciled = true;
     }
     if (env.state !== 'running' || !env.workspaceReady) return env;
@@ -116,7 +116,7 @@ export function recoveredProgress(
   }
   const milestone = project.definition.milestones[state.position.milestoneIndex];
   const collected = milestone && state.collected[milestone.id];
-  if (!collected || !state.introCompleted) return { state, reset: false };
+  if (!collected) return { state, reset: false };
   const hash = (text: string) => createHash('sha256').update(text).digest('hex');
   const fingerprint = hash(
     JSON.stringify(Object.entries(files).sort(([a], [b]) => a.localeCompare(b))),

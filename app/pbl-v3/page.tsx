@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useI18n } from '@/lib/hooks/use-i18n';
+import { PendingAction } from '@/components/scene-renderers/pbl/v3/pending-action';
 import { pblRequest } from '@/components/scene-renderers/pbl/v3/workspace';
 export default function PBLExamples() {
   const { t } = useI18n(),
@@ -69,10 +70,12 @@ export default function PBLExamples() {
       </label>
       <button
         className="rounded border px-4 py-2 disabled:opacity-50"
+        aria-label={t('pblV3.openSample')}
+        aria-busy={busy}
         disabled={busy || !selected}
         onClick={() => void open()}
       >
-        {t('pblV3.openSample')}
+        {busy ? <PendingAction action="open" /> : t('pblV3.openSample')}
       </button>
       {error && <p role="alert">{error}</p>}
     </main>

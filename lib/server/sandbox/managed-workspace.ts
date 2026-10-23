@@ -31,7 +31,7 @@ export function isLearningWorkspace(workspaceId: string) {
   return /^pbl-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(workspaceId);
 }
 
-/** Server-only scope. Use only inside the learning lock, after ownership checks; validate actions/roles before mutation.
+/** Server-only scope. Use inside the learning lock after ownership checks. Terminal input is also allowed under the environment lock with a fresh study/permission check before provider dispatch; it never changes learning state. Validate actions/roles before mutation.
  * The sandbox service still checks owner/resource bindings. This grants no caller identity.
  * A scope cannot leak to detached work after the awaited operation completes.
  */

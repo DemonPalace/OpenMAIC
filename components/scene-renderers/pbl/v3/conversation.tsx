@@ -18,9 +18,8 @@ import {
 import { TextBlock } from '@/components/workbench/chat/text-block';
 import { ThinkingBlock } from '@/components/workbench/chat/thinking-block';
 import { WaitingBar } from '@/components/workbench/chat/waiting-bar';
-import { ToolGroup } from '@/components/workbench/chat/tool-group';
+import { ToolActivity } from './tool-activity';
 import { UserBubble } from '@/components/workbench/chat/user-bubble';
-import type { ChatNode } from '@/lib/workbench/session-store';
 import { useI18n } from '@/lib/hooks/use-i18n';
 import type { LearningView } from '@/lib/pbl/v3/types';
 import type { LearningConversationEntry } from '@/lib/pbl/v3/conversation';
@@ -51,32 +50,6 @@ const icons = {
 };
 type Part = LearningConversationEntry['parts'][number];
 type ToolPart = Extract<Part, { kind: 'tool' }>;
-const toolNames = {
-  read: 'read_file',
-  write: 'write_file',
-  build: 'run_build',
-  collect: 'collect_build',
-  review: 'request_skill_review',
-  complete: 'complete_stage',
-  list: 'list_files',
-  manage: 'manage_file',
-  skill: 'read_next_skill',
-};
-function toolNode(part: ToolPart): ChatNode {
-  return {
-    key: part.id,
-    kind: 'tool',
-    text: '',
-    toolName: part.name ?? toolNames[part.action],
-    toolState:
-      part.status === 'running' ? 'running' : part.status === 'succeeded' ? 'done' : 'failed',
-    toolDetails: { interrupted: part.status === 'interrupted' },
-    toolArgs: part.args,
-    toolResultText: part.result,
-    toolStartedAt: part.startedAt,
-    toolEndedAt: part.endedAt,
-  };
-}
 // Keep the OpenPBL turn order. Only adjacent tool calls form a group; prose/thinking splits it.
 function groupParts(parts: Part[]) {
   const groups: (Part | ToolPart[])[] = [];
@@ -94,6 +67,11 @@ function AgentTurn({ entry }: { entry: LearningConversationEntry }) {
   const [copied, setCopied] = useState(false);
   const role = entry.speaker === 'user' ? 'mentor' : entry.speaker;
   const Icon = icons[role];
+  // Keep the turn visibly alive between text blocks and after completed tools.
+  // Thinking and running tools already carry their own animated status.
+  const hasActiveIndicator = entry.parts.some((part) =>
+    part.kind === 'tool' ? part.status === 'running' : part.kind === 'thinking' && part.streaming,
+  );
   const copyText = entry.parts.flatMap((p) => (p.kind === 'text' ? [p.text] : [])).join('\n\n');
   return (
     <article
@@ -113,9 +91,15 @@ function AgentTurn({ entry }: { entry: LearningConversationEntry }) {
         {groupParts(entry.parts).map((part) =>
           Array.isArray(part) ? (
             <div key={part[0].id} className="space-y-2">
-              <ToolGroup nodes={part.map(toolNode)} t={t} />
+              <ToolActivity tools={part} t={t} />
               {part.some((tool) => tool.action === 'complete' && tool.status === 'succeeded') && (
-                <p className="text-foreground">{t('pblV3.journey.completionHandoff')}</p>
+                <p className="text-foreground">
+                  {t(
+                    part.some((tool) => tool.projectCompleted)
+                      ? 'pblV3.reportCopy.completed'
+                      : 'pblV3.journey.completionHandoff',
+                  )}
+                </p>
               )}
             </div>
           ) : part.kind === 'thinking' ? (
@@ -133,7 +117,7 @@ function AgentTurn({ entry }: { entry: LearningConversationEntry }) {
             </div>
           ) : null,
         )}
-        {entry.status === 'running' && entry.parts.length === 0 && <WaitingBar t={t} />}
+        {entry.status === 'running' && !hasActiveIndicator && <WaitingBar t={t} />}
         {(entry.status === 'failed' ||
           entry.status === 'cancelled' ||
           entry.status === 'interrupted') && (
@@ -162,7 +146,15 @@ function AgentTurn({ entry }: { entry: LearningConversationEntry }) {
     </article>
   );
 }
-export function LearningConversation({ view, sent }: { view: LearningView; sent: number }) {
+export function LearningConversation({
+  view,
+  sent,
+  requesting = false,
+}: {
+  view: LearningView;
+  sent: number;
+  requesting?: boolean;
+}) {
   const { t } = useI18n();
   const entries: LearningConversationEntry[] =
     view.conversation ??
@@ -175,6 +167,11 @@ export function LearningConversation({ view, sent }: { view: LearningView; sent:
     <Conversation className="min-h-0 flex-1 bg-background" aria-label={t('pblV3.learning')}>
       <FollowSend count={sent} />
       <ConversationContent className="gap-5 p-4">
+        {entries.some((entry) => entry.omitted) && (
+          <p role="status" className="text-xs text-muted-foreground">
+            {t('pblV3.conversationLimited')}
+          </p>
+        )}
         {!entries.length && !view.busy && (
           <p className="text-sm text-muted-foreground">{t('pblV3.journey.startConversation')}</p>
         )}
@@ -203,7 +200,7 @@ export function LearningConversation({ view, sent }: { view: LearningView; sent:
             <AgentTurn key={entry.id} entry={entry} />
           ),
         )}
-        {view.busy && !view.conversation && (
+        {(requesting || view.busy) && !entries.some((e) => e.status === 'running') && (
           <AgentTurn
             entry={{ id: 'queued', speaker: view.role ?? 'mentor', status: 'running', parts: [] }}
           />

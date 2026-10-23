@@ -27,6 +27,7 @@ export function WorkbenchSplit({
   const ref = useRef<HTMLDivElement>(null);
   const [compact, setCompact] = useState(false);
   const { t } = useI18n();
+  const stacked = compact && showWorkspace && showAssistant;
   useEffect(() => {
     const observer = new ResizeObserver(([entry]) => setCompact(entry!.contentRect.width < 560));
     if (ref.current) observer.observe(ref.current);
@@ -36,14 +37,14 @@ export function WorkbenchSplit({
     <div ref={ref} className="min-h-0 flex-1 overflow-auto" data-testid="pbl-workbench-split">
       <Group
         orientation={compact ? 'vertical' : 'horizontal'}
-        style={{ height: compact ? 1100 : '100%', minHeight: compact ? 1100 : 0 }}
+        style={{ height: stacked ? 760 : '100%', minHeight: stacked ? 760 : 0 }}
       >
         <Panel
           id="workspace"
           panelRef={workspacePanel}
           collapsible
           defaultSize="55%"
-          minSize={compact ? '350px' : '30%'}
+          minSize={stacked ? '350px' : compact ? 0 : '30%'}
           className="h-full min-w-0"
         >
           {workspace}
@@ -57,7 +58,7 @@ export function WorkbenchSplit({
           panelRef={assistantPanel}
           collapsible
           defaultSize="45%"
-          minSize={compact ? '400px' : '28%'}
+          minSize={stacked ? '400px' : compact ? 0 : '28%'}
           className="h-full min-w-0"
         >
           {assistant}

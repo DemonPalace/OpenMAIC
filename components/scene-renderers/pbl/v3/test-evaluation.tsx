@@ -8,21 +8,28 @@ export function TestEvaluation({
   view,
   mode,
   collectionFailed = false,
+  pendingAction = null,
 }: {
   view: LearningView;
   mode: 'summary' | 'details';
   collectionFailed?: boolean;
+  pendingAction?: string | null;
 }) {
   const { t } = useI18n();
   const result = view.state.collected[view.state.position.milestoneId ?? '']?.tests;
   // A newer pending run always takes precedence over an earlier saved pass.
-  const phase = view.evaluation
-    ? collectionFailed
-      ? 'unavailable'
-      : ['starting', 'running'].includes(view.evaluation.state)
-        ? 'running'
-        : 'collecting'
-    : (result?.status ?? 'idle');
+  const phase =
+    pendingAction === 'evaluate'
+      ? 'running'
+      : pendingAction === 'collect'
+        ? 'collecting'
+        : view.evaluation
+          ? collectionFailed
+            ? 'unavailable'
+            : ['starting', 'running'].includes(view.evaluation.state)
+              ? 'running'
+              : 'collecting'
+          : (result?.status ?? 'idle');
   const active = phase === 'running' || phase === 'collecting';
   const Icon = active
     ? LoaderCircle
@@ -37,18 +44,25 @@ export function TestEvaluation({
       : ['failed', 'error', 'unavailable'].includes(phase)
         ? 'text-amber-700 dark:text-amber-300'
         : 'text-muted-foreground';
-  const checks = !view.evaluation ? result?.publicDiagnostics?.caseResults : undefined;
-  const title = t(`pblV3.testResult.${phase}`);
-  const count = checks?.length
-    ? t('pblV3.testResult.count', {
-        passed: checks.filter((c) => c.passed).length,
-        total: checks.length,
-      })
-    : '';
+  const checks = !active && !view.evaluation ? result?.publicDiagnostics?.caseResults : undefined;
+  const compileFailed = phase === 'failed' && result?.failureKind === 'compile';
+  const building = view.evaluation?.purpose === 'compile';
+  const title = building
+    ? t('pblV3.build')
+    : t(`pblV3.testResult.${compileFailed ? 'compile' : phase}`);
+  const locations = !active && !view.evaluation ? result?.publicDiagnostics?.locations : undefined;
+  const count =
+    checks?.length && !compileFailed
+      ? t('pblV3.testResult.count', {
+          passed: checks.filter((c) => c.passed).length,
+          total: checks.length,
+        })
+      : '';
   if (mode === 'summary')
     return (
       <span
         role="status"
+        aria-busy={active}
         data-testid="pbl-test-summary"
         data-state={phase}
         className={`inline-flex items-center gap-1.5 ${color}`}
@@ -74,6 +88,20 @@ export function TestEvaluation({
         {title}
         {count && <span className="font-normal">{count}</span>}
       </h5>
+      {locations?.length ? (
+        <ul className="space-y-2 text-xs" data-testid="pbl-test-locations">
+          {locations.map((location, index) => (
+            <li key={`${location.file}:${location.line}:${index}`}>
+              <code className="break-all">
+                {location.file}
+                {location.line ? `:${location.line}` : ''}
+              </code>
+              {' · '}
+              {t(`pblV3.testResult.diagnostics.${location.code}`)}
+            </li>
+          ))}
+        </ul>
+      ) : null}
       {checks?.length ? (
         <ul className="space-y-2">
           {checks.map((check) => (
@@ -94,12 +122,14 @@ export function TestEvaluation({
             </li>
           ))}
         </ul>
-      ) : !view.evaluation && !result?.publicDiagnostics && result?.publicFeedback ? (
+      ) : !active && !view.evaluation && !result?.publicDiagnostics && result?.publicFeedback ? (
         <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded-md bg-muted/40 p-3 text-xs">
           {result.publicFeedback}
         </pre>
       ) : null}
-      <p className="text-xs text-muted-foreground">{t(`pblV3.testResult.hints.${phase}`)}</p>
+      <p className="text-xs text-muted-foreground">
+        {t(building ? 'pblV3.editAccess.building' : `pblV3.testResult.hints.${phase}`)}
+      </p>
     </section>
   );
 }

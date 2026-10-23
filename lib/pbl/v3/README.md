@@ -4,6 +4,8 @@ For the dedicated classroom file, execution and recovery controls, see
 [Learning workbench and recovery](WORKBENCH.md).
 For self-contained `.maic.zip` delivery, see
 [Project packages, permissions and verification](PROJECT-PACKAGES.md).
+For the pre-course scope audit and its verification boundaries, see
+[Course readiness checklist](READINESS.md).
 
 This slice opens an installed programming project in the normal classroom, runs
 four teaching roles in the existing Agent runner, and persists learning progress
@@ -18,12 +20,14 @@ Use the application's existing configuration:
 - A configured shared sandbox provider and durable checkpoint storage.
 - Explicit single-user installation mode, or a host-verified user with `sandbox:use`.
 
-Open `/pbl-v3`, choose a Java or Python sample, then prepare its project environment.
+Open `/pbl-v3` and choose a Java or Python sample. Entering the project automatically
+prepares its hosted environment and opens the first teaching step. There is no
+learner setup click or deployment choice. Setup failure offers an explicit retry.
 The configured sandbox template must have Python 3. Follow the teaching sections,
 record a decision, review the plan and implementation, run and collect tests,
 complete the quiz, and reflect with the mentor. Use **Continue** to confirm stage
 progression. Confirming a plan or code stage also saves a durable checkpoint before
-advancing. Use **Save checkpoint** to save additional work between these boundaries.
+advancing. The current learner UI does not expose a manual checkpoint control.
 
 A PBL scene selects `{ projectV3: { id, version } }`. The server resolves that
 reference against installed content. The scene never supplies model credentials,
@@ -36,20 +40,29 @@ A PBL project remains a scene inside an OpenMAIC course. Neighboring slides, qui
 and other scenes provide course teaching; this change does not embed another
 OpenMAIC course inside the project. Native workspace expansion retains the same
 component instance and returns to the host layout without resetting a draft reply.
-Scene re-entry reloads durable study state; unsent drafts are not durable records.
+Scene re-entry reloads durable study state. Dirty file tabs, the unsent reply, quiz
+choices and pane visibility are retained per study in tab-local browser storage;
+these drafts are not submitted learning records or durable checkpoints.
 
 The teaching panel uses the host's existing OpenPBL-derived chat skin, Markdown
 renderer and sticky scrolling, with four role identities and ordered turn parts.
 Existing runner event snapshots update replies through the learning poll; no second
-stream, runner or chat database is introduced. The host's ThinkingBlock, WaitingBar,
-ToolGroup and ToolCard render real reasoning (when supplied by the model), pre-content
-waiting, ordered calls, disclosure details and elapsed times inside OpenPBL-style
-role turns. Text snapshots replace earlier snapshots; completed thoughts stop timing
+stream, runner or chat database is introduced. The host's ThinkingBlock and WaitingBar
+and the OpenPBL-derived PBL tool cards render a one-line thinking
+preview, expandable full thinking text, pre-content waiting, ordered calls and elapsed
+times inside role turns. Tool groups start open and remain under manual fold control;
+each tool card starts folded. Text snapshots replace earlier snapshots; completed thoughts stop timing
 when prose or a tool takes over. Terminal and interrupted turns settle on replay.
-Tool details include project files and structured build outcomes; credentials, raw
-provider errors, hashes and teaching protocol bodies stay out of the display payload.
+Tool cards show the full emitted input, output, progress and display payloads, including
+failed results and loaded teaching sections, as plain text. Payloads are not interpreted
+as HTML or Markdown or filtered by tool name. Raw replay reads retain at most
+512 KiB of event payloads per role, plus bounded status metadata. Projected parts
+share a 512 KiB per-role budget and a 2 MiB aggregate budget, with bounded
+turn envelopes and omission summaries outside those payload budgets. Recent payloads are kept whole. Oversized
+or older content outside the budget is explicitly marked as omitted, including in
+an expanded tool card; complete events remain in durable storage.
 Recent conversations span the current milestone roles and project mentor; older
-records remain available in the report. Explicit sends re-anchor the conversation;
+records remain saved; the completion report uses bounded excerpts. Explicit sends re-anchor the conversation;
 reading older messages does not force scrolling to the bottom.
 
 Stage guidance, selected decisions, version-bound review and quiz actions use the
@@ -59,8 +72,8 @@ evidence without claiming that old test results certify subsequently edited file
 
 The workbench places the IDE on the left and teaching assistant on the right,
 with adjustable panel widths. The IDE includes an authorized file tree, Monaco
-editor, per-file tabs and drafts, command output, terminal and application-preview
-panes. The assistant keeps its conversation scroll separate from stage controls and
+editor, per-file tabs and drafts, and build output. Shell controls are disabled for
+the current activity, and no application-preview pane is mounted. The assistant keeps its conversation scroll separate from stage controls and
 the message composer. Enter sends; Shift+Enter inserts a line. Workspace keystrokes
 do not trigger classroom shortcuts.
 
@@ -69,8 +82,15 @@ Short containers scroll a minimum usable workbench; narrow containers stack IDE 
 assistant. Expanding and returning preserves the mounted editor and chat drafts.
 File switches preserve unsaved buffers. Unsaved files block execution and teaching
 handoffs until saved or explicitly discarded; changing environments preserves drafts
-but disables stale writes. Scene navigation/reload still requires saving work first.
+but disables stale writes. Pending edits must finish saving before execution or an automatic recovery snapshot. Browser drafts
+survive scene return and same-tab refresh; closing the tab, clearing browser storage
+or using another browser is not a save. If storage is unavailable, a visible warning
+asks the learner to save or copy their work before refreshing or leaving.
 All controls use the existing workspace routes, permissions and version checks.
+An explicit progress conflict refreshes the study and retains the draft for a new
+save request. Confirmed file conflicts also discard the rejected request identity,
+but never replace the draft's observed hash: concurrent file changes still require
+reconciliation. Unknown save outcomes retain the exact request for explicit retry.
 When teaching input is blocked, the composer explains the pending request, active
 reply, unavailable environment, unsaved files or unfinished opening. Environment
 restoration and failed-opening retries are available beside the draft. These
@@ -85,12 +105,11 @@ After environment preparation and each confirmed stage transition, the active ro
 opens the stage once through the existing runner. Durable stage-entry events supply
 conversation dividers on replay. Opening wakeups are explicitly system-originated:
 they are not shown as learner messages and cannot count as review feedback. Reloads
-reuse the current role; a failed opening uses the normal retry path. Existing sessions
-retain their history and position when the old separate intro gate is folded away.
+reuse the current role and its saved history and position; a failed opening uses
+the normal retry path.
 The scene uses OpenPBL's blue-gray/green palette in dark mode and its light counterpart,
-scoped to the workbench and following the host theme. Configured application previews
-keep a tab before connection, with guidance for unavailable/not-started states; project
-web applications and their API contracts remain content-specific.
+scoped to the workbench and following the host theme. Project web applications and
+their API contracts remain later content-specific integration work.
 
 Monaco is loaded only in the browser. Install/dev/build copy its bundled assets to
 `public/code-editor/vs`; Docker copies these with the application's public directory.
@@ -104,10 +123,23 @@ and recovery still come from the existing backend.
 `teaching-sections.ts` adapts the general OpenPBL pre-decision, PLAN and implementation
 review sections. Project names, language-specific assumptions and legacy tool calls
 are removed; project teaching materials still come from the installed catalog.
-Shared rules preserve one disclosed step per reply, direct help before further
+Shared rules preserve ordered section disclosure, direct help before further
 questioning, meaningful rather than keyword-based feedback, non-repetitive review,
-and fresh approval after a changed artifact. The existing guided-review receipts
-still enforce ordering, real new student messages and current artifact versions.
+and fresh approval after a changed artifact. The project welcome stays inside the first milestone's first step: greeting, project
+and milestone overview, a compact seven-step/Agent explanation, then a readiness
+question. Lesson resources are withheld until a real later reply indicates readiness;
+background questions keep the welcome pending. It never becomes a step zero, and
+existing started lessons do not replay the welcome when instructions change.
+
+Guided-review receipts keep ordered disclosure and current artifact versions. New
+questions require real later learner feedback, but an answer that already covers a
+subsequent section can be credited with `reuseFeedback`. The stored coverage points
+to an actual same-stage learner message and the validated artifact digest. It cannot
+bypass a new unanswered question, reuse another stage's reply, or approve changed
+files. Correct answers and explicit confident understanding are accepted without
+extra knowledge questions when no factual error or unresolved concern remains.
+Current-version plan/code approval is still needed; an already explicit approval
+need not be solicited twice.
 The role receives the current/next learning step and remaining section boundaries.
 Only a successful `complete_stage` receipt and valid stage evidence authorize
 Continue; an ordinary follow-up message does not revoke a completed review. File
@@ -168,13 +200,16 @@ bundles currently retain the English fallback for these additions.
   feedback or changes the learning revision. Closed/hidden workspaces do not get
   an indefinite keepalive. Provider uncertainty leaves progress readable and does
   not authorize another allocation.
-- **Prepare project environment** reconciles an expired environment and restores
+- Entry setup automatically reconciles an unavailable environment and restores
   the latest checkpoint into a new allocation for the same study/workspace. Its
   allocation ID is durable before provisioning, so retries reuse it. Old role
   grants and pending evaluations cannot carry over to the replacement. Restored
   files are checked against plan content and code/test fingerprints; stale
   dependent evidence is cleared and the active milestone returns to the earliest
-  affected step. With no checkpoint, starter files are restored and the UI says so.
+  affected step. Setup runs once per observed environment on entry; failures require
+  **Retry project setup**, rather than an unbounded background retry. An already-ready
+  environment is reused. Completed projects do not prepare a sandbox merely to read
+  a report. With no checkpoint, starter files are restored and the UI says so.
   Work after the last successful checkpoint cannot be recovered.
 - Discussion at the decision stage is optional. Submitted decisions remain
   mandatory, and a running role still blocks progression.
@@ -244,28 +279,54 @@ contract; its release synchronization and runtime topology are not copied.
 | Completion | Validate artifacts and persist successful transitions before ending the role turn. Invalid artifacts can be corrected in that same turn, followed by fresh review of changed files. |
 | Tests | A host-owned parent driver runs independent child checks and requires every expected result. A student module exiting with code 0 cannot pass by suppressing assertions. |
 | Cross-milestone | The same workspace and PLAN continue; project roles change context. Checkpoints record the saved milestone/stage; recovery clears downstream gates if saved work predates current progress. |
-| Report | Owner-scoped durable facts, versions, quiz attempts and bounded conversation excerpts. No model call or live sandbox required. Viewing a report never advances progress. |
-| Optional exploration | Open-ended coding after required milestones, with no forced review/completion gate. Leaving, reading the report and returning keeps the same study. |
+| Report | Available only after the final milestone recap is completed by `complete_stage`. The report button makes one bounded analysis request; the result and its evidence are saved. Returning to the workbench and reopening reads the saved report. No live sandbox is required to read it. |
+
+PBL v3 is pre-release and does not preserve obsolete development-course definitions.
+Every milestone uses the same seven steps. The project welcome is delivered inside
+its first teaching step, without an independent intro stage or teaching binding.
+Local fixtures may be recreated when their schema changes; the runtime does not
+migrate obsolete study or welcome states.
+
+The final recap completes the project. Report reads wait until the last Agent turn
+has finished persisting, then use the completed study revision. The saved report is
+a fixed completion snapshot: GET never calls a model, repeated report actions reuse
+it, failed/stale generation is retryable, and attempt fencing prevents a late result
+from replacing a newer retry. Completed studies reject further learning mutations.
+
+Report reads retain at most 1,000 orchestration records, 1,000 saved edit/artifact
+records and 1,000 conversation events across at most 1,000 role bindings. Queries
+omit payloads over 32 KiB before transferring them to the app. Each displayed
+record is limited to 12,000 characters, with an 80,000-character budget per
+category (240,000 total), prioritizing recent evidence and marking omissions.
+After selection, persisted timestamps interleave edits/snapshots with orchestration
+events. The report's conversation view interleaves milestone roles and the shared
+mentor by message time; analysis uses that same ordering across all evidence and
+messages. Citation IDs remain tied to their source records when display order changes.
+The complete append-only history remains stored. Quantitative counts are computed
+over the full snapshot in SQL, independently of excerpt limits; assistant turns
+count completed text messages, excluding thinking and tool/protocol events.
 
 Review feedback is bound to durable student messages after the pending question's
 turn in the same stage. The teaching role can assess multiple replies together and
 quote or summarize them in `studentFeedback`; literal substring matching is not an
 authorization check. The role still assesses whether the answer addresses the
-question, while the server enforces fresh replies, artifact versions and stage
+question, while the server enforces real feedback or validated prior coverage, artifact versions and stage
 boundaries. Retries and assistant messages do not create student feedback.
 
 The source set, stage locks, writer-idle checks and ordinary sandbox restrictions
-remain the shared contract above. The merged workbench supplies file management, shell, terminal, preview and
-checkpoint UI. Both the shared workspace contract and workbench are now in
+remain the shared contract above. The merged workbench supplies file management and
+execution/recovery primitives. The current activity hides learner shell controls and
+removes manual checkpoint and application-preview UI; automatic recovery snapshots
+remain internal. Both the shared workspace contract and workbench are now in
 `integration/shared-sandbox`. This learning change retains their access, version and
 recovery boundaries while adding the teaching journey. Repeat combined real-provider
 checks before accepting the complete classroom journey.
 
 ### Installed public samples
 
-`/pbl-v3` selects `greeting-python-lab@1.0.0`, `greeting-java@1.0.0`, or the original
-`greeting-python@1.0.0`. The two new projects each contain two required milestones
-and optional exploration. They test retaining earlier behavior while adding input
+`/pbl-v3` selects `greeting-python-lab@1.1.0`, `greeting-java@1.1.0`, or the original
+`greeting-python@1.0.0`. The two current projects each contain two milestones, each with teaching, decisions,
+planning, coding, tests, quiz and recap. No exploration milestone is appended. They test retaining earlier behavior while adding input
 normalization, and keep one evolving PLAN.md. Their materials are public examples;
 no private Java course assets or answer bundles are published here.
 
@@ -287,7 +348,7 @@ pnpm exec playwright test e2e/tests/pbl-v3-workspace.spec.ts
 
 The PG suite drives actual role tools and the Pi loop, uses real local Python/Java
 execution, and covers both complete sample journeys, invalid completion and repair,
-compile gates, earlier-plan preservation, evidence reports and exploration recovery.
+compile gates, earlier-plan preservation, completion-gated reports and workspace recovery.
 Model transport and cloud provisioning are replaced by fixtures. The browser suite
 uses the real classroom entry and persisted sample document but fixtures the learning
 API; it checks rendering, report navigation and progress/file-response races.
@@ -297,9 +358,9 @@ On an authorized test installation, verify both languages through teaching, deci
 plan review, code review, tests, quiz and reflection across both milestones. Combine
 with the workbench change to exercise edit → run → stop → save → review → test →
 next milestone → expire/recover. Inspect that restored files and current gates agree;
-historical report entries should retain their original versions. Read the report
-while the sandbox is unavailable and return to optional exploration without making
-it mandatory.
+historical report entries should retain their original versions. Finish the final recap,
+open the report, return to the workbench, and reopen the same report while the sandbox
+is unavailable. Earlier milestones and an ordinary text handoff must not open a report.
 
 The report below is from the local classroom browser fixture, with saved evidence supplied by the test API.
 
@@ -326,7 +387,8 @@ runner makes at most one continuation attempt with the same real learner input a
 protocol state, then reports an explicit retryable failure if the turn is still unclosed.
 Retry and worker takeover preserve the same rule; no synthetic learner approval is added.
 Successful completion displays a localized handoff above the composer. Progression remains
-a separate learner action, with existing artifact, test and quiz checks unchanged.
+a separate learner action for intermediate stages, with existing artifact, test and quiz checks unchanged.
+The final project recap commits completion directly through its validated tool result.
 
 Assessment stages use dedicated control instructions, not the guided review question protocol.
 The task bar runs tests directly and shows a running indicator or the saved verdict without
@@ -336,3 +398,46 @@ saving, and rejects a stale request for a different pending run. The drawer show
 results. Hidden test programs, expected values and raw provider/runner tracebacks are omitted.
 A missing or invalid receipt is an evaluation error, not an implementation failure. A new
 pending run takes precedence over an earlier pass; only a saved current verdict unlocks Next.
+
+### Saved project report
+
+The report route enforces study ownership and whole-project completion for both reads
+and generation. GET never calls a model. The button's POST uses the configured,
+authorized agent model slot, makes a bounded call, validates structured findings and
+saves the completed document in PostgreSQL. Duplicate clicks share the current attempt;
+refreshing/reopening reads the saved result. Failed or abandoned attempts can be retried
+explicitly. A failed model request does not erase learning records or undo completion.
+
+The existing event and agent stores retain decisions and revisions, all test and quiz
+attempts, real learner messages and assistant replies/questions. Append-only evidence
+also records learner/assistant file edits, workbench operation admissions, complete
+reviewed source snapshots and a final source snapshot. Source snapshots retain the
+runtime's 1 MiB bound. Terminal keystrokes are not a separate learning metric; arbitrary
+shell edits are captured by the subsequent review/final snapshot, not per keystroke.
+No-op saves are not counted as edits. Code changes are compared against the preceding
+saved snapshot. Report presentation reads bounded recent excerpts from durable
+history, with explicit omission indicators and full-snapshot SQL counts.
+
+Counts describe recorded activity, not scores or proof of understanding. Qualitative
+findings cite saved records; strengths, corrections and collaboration claims also require
+an exact learner quote. Unknown references or invented quotes are rejected. The bounded
+analysis samples across the journey and explicitly marks omitted/shortened inputs;
+missing historical records cannot be reconstructed. Raw thinking, system stage openings,
+private course protocols, expected test answers and internal workspace fingerprints are
+excluded from the report. Reviewed/tested versions are labeled v1, v2, etc. in
+chronological order; matching saved snapshots reuse those labels. Unreviewed source
+edits receive no reviewed-version label.
+
+### Private evaluation material
+
+The sandbox receives only executable case inputs and observation support files. Expected
+stdout stays on the host. The runner returns a SHA-256 digest of actual stdout, exit code
+and a bounded reason for each installed case; the host compares digests against its own
+expected values. A sandbox-supplied `passed` flag is not a verdict. Evaluation descriptor
+JSON, rubric files and declared answer keys are not staged as execution resources.
+Course authors must put expected results in the host-owned case descriptor, never in
+sandbox support scripts. This removes answer disclosure through process arguments and
+staged descriptors; the cooperative shell remains unsuitable as a hostile-code exam
+boundary. PBL thinking bars retain the full emitted text in both streaming and replay; their
+compact preview expands in place, matching OpenPBL. Replay presentation follows
+the aggregate bounds above without clipping the retained payloads.

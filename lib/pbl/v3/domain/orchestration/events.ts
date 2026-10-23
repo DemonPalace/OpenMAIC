@@ -10,22 +10,8 @@ import type {
 
 export type OrchestrationEvent =
   | { type: 'session.started'; projectId: string }
-  | {
-      type: 'project.release.migrated';
-      projectId: string;
-      sourceProjectReleaseId: string;
-      targetProjectReleaseId: string;
-      migrationId: string;
-    }
-  | { type: 'intro.completed' }
   | { type: 'teaching.completed'; milestoneId: string }
   | { type: 'recap.completed'; milestoneId: string }
-  | {
-      type: 'exploration.build.recorded';
-      milestoneId: string;
-      buildId: string;
-      outcome: 'ready' | 'failed';
-    }
   | { type: 'artifact.review.completed'; milestoneId: string; artifactKind: 'plan' | 'code' }
   | { type: 'milestone.entered'; milestoneId: string; milestoneIndex: number; title: string }
   | { type: 'stage.entered'; milestoneId: string; stageIndex: number; stageKind: string }
@@ -73,12 +59,6 @@ export type OrchestrationEvent =
       errorCode?: string;
     }
   | { type: 'stage.completed'; milestoneId: string; stageIndex: number }
-  | {
-      type: 'stage.skipped';
-      milestoneId: string;
-      stageIndex: number;
-      reason: 'project_release_upgrade';
-    }
   | { type: 'milestone.completed'; milestoneId: string; milestoneIndex: number }
   | { type: 'milestone.agents.released'; milestoneId: string; agentIds: string[] }
   | { type: 'session.completed' }

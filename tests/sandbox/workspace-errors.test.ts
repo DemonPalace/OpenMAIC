@@ -17,6 +17,7 @@ vi.mock('@/lib/server/identity/with-owner', () => ({
 import { sandboxPrincipalResponse } from '@/lib/server/sandbox/http';
 import { SandboxError, sandboxConflict, sandboxInvalid } from '@/lib/sandbox/errors';
 import { SandboxRequestError, sandboxRequest } from '@/components/sandbox/client';
+import { workbenchRequest } from '@/components/scene-renderers/pbl/v3/workbench-panel';
 import { pblRequest } from '@/components/scene-renderers/pbl/v3/workspace';
 import { sandboxErrorMessage } from '@/lib/sandbox/error-message';
 
@@ -73,11 +74,12 @@ describe.each(['en-US', 'zh-CN'] as const)('workspace errors in %s', (locale) =>
         'fetch',
         vi.fn(async () => Response.json(body, { status: response.status })),
       );
-      for (const client of [sandboxRequest, pblRequest]) {
+      for (const client of [sandboxRequest, pblRequest, workbenchRequest]) {
         await expect(client('/api/test')).rejects.toBeInstanceOf(SandboxRequestError);
         await expect(client('/api/test')).rejects.toMatchObject({
           status: error.status,
           code: error.code,
+          reason: error.reason,
           message: (locale === 'en-US' ? en : zh).sandbox.errors[key],
         });
       }

@@ -47,8 +47,11 @@ describe('independently authored minimal course archive', () => {
       'project.json',
       'skeleton/PLAN.md',
       'skeleton/src/main.py',
+      'skills/A-decisions.md',
       'skills/A-implement.md',
       'skills/A-intro.md',
+      'skills/A-plan.md',
+      'skills/A-recap.md',
       'skills/SKILL.md',
       'tests/check.py',
       'tests/message.json',
@@ -56,8 +59,8 @@ describe('independently authored minimal course archive', () => {
     for (const [name, text] of Object.entries(bundle.files))
       expect(text).toBe(await readFile(resolve('examples/pbl/future-self-lite', name), 'utf8'));
     expect(Object.keys(project.files).sort()).toEqual(['PLAN.md', 'src/main.py']);
-    const stage = project.definition.milestones[0].stages[0];
-    const skill = packagedStageSkill(project, stage, 'message:0', 'coder');
+    const stage = project.definition.milestones[0].stages[3];
+    const skill = packagedStageSkill(project, stage, 'message:3', 'coder');
     expect(skill.content['A-implement.md']).toContain('src/main.py');
     expect(skill.content['A-implement.md']).toContain(bundle.files['skills/SKILL.md']);
     expect(skill.documents).toEqual([
@@ -92,7 +95,9 @@ describe('independently authored minimal course archive', () => {
         cwd: workspace,
       });
       expect(evaluationPassed(spec, 'solution', solution.stdout)).toBe(true);
-      expect(solution.stdout).toContain('1 / 1 checks passed');
+      expect(solution.stdout).toContain('stdoutDigest');
+      expect(solution.stdout).not.toContain('继续保持好奇心');
+      expect(spec.resources).not.toHaveProperty('tests/message.json');
       // Verification edits only the temporary workspace; the exported starter stays unfinished.
       expect(project.files['src/main.py']).toContain('return ""');
     },

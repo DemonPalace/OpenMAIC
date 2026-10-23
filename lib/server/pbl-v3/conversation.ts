@@ -3,6 +3,7 @@ import type { PersistedAgentSessionEvent } from '@openmaic/storage';
 import type { AgentRole } from '@/lib/pbl/v3/domain/project/project-schema';
 import type { LearningConversationEntry, LearningRunFailure } from '@/lib/pbl/v3/conversation';
 import { reviewQuestion } from './review-question';
+import { CONVERSATION_BYTES } from './conversation-history';
 
 /** Never send provider diagnostics, addresses or credentials to a learner. */
 export function learningRunFailure(error: unknown): LearningRunFailure {
@@ -38,6 +39,7 @@ const runEvents = new Set([
   'message_update',
   'message_end',
   'tool_execution_start',
+  'tool_execution_update',
   'tool_execution_end',
 ]);
 
@@ -46,59 +48,6 @@ function record(value: unknown): Record<string, unknown> {
     ? (value as Record<string, unknown>)
     : {};
 }
-/** Project files and operation results are visible; hashes, leases, protocol and raw errors are not. */
-function displayArgs(name: string, value: unknown): Record<string, string> | undefined {
-  const args = record(value),
-    output: Record<string, string> = {};
-  const fields =
-    name === 'manage_file'
-      ? ['action', 'path', 'destination', 'text']
-      : name === 'read_file'
-        ? ['path']
-        : name === 'write_file'
-          ? ['path', 'text']
-          : name === 'request_skill_review'
-            ? ['question']
-            : [];
-  for (const key of fields)
-    if (typeof args[key] === 'string') output[key] = args[key].slice(0, 64000);
-  return Object.keys(output).length ? output : undefined;
-}
-function displayResult(name: string, raw: unknown): string | undefined {
-  const content = record(raw).content;
-  if (!Array.isArray(content)) return;
-  for (const block of content) {
-    if (block?.type !== 'text' || typeof block.text !== 'string') continue;
-    let value: Record<string, unknown>;
-    try {
-      value = record(JSON.parse(block.text));
-    } catch {
-      continue;
-    }
-    if (name === 'read_file' && typeof value.text === 'string') return value.text.slice(0, 64000);
-    if (name === 'list_files' && Array.isArray(value.files))
-      return value.files
-        .filter((p): p is string => typeof p === 'string')
-        .join('\n')
-        .slice(0, 16000);
-    // Structured receipts only. Do not publish test drivers, teaching sections or provider diagnostics.
-    const fields =
-      name === 'write_file'
-        ? ['written', 'changed']
-        : name === 'manage_file'
-          ? ['action', 'path', 'destination', 'changed']
-          : name === 'run_build' || name === 'collect_build'
-            ? ['state', 'pending', 'passed', 'exitCode', 'output']
-            : name === 'read_next_skill'
-              ? ['section']
-              : [];
-    const result: Record<string, unknown> = {};
-    for (const key of fields)
-      if (['string', 'number', 'boolean'].includes(typeof value[key])) result[key] = value[key];
-    if (Object.keys(result).length) return JSON.stringify(result, null, 2);
-  }
-}
-
 /** Fold durable Pi snapshots in content order, sharing the host's presentation components. */
 export function projectConversation(
   events: PersistedAgentSessionEvent[],
@@ -144,6 +93,7 @@ export function projectConversation(
   };
   for (const event of events) {
     const data = record(event.data);
+    if (data.pblContentOmitted) getAssistant(event).omitted = true;
     if (event.type === 'pbl_stage_entered') {
       settle(event.ts);
       assistant = undefined;
@@ -223,7 +173,12 @@ export function projectConversation(
           if (block.type === 'text') settleThinking(event.ts);
           part =
             block.type === 'thinking'
-              ? { kind: 'thinking', id: `thinking-${event.id}-${index}`, text, startedAt: event.ts }
+              ? {
+                  kind: 'thinking',
+                  id: `thinking-${event.id}-${index}`,
+                  text,
+                  startedAt: event.ts,
+                }
               : { kind: 'text', id: `text-${event.id}-${index}`, text };
           blocks.set(index, part);
           getAssistant(event).parts.push(part);
@@ -238,11 +193,13 @@ export function projectConversation(
         blocks.clear();
       }
     }
-    if (event.type === 'tool_execution_start' || event.type === 'tool_execution_end') {
+    if (
+      ['tool_execution_start', 'tool_execution_update', 'tool_execution_end'].includes(event.type)
+    ) {
       settleThinking(event.ts);
       const name = String(data.toolName ?? '');
-      const action = visibleTools[name as keyof typeof visibleTools];
-      if (action && typeof data.toolCallId === 'string') {
+      const action = visibleTools[name as keyof typeof visibleTools] ?? 'tool';
+      if (name && typeof data.toolCallId === 'string') {
         let tool = tools.get(data.toolCallId);
         if (!tool) {
           tool = {
@@ -256,11 +213,33 @@ export function projectConversation(
           tools.set(data.toolCallId, tool);
           getAssistant(event).parts.push(tool);
         }
-        if (event.type === 'tool_execution_start') tool.args = displayArgs(name, data.args);
-        else {
+        if (data.pblContentOmitted) tool.omitted = true;
+        if (data.args !== undefined) tool.args = data.args;
+        if (event.type === 'tool_execution_update') {
+          tool.progress =
+            data.progress !== undefined
+              ? record(data.progress)
+              : { kind: 'custom', data: data.partialResult };
+        } else if (event.type === 'tool_execution_end') {
+          tool.result = data.result;
+          tool.display = data.display ?? record(data.result).details;
           tool.status = data.isError ? 'failed' : 'succeeded';
           tool.endedAt = event.ts;
-          if (!data.isError) tool.result = displayResult(name, data.result);
+          if (!data.isError) {
+            if (name === 'complete_stage') {
+              const content = record(data.result).content;
+              if (Array.isArray(content))
+                for (const block of content) {
+                  if (block?.type !== 'text') continue;
+                  try {
+                    if (JSON.parse(block.text).projectCompleted === true)
+                      tool.projectCompleted = true;
+                  } catch {
+                    /* Ignore malformed display content. */
+                  }
+                }
+            }
+          }
         }
       }
       const question = reviewQuestion(event);
@@ -284,15 +263,53 @@ export function projectConversation(
     const last = events.at(-1);
     getAssistant({ id: (last?.id ?? 0) + 1, ts: (last?.ts ?? 0) + 1 });
   }
-  return entries
-    .filter(
-      (e) =>
-        e.boundary ||
-        e.parts.length ||
-        e.status === 'running' ||
-        e.status === 'failed' ||
-        e.status === 'cancelled' ||
-        e.status === 'interrupted',
-    )
-    .slice(-60);
+  return boundConversation(
+    entries
+      .filter(
+        (e) =>
+          e.boundary ||
+          e.omitted ||
+          e.parts.length ||
+          e.status === 'running' ||
+          e.status === 'failed' ||
+          e.status === 'cancelled' ||
+          e.status === 'interrupted',
+      )
+      .slice(-60),
+  );
+}
+
+/** Keep recent content whole, including nested tool data; omit older payloads at the shared byte boundary. */
+export function boundConversation(
+  entries: LearningConversationEntry[],
+  budget = CONVERSATION_BYTES,
+) {
+  let remaining = budget;
+  for (const entry of entries.toReversed()) {
+    const kept: Part[] = [];
+    for (const part of entry.parts.toReversed()) {
+      const size = Buffer.byteLength(JSON.stringify(part));
+      if (size <= remaining) {
+        kept.push(part);
+        remaining -= size;
+      } else {
+        entry.omitted = true;
+        if (part.kind === 'tool') {
+          const summary = { ...part };
+          delete summary.args;
+          delete summary.result;
+          delete summary.display;
+          delete summary.progress;
+          summary.omitted = true;
+          const bytes = Buffer.byteLength(JSON.stringify(summary));
+          if (bytes <= remaining) {
+            kept.push(summary);
+            remaining -= bytes;
+          }
+        }
+      }
+    }
+    entry.parts = kept.reverse();
+  }
+  return entries;
 }

@@ -6,6 +6,7 @@ const reasonKeys: Record<SandboxErrorReason, string> = {
   ENVIRONMENT_BUSY: 'sandbox.errors.environmentBusy',
   ENVIRONMENT_CHANGED: 'sandbox.errors.environmentChanged',
   PROGRESS_CHANGED: 'sandbox.errors.progressChanged',
+  PBL_REPORT_PENDING: 'pblV3.reportCopy.waitFinal',
   WORKBENCH_ACCESS_DENIED: 'sandbox.errors.workbenchAccessDenied',
   WORKSPACE_FILE_CONFLICT: 'sandbox.errors.fileConflict',
   WORKSPACE_STOPPED: 'sandbox.errors.stopped',

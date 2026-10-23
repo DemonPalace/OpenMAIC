@@ -12,16 +12,19 @@ import {
   LoaderCircle,
 } from 'lucide-react';
 import { useTheme } from '@/lib/hooks/use-theme';
+import { hasEditorDraft, useStudyDraft } from './use-project-drafts';
 import { WorkbenchSplit } from './workbench-split';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useI18n } from '@/lib/hooks/use-i18n';
 import { useStageStore } from '@/lib/store/stage';
 import type { LearningView } from '@/lib/pbl/v3/types';
 import { LearningWorkbenchPanel } from './workbench-panel';
+import type { FileSaveReceipt } from './use-project-editor';
 import { LearningPanels } from './learning-panels';
 import { LearningConversation } from './conversation';
 import { WorkspaceFrame } from './workspace-frame';
 import { TestEvaluation } from './test-evaluation';
+import { PendingAction } from './pending-action';
 import { TaskDock } from './task-dock';
 import { ProductionContext } from './production-context';
 import { sandboxErrorMessage } from '@/lib/sandbox/error-message';
@@ -39,6 +42,7 @@ export async function pblRequest<T>(url: string, body?: unknown): Promise<T> {
       sandboxErrorMessage(data.error),
       response.status,
       data.error?.code,
+      data.error?.reason,
     );
   return data as T;
 }
@@ -49,15 +53,27 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
   const [view, setView] = useState<LearningView | null>(null),
     [error, setError] = useState(''),
     [pending, setPending] = useState(false);
-  const [showWorkspace, setShowWorkspace] = useState(true),
-    [showAssistant, setShowAssistant] = useState(true);
+  const storageError = useCallback(() => setError(t('pblV3.draftStorageUnavailable')), [t]);
+  const {
+    text,
+    setText,
+    quizAnswers,
+    setQuizAnswers,
+    showWorkspace,
+    setShowWorkspace,
+    showAssistant,
+    setShowAssistant,
+  } = useStudyDraft(view?.id, storageError);
+  const latestView = useRef(view);
+  latestView.current = view;
+  const [pendingAction, setPendingAction] = useState<string | null>(null);
+  const [pendingDecision, setPendingDecision] = useState<{ id: string; chosen: string } | null>(
+    null,
+  );
+  const [refreshing, setRefreshing] = useState(false);
+  const commandInFlight = useRef(false);
   const [sent, setSent] = useState(0);
-  const [text, setText] = useState('');
   const [dirtyFiles, setDirtyFiles] = useState(false);
-  const [quizAnswers, setQuizAnswers] = useState<{ key: string; values: number[] }>({
-    key: '',
-    values: [],
-  });
   const answerKey = `${view?.id}:${view?.state.position.milestoneId}:${view?.state.position.stageIndex}`;
   const answers = quizAnswers.key === answerKey ? quizAnswers.values : [];
   const retry = useRef<{
@@ -67,6 +83,14 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
     revision: number;
   } | null>(null);
   const updateView = useCallback((next: LearningView) => {
+    const prior = latestView.current;
+    if (
+      prior?.id === next.id &&
+      (prior.revision < next.revision ||
+        (prior.revision === next.revision &&
+          (prior.activitySequence ?? 0) <= (next.activitySequence ?? 0)))
+    )
+      latestView.current = next;
     // A delayed poll or command response cannot undo newer progress or replace another study.
     setView((current) =>
       current?.id === next.id &&
@@ -85,13 +109,21 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
   const open = useCallback(async () => {
     if (!stageId) return;
     setPending(true);
+    setPendingAction('open');
     setError('');
     try {
-      setView(await pblRequest<LearningView>('/api/pbl/v3', { action: 'open', stageId, sceneId }));
+      const opened = await pblRequest<LearningView>('/api/pbl/v3', {
+        action: 'open',
+        stageId,
+        sceneId,
+      });
+      setDirtyFiles(hasEditorDraft(opened.id));
+      setView(opened);
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setPending(false);
+      setPendingAction(null);
     }
   }, [stageId, sceneId]);
   useEffect(() => {
@@ -113,7 +145,8 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
   }, [view?.environmentId, view?.state.status, refresh]);
   const command = useCallback(
     async (type: string, payload: Record<string, unknown> = {}, repeat = false) => {
-      if (!view) return false;
+      if (!view || commandInFlight.current) return false;
+      commandInFlight.current = true;
       setPending(true);
       setError('');
       const request =
@@ -121,6 +154,12 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
           ? retry.current
           : { type, payload, id: crypto.randomUUID(), revision: view.revision };
       retry.current = request;
+      setPendingAction(request.type);
+      if (request.type === 'decide')
+        setPendingDecision({
+          id: String(request.payload.decisionId),
+          chosen: String(request.payload.chosen),
+        });
       if (type === 'chat' && !repeat) setSent((n) => n + 1);
       try {
         const result = await pblRequest<{ view: LearningView; result?: { stale?: boolean } }>(
@@ -142,15 +181,45 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
           setText((current) => (current === request.payload.text ? '' : current));
         return true;
       } catch (e) {
+        if (e instanceof SandboxRequestError && e.status === 409 && e.reason === 'PROGRESS_CHANGED')
+          retry.current = null;
         setError((e as Error).message);
         await refresh().catch(() => {});
         return false;
       } finally {
+        commandInFlight.current = false;
+        setPendingAction(null);
+        setPendingDecision(null);
         setPending(false);
       }
     },
-    [view, updateView, refresh, t],
+    [view, updateView, refresh, t, setText],
   );
+  const [preparationFailed, setPreparationFailed] = useState(false);
+  const preparationAttempt = useRef('');
+  const prepare = useCallback(
+    async (repeat = false) => {
+      setPreparationFailed(false);
+      if (!(await command('prepare', {}, repeat))) setPreparationFailed(true);
+    },
+    [command],
+  );
+  useEffect(() => {
+    if (
+      !view ||
+      pending ||
+      view.busy ||
+      view.environment?.ready ||
+      view.state.status === 'completed'
+    )
+      return;
+    const key = `${view.id}:${view.environmentId ?? 'new'}`;
+    if (preparationAttempt.current === key) return;
+    // One automatic attempt per observed environment on entry. Failed/uncertain
+    // preparation needs an explicit retry; the server retains allocation identity.
+    preparationAttempt.current = key;
+    void prepare();
+  }, [view, pending, prepare]);
   // Polling observes execution; a separate, idempotent command commits the verdict.
   // Collect terminal test runs automatically, including after refresh. A failed
   // collection offers a manual retry instead of an unbounded request loop.
@@ -218,6 +287,7 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
         <h2 className="min-w-0 flex-1 truncate text-sm font-semibold">
           {view?.title ?? t('pblV3.title')}
         </h2>
+        <PendingAction action={pendingAction ?? (refreshing ? 'refresh' : null)} />
         {view && (
           <>
             <LearningPanels key={view.id} view={view} />
@@ -254,12 +324,18 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
         )}
         <button
           className={button}
-          disabled={pending}
+          disabled={pending || refreshing}
+          aria-busy={refreshing}
           aria-label={t('pblV3.refresh')}
           title={t('pblV3.refresh')}
-          onClick={() => void (view ? refresh() : open()).catch((e) => setError(e.message))}
+          onClick={() => {
+            setRefreshing(true);
+            void (view ? refresh() : open())
+              .catch((e) => setError(e.message))
+              .finally(() => setRefreshing(false));
+          }}
         >
-          <RefreshCw size={14} />
+          <RefreshCw size={14} className={refreshing ? 'animate-spin' : undefined} />
         </button>
         <button
           className="rounded border p-1.5 aria-pressed:bg-primary aria-pressed:text-primary-foreground"
@@ -298,7 +374,7 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
           className="flex shrink-0 items-center gap-2 border-b bg-destructive/10 p-2 text-xs"
         >
           <p className="flex-1">{error}</p>
-          {retry.current && (
+          {retry.current && retry.current.type !== 'prepare' && (
             <button
               className={button}
               disabled={pending}
@@ -312,18 +388,27 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
       {!view && <p className="p-4">{t('pblV3.loading')}</p>}
       {view && (
         <>
-          {!view.environment?.ready && (
-            <div className="flex shrink-0 flex-wrap items-center gap-2 border-b bg-muted/30 px-3 py-2 text-xs">
+          {!view.environment?.ready && view.state.status !== 'completed' && (
+            <div
+              role="status"
+              data-testid="pbl-environment-setup"
+              className="flex shrink-0 flex-wrap items-center gap-2 border-b bg-muted/30 px-3 py-2 text-xs"
+            >
+              {!preparationFailed && (
+                <LoaderCircle size={14} className="animate-spin" aria-hidden="true" />
+              )}
               <p className="flex-1">
-                {t(view.environmentId ? 'pblV3.environmentUnavailable' : 'pblV3.environmentNotice')}
+                {t(preparationFailed ? 'pblV3.environmentUnavailable' : 'pblV3.environmentNotice')}
               </p>
-              <button
-                className={button}
-                disabled={pending || view.busy}
-                onClick={() => void command('prepare')}
-              >
-                {t('pblV3.prepare')}
-              </button>
+              {preparationFailed && (
+                <button
+                  className={button}
+                  disabled={pending || view.busy}
+                  onClick={() => void prepare(retry.current?.type === 'prepare')}
+                >
+                  {t('pblV3.prepare')}
+                </button>
+              )}
             </div>
           )}
           {view.recovery?.progressReset && (
@@ -342,22 +427,84 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
                 key={view.id}
                 view={view}
                 pending={pending}
+                pendingAction={pendingAction}
                 onDirtyChange={setDirtyFiles}
                 onRefresh={refresh}
-                onSave={(path, text, hash) => command('save', { path, text, expectedHash: hash })}
-                onCheckpoint={() => command('checkpoint')}
+                onSave={async (path, text, hash, request): Promise<FileSaveReceipt> => {
+                  // Autosave owns its request/receipt, independently of teaching-command retries.
+                  const digest = await crypto.subtle.digest(
+                    'SHA-256',
+                    new TextEncoder().encode(text),
+                  );
+                  const selected = latestView.current;
+                  if (
+                    !selected ||
+                    selected.id !== view.id ||
+                    selected.environmentId !== view.environmentId
+                  )
+                    throw new Error(t('pblV3.workbench.staleBuffer'));
+                  request.revision ??= selected.revision;
+                  let result: { view: LearningView };
+                  try {
+                    result = await pblRequest('/api/pbl/v3', {
+                      studyId: selected.id,
+                      command: {
+                        id: request.id,
+                        revision: request.revision,
+                        type: 'save',
+                        path,
+                        text,
+                        expectedHash: hash,
+                      },
+                    });
+                  } catch (error) {
+                    if (
+                      error instanceof SandboxRequestError &&
+                      error.status === 409 &&
+                      error.reason === 'PROGRESS_CHANGED'
+                    )
+                      await refresh().catch(() => {});
+                    throw error;
+                  }
+                  updateView(result.view);
+                  return {
+                    hash: Array.from(new Uint8Array(digest), (b) =>
+                      b.toString(16).padStart(2, '0'),
+                    ).join(''),
+                  };
+                }}
               >
                 {view.actions.includes('compile') && (
                   <button
                     className={button}
                     disabled={disabled || !!view.evaluation}
+                    aria-busy={pendingAction === 'compile'}
                     onClick={() => void command('compile')}
                   >
+                    {pendingAction === 'compile' && (
+                      <LoaderCircle size={13} className="animate-spin" aria-hidden="true" />
+                    )}
                     {t('pblV3.build')}
                   </button>
                 )}
                 {view.evaluation && view.stage.kind !== 'check' && (
                   <>
+                    {(['starting', 'running'].includes(view.evaluation.state) ||
+                      pendingAction === 'collect') && (
+                      <span
+                        role="status"
+                        aria-busy="true"
+                        data-testid="pbl-build-status"
+                        className="inline-flex items-center gap-1.5 text-xs text-muted-foreground"
+                      >
+                        <LoaderCircle size={13} className="animate-spin" aria-hidden="true" />
+                        {t(
+                          pendingAction === 'collect'
+                            ? 'pblV3.activity.collect'
+                            : 'pblV3.activity.build',
+                        )}
+                      </span>
+                    )}
                     <button
                       className={button}
                       disabled={disabled}
@@ -406,25 +553,27 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
                   )}
 
                 <div className="pbl-task-area flex min-h-0 flex-1 flex-col">
-                  <LearningConversation view={view} sent={sent} />
-                  {dirtyFiles && (
-                    <p
-                      role="status"
-                      className="border-t px-3 py-2 text-xs text-amber-700 dark:text-amber-300"
-                    >
-                      {t('pblV3.workbench.unsaved')}
-                    </p>
-                  )}
-                  <TaskDock
-                    key={`${view.id}:${view.state.introCompleted}:${view.state.position.milestoneIndex}:${view.state.position.stageIndex}`}
+                  <LearningConversation
                     view={view}
-                    working={testStage && !!view.evaluation && !resultUnavailable}
+                    sent={sent}
+                    requesting={['chat', 'begin', 'retry'].includes(pendingAction ?? '')}
+                  />
+                  <TaskDock
+                    key={`${view.id}:${view.state.position.milestoneIndex}:${view.state.position.stageIndex}`}
+                    view={view}
+                    working={
+                      testStage &&
+                      (pendingAction === 'evaluate' ||
+                        pendingAction === 'collect' ||
+                        (!!view.evaluation && !resultUnavailable))
+                    }
                     summary={
                       testStage ? (
                         <TestEvaluation
                           view={view}
                           mode="summary"
                           collectionFailed={resultUnavailable}
+                          pendingAction={pendingAction}
                         />
                       ) : undefined
                     }
@@ -456,15 +605,23 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
                             } else void command('evaluate');
                           }}
                         >
-                          {view.evaluation && !resultUnavailable && (
+                          {((view.evaluation && !resultUnavailable) ||
+                            pendingAction === 'evaluate' ||
+                            pendingAction === 'collect') && (
                             <LoaderCircle size={13} className="animate-spin" aria-hidden="true" />
                           )}
                           {t(
-                            resultUnavailable
-                              ? 'pblV3.testResult.retryCollect'
-                              : view.evaluation
-                                ? 'pblV3.testResult.running'
-                                : 'pblV3.runTests',
+                            pendingAction === 'evaluate'
+                              ? 'pblV3.testResult.running'
+                              : pendingAction === 'collect'
+                                ? 'pblV3.testResult.collecting'
+                                : resultUnavailable
+                                  ? 'pblV3.testResult.retryCollect'
+                                  : view.evaluation
+                                    ? view.evaluation.purpose === 'compile'
+                                      ? 'pblV3.build'
+                                      : 'pblV3.testResult.running'
+                                    : 'pblV3.runTests',
                           )}
                         </button>
                       ) : (
@@ -473,8 +630,12 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
                             className="pbl-stage-action inline-flex h-7 min-w-0 max-w-[220px] shrink-0 items-center justify-center truncate rounded-md border px-3 text-xs font-semibold transition-colors disabled:cursor-not-allowed"
                             data-state={disabled ? 'disabled' : 'ready'}
                             disabled={disabled}
+                            aria-busy={pendingAction === 'next'}
                             onClick={() => void command('next')}
                           >
+                            {pendingAction === 'next' && (
+                              <LoaderCircle size={13} className="mr-1 animate-spin" />
+                            )}
                             {view.milestones?.[view.state.position.milestoneIndex]?.stages[
                               view.state.position.stageIndex + 1
                             ]
@@ -490,16 +651,13 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
                     }
                   >
                     {view.stage.kind === 'produce' && <ProductionContext view={view} />}
-                    {view.stage.kind === 'produce' && view.stage.exploration && (
-                      <p className="mb-2 rounded border p-2">
-                        {view.stage.exploration.introduction}
-                      </p>
-                    )}
+
                     {testStage && (
                       <TestEvaluation
                         view={view}
                         mode="details"
                         collectionFailed={resultUnavailable}
+                        pendingAction={pendingAction}
                       />
                     )}
                     {view.decisions.map((decision) => (
@@ -510,11 +668,19 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
                             <button
                               key={option.id}
                               className={button}
-                              aria-pressed={view.state.collected[
-                                view.state.position.milestoneId ?? ''
-                              ]?.decisions.some(
-                                (d) => d.id === decision.id && d.chosen === option.id,
-                              )}
+                              aria-busy={
+                                pendingDecision?.id === decision.id &&
+                                pendingDecision.chosen === option.id
+                              }
+                              aria-pressed={
+                                pendingDecision?.id === decision.id
+                                  ? pendingDecision.chosen === option.id
+                                  : view.state.collected[
+                                      view.state.position.milestoneId ?? ''
+                                    ]?.decisions.some(
+                                      (d) => d.id === decision.id && d.chosen === option.id,
+                                    )
+                              }
                               disabled={disabled}
                               onClick={() =>
                                 void command('decide', {
@@ -537,6 +703,7 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
                             <input
                               type="radio"
                               name={`quiz-${index}`}
+                              disabled={pendingAction === 'quiz'}
                               checked={answers[index] === i}
                               onChange={() =>
                                 setQuizAnswers((previous) => {
@@ -563,9 +730,21 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
                     {view.actions.includes('quiz') && (
                       <button
                         className={button}
-                        disabled={disabled || answers.length !== view.questions.length}
+                        disabled={
+                          disabled ||
+                          view.questions.some(
+                            (question, index) =>
+                              !Number.isInteger(answers[index]) ||
+                              answers[index]! < 0 ||
+                              answers[index]! >= question.options.length,
+                          )
+                        }
+                        aria-busy={pendingAction === 'quiz'}
                         onClick={() => void command('quiz', { answers })}
                       >
+                        {pendingAction === 'quiz' && (
+                          <LoaderCircle size={13} className="mr-1 inline animate-spin" />
+                        )}
                         {t('pblV3.submitQuiz')}
                       </button>
                     )}
@@ -579,33 +758,33 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
                       if (!disabled && text.trim()) void command('chat', { text });
                     }}
                   >
-                    {blockedReason && (
-                      <div
-                        id={blockedId}
-                        role="status"
-                        data-testid="pbl-input-blocked"
-                        className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground"
-                      >
-                        <p className="min-w-0 flex-1">{t(`pblV3.inputBlocked.${blockedReason}`)}</p>
-                        {blockedReason === 'environment' && (
-                          <button
-                            type="button"
-                            className={button}
-                            onClick={() => void command('prepare')}
-                          >
-                            {t('pblV3.recoverEnvironment')}
-                          </button>
-                        )}
-                        {blockedReason === 'opening' && (
-                          <button
-                            type="button"
-                            className={button}
-                            onClick={() => void command('begin')}
-                          >
-                            {t('pblV3.retryOpening')}
-                          </button>
-                        )}
-                      </div>
+                    {blockedReason &&
+                      blockedReason !== 'unsaved' &&
+                      blockedReason !== 'pending' && (
+                        <div
+                          id={blockedId}
+                          role="status"
+                          data-testid="pbl-input-blocked"
+                          className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground"
+                        >
+                          <p className="min-w-0 flex-1">
+                            {t(`pblV3.inputBlocked.${blockedReason}`)}
+                          </p>
+                          {blockedReason === 'opening' && (
+                            <button
+                              type="button"
+                              className={button}
+                              onClick={() => void command('begin')}
+                            >
+                              {t('pblV3.retryOpening')}
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    {(blockedReason === 'unsaved' || blockedReason === 'pending') && (
+                      <span id={blockedId} className="sr-only">
+                        {t(`pblV3.inputBlocked.${blockedReason}`)}
+                      </span>
                     )}
                     <label className="sr-only" htmlFor={`pbl-chat-${sceneId}`}>
                       {t('pblV3.message')}
@@ -643,13 +822,18 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
                           <button
                             className="rounded-full bg-primary p-2 text-primary-foreground disabled:opacity-40"
                             aria-label={t('pblV3.send')}
+                            aria-busy={pendingAction === 'chat'}
                             disabled={disabled || !text.trim()}
                             title={
                               blockedReason ? t(`pblV3.inputBlocked.${blockedReason}`) : undefined
                             }
                             aria-describedby={blockedReason ? blockedId : undefined}
                           >
-                            <ArrowUp size={16} />
+                            {pendingAction === 'chat' ? (
+                              <LoaderCircle size={16} className="animate-spin" />
+                            ) : (
+                              <ArrowUp size={16} />
+                            )}
                           </button>
                         )}
                       </div>

@@ -265,7 +265,7 @@ export class LearningStore {
   private async events(db: PoolClient, id: string, transition: EngineTransition) {
     const first = transition.state.lastSequence - transition.events.length + 1;
     for (const [i, event] of transition.events.entries())
-      await db.query('INSERT INTO pbl_v3_events VALUES($1,$2,$3)', [
+      await db.query('INSERT INTO pbl_v3_events(study_id,sequence,event) VALUES($1,$2,$3)', [
         id,
         first + i,
         JSON.stringify(event),

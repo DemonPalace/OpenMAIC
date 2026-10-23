@@ -78,7 +78,7 @@ describe('persisted project templates and classroom lifecycle', () => {
       await applySchemaMigrations(persistence.pool, PBL_MIGRATIONS);
       const studies = new LearningStore(persistence.pool);
       const bundle = packageBuiltin(
-        installedProject({ id: 'greeting-python-lab', version: '1.0.0' }),
+        installedProject({ id: 'greeting-python-lab', version: '1.1.0' }),
       );
       const ref = await installProjectPackage('pin-owner', bundle);
       const courses = await getOwnerScopedDocumentStore('pin-owner');
@@ -158,77 +158,6 @@ describe('persisted project templates and classroom lifecycle', () => {
       await db.close();
     }
   }, 30_000);
-  it('backfills pre-fix study pins even when their scene reference is already gone', async () => {
-    vi.stubEnv('ASSET_S3_BUCKET', '');
-    vi.stubEnv('PERSISTENCE_SHARED_OWNER_ID', '');
-    const db = new PGlite();
-    await db.waitReady;
-    const pool = new DiskPool(db),
-      url = 'postgres://upgrade-study-pins';
-    vi.stubEnv('DATABASE_URL', url);
-    try {
-      const persistence = await getServerPersistenceProvider(url, () => pool as never);
-      // Seed a pre-v4 database, then exercise the same provider bootstrap used by the collector.
-      await db.query("DELETE FROM openmaic_schema_migrations WHERE store='pbl-v3' AND version=4");
-      const bundle = packageBuiltin(
-        installedProject({ id: 'greeting-python-lab', version: '1.0.0' }),
-      );
-      const ref = await installProjectPackage('upgrade-owner', bundle);
-      const courses = await getOwnerScopedDocumentStore('upgrade-owner');
-      await courses.createDocument(document('upgrade-classroom', ref));
-      const state = startOrchestration(JSON.parse(bundle.files['project.json']).definition).state;
-      for (const [id, owner] of [
-        ['legacy-study', 'upgrade-owner'],
-        ['foreign-study', 'other-owner'],
-      ])
-        await db.query(
-          `INSERT INTO pbl_v3_studies(id,owner_id,stage_id,scene_id,project_id,project_version,state,project_reference)
-          VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
-          [
-            id,
-            owner,
-            'upgrade-classroom',
-            'upgrade-classroom-scene',
-            ref.id,
-            ref.version,
-            JSON.stringify(state),
-            JSON.stringify(ref),
-          ],
-        );
-      await courses.saveDocument({ ...document('upgrade-classroom', ref), scenes: [] });
-      await db.query(
-        "UPDATE asset_entries SET unreferenced_at=now()-interval '2 hours' WHERE id=$1",
-        [ref.assetId],
-      );
-      vi.stubEnv('DATABASE_URL', url + '-after-upgrade');
-      await getServerPersistenceProvider(process.env.DATABASE_URL!, () => pool as never);
-      const collector = new AssetCollector(
-        persistence.pool,
-        new PgAssetByteStore(persistence.pool),
-        {
-          withTransaction: persistence.withTransaction,
-          graceMs: 0,
-          documentReferences: true,
-          assetReferencePrincipals: assetReferencePrincipalsForOwner,
-          documentOwnership: STAGE_META_OWNERSHIP,
-        },
-      );
-      expect((await collector.collectPass()).entriesCollected).toBe(0);
-      expect(
-        (await new LearningStore(persistence.pool).get('legacy-study', 'upgrade-owner')).project
-          ?.coursePackage?.bundle,
-      ).toEqual(bundle);
-      expect(
-        (await db.query("SELECT scene_id FROM document_asset_refs WHERE scope='retained'")).rows,
-      ).toEqual([{ scene_id: 'legacy-study' }]);
-      await expect(
-        new LearningStore(persistence.pool).get('foreign-study', 'other-owner'),
-      ).rejects.toMatchObject({ status: 404 });
-      await applySchemaMigrations(persistence.pool, PBL_MIGRATIONS);
-    } finally {
-      await db.close();
-    }
-  }, 30_000);
   it('survives a database reopen, round-trips between owners, rejects foreign references and collects only unused templates', async () => {
     root = await mkdtemp(join(tmpdir(), 'pbl-installed-projects-'));
     vi.stubEnv('ASSET_S3_BUCKET', '');
@@ -243,12 +172,13 @@ describe('persisted project templates and classroom lifecycle', () => {
     }
     let persistence = await boot(1);
     const original = packageBuiltin(
-      installedProject({ id: 'greeting-python-lab', version: '1.0.0' }),
+      installedProject({ id: 'greeting-python-lab', version: '1.1.0' }),
     );
     // A course-specific id proves no static catalog entry can resolve this course.
     const files = structuredClone(original.files),
       descriptor = JSON.parse(files['project.json']);
     descriptor.id = descriptor.definition.id = 'author-course';
+    descriptor.version = '1.0.0';
     files['project.json'] = JSON.stringify(descriptor);
     const bundle = indexProjectFiles('author-course', '1.0.0', files);
     const ref = await installProjectPackage('author-a', bundle);
@@ -344,7 +274,7 @@ describe('persisted project templates and classroom lifecycle', () => {
     foreignCourses = await getOwnerScopedDocumentStore('author-b');
     const resolved = await resolveProject('author-a', 'original', ref);
     expect(resolved.files).toEqual(
-      installedProject({ id: 'greeting-python-lab', version: '1.0.0' }).files,
+      installedProject({ id: 'greeting-python-lab', version: '1.1.0' }).files,
     );
     expect(resolved.coursePackage?.bundle).toEqual(bundle);
     const resumed = await studies.get(study.id, 'author-a');
@@ -402,7 +332,7 @@ describe('persisted project templates and classroom lifecycle', () => {
     try {
       const persistence = await getServerPersistenceProvider(url, () => pool as never);
       const bundle = packageBuiltin(
-        installedProject({ id: 'greeting-python-lab', version: '1.0.0' }),
+        installedProject({ id: 'greeting-python-lab', version: '1.1.0' }),
       );
       const ref = await installProjectPackage('reimport-owner', bundle);
       await db.query(

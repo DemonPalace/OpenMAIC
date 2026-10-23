@@ -7,6 +7,7 @@ export interface LearningView {
   id: string;
   revision: number;
   title: string;
+  reportAvailable: boolean;
   environmentId: string | null;
   environment: { state: import('@/lib/sandbox/types').SandboxState; ready: boolean } | null;
   recovery: { checkpointRevision: number; progressReset: boolean } | null;
@@ -30,5 +31,11 @@ export interface LearningView {
   decisions: { id: string; prompt: string; options: { id: string; label: string }[] }[];
   decisionSummary?: { id: string; prompt: string; choice: string }[];
   questions: { q: string; options: string[] }[];
-  evaluation: { id: string; state: string; stdout: string; stderr: string } | null;
+  evaluation: {
+    id: string;
+    state: string;
+    stdout: string;
+    stderr: string;
+    purpose?: 'compile';
+  } | null;
 }

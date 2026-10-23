@@ -5,7 +5,7 @@ on:
     branches: [main, integration/shared-sandbox]
   pull_request:
     branches:
-      [main, runtime-server-backend, feat/maic-editor-v0, feat/maic-editor-v1, integration/shared-sandbox, feat/pbl-v3-workspace-contract]
+      [main, runtime-server-backend, feat/maic-editor-v0, feat/maic-editor-v1, integration/shared-sandbox]
 
 concurrency:
   group: storage-pg-contract-${{ github.ref }}
@@ -75,8 +75,10 @@ jobs:
       # left off it skips everywhere, since no other job runs the app suites
       # against a database.
       - name: App-domain PostgreSQL contracts
+        # Suites open independent PG pools and may launch toolchains. Bound
+        # file-level fan-out; in-suite lock/race contracts remain concurrent.
         run: |
-          pnpm exec vitest run \
+          pnpm exec vitest run --maxWorkers=2 \
             tests/pbl/v3/runtime.pg.test.ts \
             tests/sandbox/checkpoint-schema.pg.test.ts \
             tests/sandbox/checkpoint-storage.pg.test.ts \

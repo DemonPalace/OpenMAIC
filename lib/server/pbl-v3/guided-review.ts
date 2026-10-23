@@ -17,6 +17,14 @@ export const guidedSkillStateSchema = z
     activeFile: z.string(),
     reviewedFiles: z.array(z.string()).max(16),
     pending: receiptSchema.optional(),
+    welcome: z.enum(['pending', 'ready']).optional(),
+    coverage: z
+      .object({
+        stageKey: z.string(),
+        artifactDigest: z.string(),
+        studentSeq: z.number().int().positive(),
+      })
+      .optional(),
   })
   .strict();
 export type GuidedSkillState = z.infer<typeof guidedSkillStateSchema>;
@@ -38,6 +46,7 @@ export class GuidedSkillReview {
   constructor(
     readonly protocol: StageSkillProtocol,
     restored?: GuidedSkillState,
+    projectWelcome = false,
   ) {
     const files = protocol.progression.slice(1);
     const index = restored ? files.indexOf(restored.activeFile) : -1;
@@ -46,10 +55,12 @@ export class GuidedSkillReview {
       restored.protocolDigest === protocol.digest &&
       index >= 0 &&
       JSON.stringify(restored.reviewedFiles) === JSON.stringify(files.slice(0, index)) &&
-      (!restored.pending || restored.pending.file === restored.activeFile);
+      (!restored.pending || restored.pending.file === restored.activeFile) &&
+      (!projectWelcome || restored.welcome !== undefined);
     this.state = valid
       ? structuredClone(restored!)
       : { protocolDigest: protocol.digest!, activeFile: '', reviewedFiles: [] };
+    if (projectWelcome) this.state.welcome = valid ? restored!.welcome : 'pending';
   }
 
   beginRun(
@@ -87,7 +98,7 @@ export class GuidedSkillReview {
   finishRun(): void {
     // A new part can reveal a design conflict that needs a student answer first.
     // Ending that clarification creates no review receipt: advance() and complete()
-    // still require a later real delivery and new student feedback.
+    // still require the needed real feedback, or already verified same-version coverage.
     this.ended = true;
   }
 
@@ -104,14 +115,50 @@ export class GuidedSkillReview {
     if (!feedback?.trim()) throw new Error('请说明学生回复如何回答了当前审查任务');
   }
 
-  advance(file: string, feedback: string | undefined, digest: string): void {
-    if (this.advanced || this.ended)
+  private assertCovered(feedback: string | undefined, digest: string): void {
+    const coverage = this.state.coverage;
+    if (
+      this.state.pending ||
+      !this.eligible ||
+      !coverage ||
+      coverage.stageKey !== this.stageKey ||
+      coverage.artifactDigest !== digest ||
+      !this.messages.some((message) => message.seq === coverage.studentSeq && message.text.trim())
+    )
+      throw new Error(
+        '只能沿用当前环节、当前版本已验证的真实学生回复；新问题和文件变化仍需重新确认',
+      );
+    if (!feedback?.trim()) throw new Error('请说明已有学生回复如何覆盖当前段的目标');
+  }
+
+  startTeaching(feedback: string | undefined, digest: string): void {
+    if (this.state.welcome !== 'pending' || this.advanced || this.ended)
+      throw new Error('项目导览尚未等待新的就绪回复');
+    this.assertFeedback(feedback, digest);
+    this.state.welcome = 'ready';
+    delete this.state.pending;
+    delete this.state.coverage; // Readiness is not evidence of conceptual understanding.
+    this.advanced = true;
+  }
+
+  advance(file: string, feedback: string | undefined, digest: string, reuseFeedback = false): void {
+    if ((this.advanced && !reuseFeedback) || this.ended)
       throw new Error('本轮只能展开一个内容部分；交付并等待学生反馈后再继续');
     const expected =
       this.protocol.progression[this.state.reviewedFiles.length + (this.state.activeFile ? 2 : 1)];
     if (file !== expected) throw new Error('不能跳过当前段或改变协议顺序');
     if (this.state.activeFile) {
-      this.assertFeedback(feedback, digest);
+      if (this.state.welcome === 'pending')
+        throw new Error('先完成项目导览并等待学生准备好，再开始第一段教学');
+      if (reuseFeedback) this.assertCovered(feedback, digest);
+      else {
+        this.assertFeedback(feedback, digest);
+        this.state.coverage = {
+          stageKey: this.stageKey,
+          artifactDigest: digest,
+          studentSeq: this.studentResponses().at(-1)!.seq,
+        };
+      }
       this.state.reviewedFiles.push(this.state.activeFile);
     }
     this.state.activeFile = file;
@@ -135,6 +182,7 @@ export class GuidedSkillReview {
   assertCompletable(): void {
     if (
       this.ended ||
+      this.state.welcome === 'pending' ||
       this.state.activeFile !== this.protocol.final ||
       JSON.stringify(this.state.reviewedFiles) !==
         JSON.stringify(this.protocol.progression.slice(1, -1))
@@ -142,17 +190,18 @@ export class GuidedSkillReview {
       throw new Error(
         '必须完成各段学生反馈和最终确认，不能以协议已读代替审查。' +
           'Use teachingContext and read_next_skill to deliver the unfinished section, ' +
-          'then request_skill_review and wait for its new student reply before completing.',
+          'then reuse verified same-version feedback if the goal is already covered; otherwise request_skill_review and wait for its real reply.',
       );
   }
 
-  assertComplete(feedback: string | undefined, digest: string): void {
+  assertComplete(feedback: string | undefined, digest: string, reuseFeedback = false): void {
     this.assertCompletable();
-    this.assertFeedback(feedback, digest);
+    if (reuseFeedback) this.assertCovered(feedback, digest);
+    else this.assertFeedback(feedback, digest);
   }
 
-  complete(feedback: string | undefined, digest: string): void {
-    this.assertComplete(feedback, digest);
+  complete(feedback: string | undefined, digest: string, reuseFeedback = false): void {
+    this.assertComplete(feedback, digest, reuseFeedback);
     this.ended = true;
   }
 }

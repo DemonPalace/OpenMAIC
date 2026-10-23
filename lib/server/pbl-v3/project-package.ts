@@ -109,9 +109,7 @@ function parseJson(text: string | undefined, name: string): unknown {
 export function projectStages(
   project: InstalledProject | { definition: ProjectDescriptor['definition'] },
 ) {
-  const result: { key: string; stage: StageDefinition }[] = [
-    { key: 'intro:-1', stage: project.definition.intro },
-  ];
+  const result: { key: string; stage: StageDefinition }[] = [];
   for (const milestone of project.definition.milestones)
     milestone.stages.forEach((stage, i) => result.push({ key: `${milestone.id}:${i}`, stage }));
   return result;
@@ -251,7 +249,12 @@ export function validateProjectPackage(input: unknown): {
     return bundle.files[name];
   };
   const privateBytes = names
-    .filter((name) => /^(tests|rubric)\//.test(name))
+    .filter(
+      (name) =>
+        /^tests\//.test(name) &&
+        !Object.values(config.runtime.evaluations).includes(name) &&
+        !config.definition.visibility.answerKeys.includes(name),
+    )
     .reduce((sum, name) => sum + Buffer.byteLength(bundle.files[name]), 0);
   if (privateBytes > 24 * 1024)
     return invalid('Evaluation resources exceed the supported 24 KiB budget.');
@@ -285,7 +288,12 @@ export function validateProjectPackage(input: unknown): {
     evaluations[milestone] = spec;
     const resources = Object.fromEntries(
       names
-        .filter((name) => /^(tests|rubric)\//.test(name))
+        .filter(
+          (name) =>
+            /^tests\//.test(name) &&
+            !Object.values(config.runtime.evaluations).includes(name) &&
+            !config.definition.visibility.answerKeys.includes(name),
+        )
         .map((name) => [name, bundle.files[name]]),
     );
     if (Buffer.byteLength(JSON.stringify({ ...spec, resources })) > 48 * 1024)
@@ -418,13 +426,8 @@ export function assertProjectPlanPromptBudget(project: InstalledProject, planTex
 /** Render all executable teaching contexts, including paths without a teaching binding. */
 function oversizedTeachingPrompt(project: InstalledProject, planText: string) {
   const definition = project.definition;
-  for (const [index, milestone] of definition.milestones.entries()) {
+  for (const milestone of definition.milestones) {
     const contexts = milestone.stages.map((stage, i) => ({ key: `${milestone.id}:${i}`, stage }));
-    if (index === 0)
-      contexts.push(
-        { key: 'intro:-1', stage: definition.intro },
-        ...definition.releaseOnboardings.map(({ intro }) => ({ key: 'intro:-1', stage: intro })),
-      );
     const collected = createCollectedMilestoneState();
     collected.decisions = milestone.decisions.map((id) => {
       const options = definition.decisions.find((decision) => decision.id === id)!.options;
@@ -455,9 +458,10 @@ function oversizedTeachingPrompt(project: InstalledProject, planText: string) {
               JSON.stringify({
                 build,
                 ...(!build ? { buildReason: 'build' } : {}),
-                checks: spec.cases.map(({ id }) => ({
+                checks: spec.cases.map(({ id, stdout }) => ({
                   id,
-                  passed,
+                  exitCode: passed ? 0 : build ? 1 : null,
+                  stdoutDigest: passed ? sha256(stdout) : null,
                   ...(!passed ? { reason: build ? 'execution' : 'not_run' } : {}),
                 })),
               }),
@@ -505,7 +509,7 @@ function oversizedTeachingPrompt(project: InstalledProject, planText: string) {
               }
             : null;
           const repairing = stage.kind === 'check' && role === 'coder';
-          if (repairing && collected.tests?.status !== 'failed') continue;
+          if (repairing && (!collected.tests || collected.tests.status === 'passed')) continue;
           collected.remediation =
             repairing && collected.tests
               ? createRemediationHint(collected.tests, {

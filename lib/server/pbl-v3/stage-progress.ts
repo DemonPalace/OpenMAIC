@@ -1,8 +1,13 @@
 import {
-  isExplorationStage,
   type StageDefinition,
+  type ProjectDefinition,
 } from '@/lib/pbl/v3/domain/project/project-schema';
 import type { Study, RoleBinding } from './store';
+
+/** Report access follows the final committed project recap. */
+export function canViewProjectReport(state: Study['state']): boolean {
+  return state.status === 'completed';
+}
 
 /** A completed review belongs to a stage and its evidence, not the latest chat message. */
 export function hasStageCompletion(
@@ -27,9 +32,7 @@ export function hasStageCompletion(
   return false;
 }
 
-/** Also recognizes older text-only runs, so upgrading does not leave a learner
- * with neither a Continue button nor a Retry action. No progress is granted.
- */
+/** Current-run failures without a teaching receipt remain retryable; no progress is granted. */
 export function succeededWithoutTeachingReceipt(
   row: Pick<Study, 'state'>,
   stage: StageDefinition,
@@ -42,8 +45,22 @@ export function succeededWithoutTeachingReceipt(
     status === 'succeeded' &&
     !!latestUserSeq &&
     binding?.stage_key === key &&
-    (stage.kind === 'mentor_say' || (stage.kind === 'produce' && !isExplorationStage(stage))) &&
+    (stage.kind === 'mentor_say' || stage.kind === 'produce') &&
     !hasStageCompletion(row, stage, binding) &&
     binding.guided?.pending?.runId !== `${key}:${latestUserSeq}`
+  );
+}
+
+/** Shared by tool completion and the teaching handoff; future release boundaries stay open. */
+export function isFinalProjectRecap(
+  project: ProjectDefinition,
+  position: { milestoneIndex: number; stageIndex: number },
+  stage: StageDefinition,
+): boolean {
+  return (
+    stage.kind === 'mentor_say' &&
+    stage.agent === 'mentor' &&
+    position.milestoneIndex === project.milestones.length - 1 &&
+    position.stageIndex === project.milestones[position.milestoneIndex]!.stages.length - 1
   );
 }

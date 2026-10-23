@@ -2,6 +2,13 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('server-only', () => ({}));
 import { projectConversation, learningRunFailure } from '@/lib/server/pbl-v3/conversation';
 import { stageSkill, interactionRules } from '@/lib/server/pbl-v3/skills';
+import { installedProject } from '@/lib/server/pbl-v3/catalog';
+import { renderTeachingPrompt, teachingSection } from '@/lib/server/pbl-v3/teaching-prompt';
+import { isFinalProjectRecap } from '@/lib/server/pbl-v3/stage-progress';
+import {
+  startOrchestration,
+  allowedStudentActions,
+} from '@/lib/pbl/v3/domain/orchestration/transition';
 import type { PersistedAgentSessionEvent } from '@openmaic/storage';
 import type { StageDefinition } from '@/lib/pbl/v3/domain/project/project-schema';
 
@@ -18,6 +25,77 @@ const message = (text: string) => ({
   },
 });
 describe('student conversation projection', () => {
+  it('bounds aggregate tool payloads in one turn while preserving the latest normal payload whole', () => {
+    const events: PersistedAgentSessionEvent[] = [];
+    const text = 'tool output '.repeat(4000);
+    for (let i = 0; i < 100; i++)
+      events.push(
+        event(i + 1, 'tool_execution_end', {
+          toolName: 'read_file',
+          toolCallId: `call-${i}`,
+          isError: false,
+          result: { content: [{ type: 'text', text }], details: { index: i } },
+        }),
+      );
+    const output = projectConversation(events, 'coder', false);
+    expect(Buffer.byteLength(JSON.stringify(output))).toBeLessThan(600000);
+    expect(output.some((e) => e.omitted)).toBe(true);
+    expect(output[0]!.parts.at(-1)).toMatchObject({
+      kind: 'tool',
+      status: 'succeeded',
+      result: { content: [{ type: 'text', text }], details: { index: 99 } },
+    });
+    expect(events[0].data).toHaveProperty('result.content.0.text', text);
+  });
+  it('keeps full long, nested payloads, progress and display for every emitted tool', () => {
+    const text = 'full-output\n'.repeat(7000);
+    const output = projectConversation(
+      [
+        event(1, 'tool_execution_start', {
+          toolName: 'new_course_tool',
+          toolCallId: 'x',
+          args: { count: 7, options: { enabled: true }, items: [1, 2], text },
+        }),
+        event(2, 'tool_execution_update', {
+          toolName: 'new_course_tool',
+          toolCallId: 'x',
+          partialResult: { content: [{ type: 'text', text: 'Halfway' }], details: { percent: 50 } },
+        }),
+        event(3, 'tool_execution_end', {
+          toolName: 'new_course_tool',
+          toolCallId: 'x',
+          isError: true,
+          result: { content: [{ type: 'text', text }], details: { display: 'Full display' } },
+        }),
+        event(4, 'session_end', { status: 'succeeded' }),
+      ],
+      'coder',
+      false,
+    );
+    const part = output[0]!.parts[0]!;
+    expect(part).toMatchObject({
+      action: 'tool',
+      name: 'new_course_tool',
+      status: 'failed',
+      args: { count: 7, options: { enabled: true }, items: [1, 2], text },
+      progress: { kind: 'custom', data: { details: { percent: 50 } } },
+      result: { content: [{ type: 'text', text }] },
+      display: { display: 'Full display' },
+    });
+    expect(
+      projectConversation(
+        [
+          event(1, 'tool_execution_update', {
+            toolName: 'run_build',
+            toolCallId: 'build',
+            progress: { kind: 'compile', text: 'Compiling', percent: 50, data: { files: 3 } },
+          }),
+        ],
+        'coder',
+        true,
+      )[0]!.parts[0],
+    ).toMatchObject({ progress: { text: 'Compiling', percent: 50, data: { files: 3 } } });
+  });
   it('distinguishes an unclosed review from model or provider failures', () => {
     expect(
       learningRunFailure(
@@ -153,7 +231,7 @@ describe('student conversation projection', () => {
     expect(output[2]?.speaker).toBe('user');
     expect(JSON.stringify(output)).not.toContain('System stage entry');
   });
-  it('updates a single text block and preserves tool order without revealing payloads', () => {
+  it('updates a single text block and preserves full tool output in order', () => {
     const history = [
       event(1, 'user_message', { text: 'Please explain' }),
       event(2, 'message_start', message('')),
@@ -184,9 +262,10 @@ describe('student conversation projection', () => {
     expect(output[1]!.parts.map((p) => p.kind)).toEqual(['text', 'tool', 'tool', 'text']);
     expect(output[1]!.parts[0]).toMatchObject({ text: 'Hello', streaming: false });
     expect(output[1]!.parts[3]).toMatchObject({ text: 'Done, now review', streaming: true });
-    expect(JSON.stringify(output)).not.toMatch(/PRIVATE|SECRET/);
+    expect(JSON.stringify(output)).toContain('PRIVATE OUTPUT');
+    expect(JSON.stringify(output)).toContain('SECRET PROTOCOL');
   });
-  it('streams real thinking before text, freezes duration and replays without duplicate blocks', () => {
+  it('preserves full thinking snapshots and duration in live and replay output', () => {
     const frame = (thinking: string, text = '') => ({
       message: {
         role: 'assistant',
@@ -218,6 +297,8 @@ describe('student conversation projection', () => {
     expect(replay[0]?.parts[0]).toMatchObject({ endedAt: 7, streaming: false });
     expect(replay[0]?.parts[1]).toMatchObject({ text: 'Explanation', streaming: false });
     expect(projectConversation(history, 'discussion', true)).toEqual(replay);
+    expect(replay[0]?.parts[0]).toMatchObject({ text: 'Consider the input and output.' });
+    expect(JSON.stringify(first)).toContain('Consider the input.');
   });
   it('shows one pre-content wait and separates cancellation/retry without animating history', () => {
     const history = [event(1, 'user_message', { text: 'Explain' }), event(2, 'session_start', {})];
@@ -237,7 +318,7 @@ describe('student conversation projection', () => {
     expect(replay.map((p) => p.status)).toEqual([undefined, 'cancelled', 'succeeded']);
     expect(JSON.stringify(replay)).not.toContain('SECRET');
   });
-  it('exposes project file details and skill activity without publishing control receipts or protocols', () => {
+  it('preserves full structured tool inputs, outputs and skill content', () => {
     const result = (value: unknown) => ({
       content: [{ type: 'text', text: JSON.stringify(value) }],
     });
@@ -270,13 +351,15 @@ describe('student conversation projection', () => {
     );
     expect(output[0]?.parts[0]).toMatchObject({
       name: 'read_file',
-      args: { path: 'src/main.py' },
-      result: 'print(1)',
+      args: { path: 'src/main.py', token: 'SECRET' },
+      result: result({ text: 'print(1)', hash: 'SECRET' }),
       startedAt: 1,
       endedAt: 2,
     });
     expect(output[0]?.parts[1]).toMatchObject({ name: 'read_next_skill', status: 'succeeded' });
-    expect(JSON.stringify(output)).not.toMatch(/SECRET|INTERNAL|PROTOCOL/);
+    expect(JSON.stringify(output)).toContain('SECRET');
+    expect(JSON.stringify(output)).toContain('INTERNAL');
+    expect(JSON.stringify(output)).toContain('PROTOCOL');
   });
   it('settles partial thinking and tool activity when the worker is interrupted', () => {
     const output = projectConversation(
@@ -315,7 +398,7 @@ describe('student conversation projection', () => {
     expect(output[0]!.parts[0]).toMatchObject({ status: 'interrupted' });
     expect(output[0]!.parts.at(-1)).toMatchObject({ text: 'Why this choice?' });
   });
-  it('does not conflate retry attempts or publish failed tool diagnostics', () => {
+  it('does not conflate retry attempts and preserves the failed tool result', () => {
     const output = projectConversation(
       [
         event(1, 'tool_execution_start', { toolName: 'read_file', toolCallId: 'x' }),
@@ -337,10 +420,95 @@ describe('student conversation projection', () => {
     expect(output).toHaveLength(2);
     expect(output[0]!.parts[0]).toMatchObject({ status: 'interrupted' });
     expect(output[1]!.parts[0]).toMatchObject({ status: 'failed' });
-    expect(JSON.stringify(output)).not.toContain('provider');
+    expect(output[1]!.parts[0]).toMatchObject({ result: { error: 'secret provider URL' } });
   });
 });
 describe('general teaching protocols', () => {
+  const definition = installedProject({ id: 'greeting-python-lab', version: '1.1.0' }).definition;
+  function prompt(milestoneIndex: number, stageIndex: number) {
+    const milestone = definition.milestones[milestoneIndex]!;
+    const stage = milestone.stages[stageIndex]!;
+    return renderTeachingPrompt({
+      definition,
+      milestone,
+      stage,
+      role: 'agent' in stage ? stage.agent : 'discussion',
+      stageKey: `${milestone.id}:${stageIndex}`,
+      packaged: false,
+      skill: { ...stageSkill(stage), documents: [] },
+      collected: startOrchestration(definition).state.collected[milestone.id]!,
+    }).systemPrompt;
+  }
+  it('withholds lesson material until first-project readiness and gives a concise formatted welcome contract', () => {
+    const milestone = structuredClone(definition.milestones[0]!);
+    const stage = milestone.stages[0]!;
+    const skill = {
+      ...stageSkill(stage),
+      documents: [{ path: 'lesson', text: 'LESSON_RESOURCE_SENTINEL' }],
+    };
+    const input = {
+      definition,
+      milestone,
+      stage,
+      role: 'discussion' as const,
+      stageKey: `${milestone.id}:0`,
+      packaged: false,
+      skill,
+      collected: startOrchestration(definition).state.collected[milestone.id]!,
+      welcome: 'pending' as const,
+    };
+    const pending = renderTeachingPrompt(input).systemPrompt;
+    expect(pending).toContain('three compact Markdown headings');
+    expect(pending).toContain('Do not teach concepts');
+    expect(pending).not.toContain('LESSON_RESOURCE_SENTINEL');
+    const opening = teachingSection(input, skill.progression[1]!);
+    expect(opening.referenceMaterials).toEqual([]);
+    expect(JSON.stringify(opening)).not.toContain('LESSON_RESOURCE_SENTINEL');
+    expect(
+      JSON.stringify(teachingSection({ ...input, welcome: 'ready' }, skill.progression[1]!)),
+    ).toContain('LESSON_RESOURCE_SENTINEL');
+    expect(renderTeachingPrompt(input).sectionBytes).toBeGreaterThan(0);
+  });
+  it('gives decision discussion neutral options and keeps a decision-free milestone immediately continuable', () => {
+    const noDecisions = structuredClone(definition);
+    noDecisions.milestones[0]!.decisions = [];
+    const { state } = startOrchestration(noDecisions);
+    state.position.stageIndex = 1;
+    expect(allowedStudentActions(noDecisions, state)).toContain('next');
+    const discussion = prompt(0, 1);
+    expect(discussion).toContain('trade-offs neutrally');
+    expect(discussion).toContain(
+      'Only a learner submission through the project controls records a decision',
+    );
+    expect(discussion).toContain('no offered decisions');
+    expect(discussion).not.toMatch(/rubricPreferences|answerKeys|correctOption/);
+  });
+  it('aligns the final recap handoff with the same project boundary used by complete_stage', () => {
+    const lastIndex = definition.milestones.length - 1;
+    expect(
+      isFinalProjectRecap(
+        definition,
+        { milestoneIndex: 0, stageIndex: 6 },
+        definition.milestones[0]!.stages[6]!,
+      ),
+    ).toBe(false);
+    expect(prompt(0, 6)).toContain(
+      'The learner uses the task bar above the chat input to enter the next step.',
+    );
+    expect(
+      isFinalProjectRecap(
+        definition,
+        { milestoneIndex: lastIndex, stageIndex: 6 },
+        definition.milestones[lastIndex]!.stages[6]!,
+      ),
+    ).toBe(true);
+    expect(prompt(lastIndex, 6)).toContain(
+      'The final recap complete_stage tool completes the project and reveals the report button.',
+    );
+    expect(prompt(lastIndex, 6)).not.toContain(
+      'The learner uses the task bar above the chat input to enter the next step.',
+    );
+  });
   it('does not mistake a named pre-decision skill for mentor reflection', () => {
     const skill = stageSkill({
       kind: 'mentor_say',

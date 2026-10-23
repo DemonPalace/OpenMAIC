@@ -13,11 +13,7 @@ import {
   type DesktopAction,
 } from '@/lib/sandbox/types';
 
-import {
-  assertWorkspaceMutation,
-  isLearningWorkspace,
-  type WorkspaceMutation,
-} from './managed-workspace';
+import { assertWorkspaceMutation, type WorkspaceMutation } from './managed-workspace';
 import { issuePreviewGrant, previewConfig, verifyPreviewGrant } from './preview';
 import { WORKSPACE_ROOT, workspacePath } from './workspace-archive';
 import { checkpointPolicy } from './checkpoint-policy';
@@ -299,8 +295,8 @@ export class SandboxService {
     );
   }
 
-  async reconcile(id: string) {
-    return this.reconcileResource(id, true);
+  async reconcile(id: string, prepareWorkspace = true) {
+    return this.reconcileResource(id, prepareWorkspace);
   }
 
   private async reconcileResource(id: string, prepareWorkspace: boolean) {
@@ -398,7 +394,10 @@ export class SandboxService {
     return this.store.exclusive(id, async () => {
       const current = await this.readText(id, path);
       if (createHash('sha256').update(current).digest('hex') !== expectedHash)
-        throw sandboxConflict('The file changed since it was read. Reload before saving.');
+        throw sandboxConflict(
+          'The file changed since it was read. Reload before saving.',
+          'WORKSPACE_FILE_CONFLICT',
+        );
       if (current === text) return false;
       // Durable evidence is invalidated under the same lock, before a possibly ambiguous write.
       await beforeWrite?.();
@@ -673,9 +672,17 @@ export class SandboxService {
     return { id: terminal.id, state: terminal.state };
   }
 
-  async updateTerminal(id: string, terminalId: string, body: Record<string, unknown>) {
+  async updateTerminal(
+    id: string,
+    terminalId: string,
+    body: Record<string, unknown>,
+    authorize?: () => Promise<void>,
+  ) {
     await this.mutation(id, 'terminal');
-    return this.store.exclusive(id, () => this.updateTerminalUnlocked(id, terminalId, body));
+    return this.store.exclusive(id, async () => {
+      await authorize?.();
+      return this.updateTerminalUnlocked(id, terminalId, body);
+    });
   }
 
   private async updateTerminalUnlocked(
@@ -841,7 +848,6 @@ export class SandboxService {
       environmentId: row.id,
       port: port as number,
       epoch: row.preview_epoch,
-      ...(isLearningWorkspace(row.workspace_id) ? { studyId: row.workspace_id.slice(4) } : {}),
     });
   }
 
@@ -857,10 +863,7 @@ export class SandboxService {
     const config = await resolvedSandboxConfig();
     const store = await SandboxStore.open();
     const row = await store.get(grant.ownerId, grant.environmentId);
-    if (grant.studyId && row.workspace_id === `pbl-${grant.studyId}`) {
-      const { authorizeLearningPreview } = await import('@/lib/server/pbl-v3/workbench');
-      await authorizeLearningPreview(grant.ownerId, grant.studyId, row.id, grant.port);
-    } else assertWorkspaceMutation(grant.ownerId, row.workspace_id, row.id, 'preview');
+    assertWorkspaceMutation(grant.ownerId, row.workspace_id, row.id, 'preview');
     if (
       row.state !== 'running' ||
       !row.workspace_ready ||

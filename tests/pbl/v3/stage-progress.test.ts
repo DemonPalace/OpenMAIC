@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 vi.mock('server-only', () => ({}));
 import { installedProject } from '@/lib/server/pbl-v3/catalog';
-import { hasStageCompletion } from '@/lib/server/pbl-v3/stage-progress';
+import { canViewProjectReport, hasStageCompletion } from '@/lib/server/pbl-v3/stage-progress';
 import { invalidateWorkspace } from '@/lib/server/pbl-v3/runtime';
 import {
   allowedStudentActions,
@@ -10,6 +10,20 @@ import {
 import type { Study } from '@/lib/server/pbl-v3/store';
 
 const project = installedProject({ id: 'greeting-python', version: '1.0.0' }).definition;
+
+describe('project report boundary', () => {
+  it('opens only after the final project completion, not a milestone or recap flag', () => {
+    const definition = installedProject({ id: 'greeting-python-lab', version: '1.1.0' }).definition;
+    const state = startOrchestration(definition).state;
+    expect(canViewProjectReport(state)).toBe(false);
+    for (const progress of state.milestones) progress.status = 'completed';
+    for (const collected of Object.values(state.collected)) collected.recapCompleted = true;
+    expect(canViewProjectReport(state)).toBe(false);
+    state.status = 'completed';
+    expect(canViewProjectReport(state)).toBe(true);
+  });
+});
+
 function completed(index: number) {
   const state = startOrchestration(project).state;
   state.position.stageIndex = index;

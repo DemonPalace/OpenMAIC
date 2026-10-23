@@ -16,7 +16,7 @@ export function createRemediationHint(
     .join('\n');
   return {
     id: input.id,
-    kind: 'implementation_repair',
+    kind: evaluation.status === 'error' ? 'evaluation_recovery' : 'implementation_repair',
     target: 'coder',
     reason: evaluation.failureKind ?? evaluation.status,
     attempt: input.attempt,

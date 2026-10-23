@@ -278,7 +278,13 @@ export function slimEventDataForLog(type: string, data: unknown): unknown {
  * chain; retaining that object would make an earlier frame serialize a later
  * state (or no reasoning at all).
  */
-export function snapshotEventDataForLog(type: string, data: unknown): unknown {
+export function snapshotEventDataForLog(
+  type: string,
+  data: unknown,
+  preserveToolProgress = false,
+): unknown {
+  // PBL replays the same full progress body its tool cards show while running.
+  if (preserveToolProgress && type === 'tool_execution_update') return structuredClone(data);
   const slimmed = slimEventDataForLog(type, data);
   if (!slimmed || typeof slimmed !== 'object' || Array.isArray(slimmed)) return slimmed;
   const source = slimmed as Record<string, unknown>;
@@ -1040,7 +1046,7 @@ export async function runSession(ctx: RunContext, meta: ClaimedAgentSession): Pr
   let thinkingEndEmitted = false;
 
   const appendEvent = (type: string, data: unknown, ts: number): void => {
-    const snapshot = snapshotEventDataForLog(type, data);
+    const snapshot = snapshotEventDataForLog(type, data, meta.id.startsWith('pbl-role-'));
     enqueue(async () => {
       const seq = await store.appendRunEvent(id, WORKER_ID, {
         ts,

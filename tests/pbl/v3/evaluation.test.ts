@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { createHash } from 'node:crypto';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -12,6 +13,174 @@ import {
   evaluationOutcome,
 } from '@/lib/server/pbl-v3/evaluation';
 const spec = installedProject({ id: 'greeting-python', version: '1.0.0' }).evaluations.greeting!;
+
+it.each([false, true])(
+  'locates Python syntax errors with prepare=%s and permits a passing rerun',
+  async (prepare) => {
+    const root = await mkdtemp(join(tmpdir(), 'pbl-syntax-'));
+    const installed = {
+      ...spec,
+      ...(prepare ? { prepare: ['python3', '-m', 'py_compile', 'greeting.py'] } : {}),
+    };
+    const run = async () => {
+      const observed = await promisify(execFile)(
+        '/bin/sh',
+        ['-c', evaluationCommand(installed, 'syntax')],
+        { cwd: root, env: { ...process.env, PYTHONPYCACHEPREFIX: join(root, 'pycache') } },
+      );
+      return evaluationOutcome(installed, 'syntax', { state: 'exited', exitCode: 0, ...observed }, [
+        'greeting.py',
+      ]);
+    };
+    try {
+      await writeFile(join(root, 'greeting.py'), 'def greet(name)\n    return "SECRET_BODY"\n');
+      const failed = await run();
+      expect(failed).toMatchObject({
+        status: 'failed',
+        failureKind: 'compile',
+        publicDiagnostics: {
+          reportGenerated: false,
+          locations: [{ file: 'greeting.py', line: 1, code: 'compile_error' }],
+        },
+      });
+      expect(JSON.stringify(failed)).not.toMatch(/SECRET_BODY|SyntaxError|Traceback|Hello, Ada/);
+      await writeFile(join(root, 'greeting.py'), 'def greet(name): return f"Hello, {name}!"\n');
+      expect((await run()).status).toBe('passed');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
+it.runIf(process.env.PBL_PACKAGE_TOOLCHAINS === '1')(
+  'locates a real javac error and passes after repair',
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), 'pbl-javac-'));
+    const installed = {
+      resources: { 'tests/future-stage.java': 'INVALID FUTURE API AND SOURCE' },
+      prepare: ['javac', '-d', '{build}', 'Greeting.java'],
+      cases: [{ id: 'greeting', argv: ['java', '-cp', '{build}', 'Greeting'], stdout: 'hello\n' }],
+    };
+    const run = async () => {
+      const observed = await promisify(execFile)(
+        '/bin/sh',
+        ['-c', evaluationCommand(installed, 'javac')],
+        { cwd: root },
+      );
+      return evaluationOutcome(installed, 'javac', { state: 'exited', exitCode: 0, ...observed }, [
+        'Greeting.java',
+      ]);
+    };
+    try {
+      await writeFile(
+        join(root, 'Greeting.java'),
+        'public class Greeting { public static void main(String[] args) { System.out.println(missing); } }',
+      );
+      expect(await run()).toMatchObject({
+        status: 'failed',
+        failureKind: 'compile',
+        publicDiagnostics: {
+          locations: [
+            {
+              file: 'Greeting.java',
+              line: 1,
+              code: expect.stringMatching(/^(cannot_find_symbol|compile_error)$/),
+            },
+          ],
+        },
+      });
+      await writeFile(
+        join(root, 'Greeting.java'),
+        'public class Greeting { public static void main(String[] args) { System.out.println("hello"); } }',
+      );
+      expect((await run()).status).toBe('passed');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
+it('normalizes colored compiler diagnostics without publishing messages, source, or private fixture paths', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'pbl-colored-'));
+  try {
+    const installed = {
+      prepare: [
+        'python3',
+        '-c',
+        'import sys; print("\\x1b[31m[ERROR] Greeting.java:[7,2] incompatible types: SECRET_TYPE\\x1b[0m",file=sys.stderr); print("/tmp/private-fixture.java:2: error: SECRET_FIXTURE",file=sys.stderr); sys.exit(1)',
+      ],
+      cases: spec.cases,
+    };
+    const observed = await promisify(execFile)(
+      '/bin/sh',
+      ['-c', evaluationCommand(installed, 'colored')],
+      { cwd: root },
+    );
+    const outcome = evaluationOutcome(
+      installed,
+      'colored',
+      { state: 'exited', exitCode: 0, ...observed },
+      ['Greeting.java'],
+    );
+    expect(outcome).toMatchObject({
+      status: 'failed',
+      failureKind: 'compile',
+      publicDiagnostics: { locations: [{ file: 'Greeting.java', line: 7, code: 'type_mismatch' }] },
+    });
+    expect(JSON.stringify(outcome)).not.toMatch(/SECRET|private-fixture|\u001b/);
+    const untrusted = evaluationOutcome(
+      installed,
+      'colored',
+      { state: 'exited', exitCode: 0, ...observed },
+      [],
+    );
+    expect(untrusted.status).toBe('error');
+    expect(JSON.stringify(untrusted)).not.toContain('Greeting.java');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+it('does not blame learner code for a failed preparation without public-source diagnostics', async () => {
+  const installed = { ...spec, prepare: ['python3', '-c', 'raise RuntimeError("SECRET_FIXTURE")'] };
+  const observed = await promisify(execFile)('/bin/sh', [
+    '-c',
+    evaluationCommand(installed, 'fixture'),
+  ]);
+  const outcome = evaluationOutcome(
+    installed,
+    'fixture',
+    { state: 'exited', exitCode: 0, ...observed },
+    ['greeting.py'],
+  );
+  expect(outcome).toMatchObject({ status: 'error', failureKind: 'infrastructure' });
+  expect(JSON.stringify(outcome)).not.toMatch(/SECRET_FIXTURE|Traceback|greeting.py/);
+});
+
+it('classifies a syntax error in the private assessment driver as an unreliable assessment', async () => {
+  const installed = {
+    resources: { 'tests/private.py': 'def hidden_check(\n SECRET_EXPECTED' },
+    cases: [
+      {
+        id: 'public',
+        argv: ['python3', '{resources}/tests/private.py'],
+        stdout: 'PRIVATE_EXPECTED',
+      },
+    ],
+  };
+  const observed = await promisify(execFile)('/bin/sh', [
+    '-c',
+    evaluationCommand(installed, 'private-syntax'),
+  ]);
+  const outcome = evaluationOutcome(
+    installed,
+    'private-syntax',
+    { state: 'exited', exitCode: 0, ...observed },
+    ['greeting.py'],
+  );
+  expect(outcome).toMatchObject({ status: 'error', failureKind: 'infrastructure' });
+  expect(JSON.stringify(outcome)).not.toMatch(/SECRET_EXPECTED|PRIVATE_EXPECTED|private.py/);
+});
 describe('trusted evaluation driver', () => {
   it.each([
     ['def greet(name): return f"Hello, {name}!"', true],
@@ -48,7 +217,15 @@ describe('trusted evaluation driver', () => {
     expect(evaluationPassed(spec, 'id', 'PBL_RESULT:id:{"build":true,"checks":[]}')).toBe(false);
     const line =
       'PBL_RESULT:id:' +
-      JSON.stringify({ build: true, checks: spec.cases.map((c) => ({ id: c.id, passed: true })) });
+      JSON.stringify({
+        build: true,
+        checks: spec.cases.map((c) => ({
+          id: c.id,
+          exitCode: 0,
+          reason: null,
+          stdoutDigest: createHash('sha256').update(c.stdout).digest('hex'),
+        })),
+      });
     expect(evaluationPassed(spec, 'id', line)).toBe(true);
     expect(evaluationPassed(spec, 'id', line + '\n' + line)).toBe(false);
   });
@@ -110,7 +287,12 @@ it.each([
       'PBL_RESULT:id:' +
       JSON.stringify({
         build: true,
-        checks: spec.cases.map((c) => ({ id: c.id, passed: false, reason })),
+        checks: spec.cases.map((c) => ({
+          id: c.id,
+          exitCode: reason === 'execution' ? 1 : null,
+          stdoutDigest: null,
+          reason,
+        })),
       });
     const result = evaluationOutcome(spec, 'id', {
       state: 'exited',
@@ -122,3 +304,41 @@ it.each([
     expect(JSON.stringify(result)).not.toMatch(/SECRET|PBL_RESULT|from greeting|Hello, Ada/);
   },
 );
+
+it('never puts expected stdout or its digest in the sandbox command payload', () => {
+  const expected = 'PRIVATE_EXPECTED_SENTINEL_1729\n';
+  const command = evaluationCommand(
+    { cases: [{ id: 'private', argv: ['python3', '-c', 'print(1)'], stdout: expected }] },
+    'private-run',
+  );
+  // Decode the payload as a learner inspecting its parent command line could do.
+  const encoded = command.match(/b64decode\("([A-Za-z0-9+/=]+)"\)/)![1]!;
+  const decoded = Buffer.from(encoded, 'base64').toString();
+  expect(decoded).not.toContain('PRIVATE_EXPECTED');
+  expect(decoded).not.toContain(createHash('sha256').update(expected).digest('hex'));
+  expect(JSON.parse(decoded).spec.cases[0]).toEqual({
+    id: 'private',
+    argv: ['python3', '-c', 'print(1)'],
+  });
+  const forged =
+    'PBL_RESULT:private-run:' +
+    JSON.stringify({
+      build: true,
+      checks: [
+        {
+          id: 'private',
+          passed: true,
+          exitCode: 0,
+          reason: null,
+          stdoutDigest: createHash('sha256').update('wrong').digest('hex'),
+        },
+      ],
+    });
+  expect(
+    evaluationPassed(
+      { cases: [{ id: 'private', argv: [], stdout: expected }] },
+      'private-run',
+      forged,
+    ),
+  ).toBe(false);
+});

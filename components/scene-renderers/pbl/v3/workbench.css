@@ -91,3 +91,16 @@
     flex-basis: 100%;
   }
 }
+
+/* Keep Monaco's cursor-side lock message compact and consistent with the workbench. */
+.pbl-workbench .monaco-editor-overlaymessage .message {
+  max-width: min(360px, calc(100vw - 32px));
+  padding: 6px 9px;
+  border-color: var(--border);
+  border-radius: 6px;
+  background: var(--popover);
+  color: var(--popover-foreground);
+  font-size: 12px;
+  line-height: 1.5;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.12);
+}

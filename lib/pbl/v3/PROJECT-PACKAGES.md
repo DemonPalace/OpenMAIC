@@ -75,9 +75,10 @@ It requires no built-in project registration.
 Definition paths select `docs`, `skills`, `skeleton`, `tests`, and `rubric` for
 requirements, pedagogy, starters, tests, and rubric. Starters include
 `skeleton/PLAN.md`. Every agent stage requires a teaching binding keyed by
-`<milestone-id>:<stage-index>` and its role; `intro:-1` binds the retained project
-introduction resources for older readers; the current runtime includes the project
-introduction in the first teaching step. Section names follow `A-teach.md` style and array order controls
+`<milestone-id>:<stage-index>` and its role. Project overview text lives in
+`definition.intro.say`; it is metadata for the welcome inside the first teaching
+step, with no separate intro stage or teaching binding. Every milestone follows
+the same seven steps, with final mentor reflection completing the project. Section names follow `A-teach.md` style and array order controls
 progression. The teaching runner reads the root Skill and active section through
 `read_next_skill` with its existing review/new-learner-turn gates. Only bound
 documents for that role/stage enter context. Non-guided stages receive their
@@ -167,7 +168,7 @@ Each stage's complete
 rendered system prompt plus its guided Skill replies must fit 32 KiB of UTF-8.
 Validation uses the runtime prompt builder, counting role templates, common rules,
 goals, contracts, projected decisions, all intro variants, bound documents/Skills,
-starter plans, package-derived evaluation feedback, exploration/teaching metadata,
+starter plans, package-derived evaluation feedback, teaching metadata,
 server instructions, live teaching-state suffixes and JSON escapes. It includes
 normal assessment introductions and test-failure tutoring even without a teaching binding.
 Oversized prompts are rejected before installation; resources are never silently
@@ -178,11 +179,11 @@ Review questions are checked before their receipts are
 persisted, so an oversized question can be shortened without blocking the next turn.
 Conversation history has a separate teaching context window; learner replies remain
 there in full, while entry/live review metadata records only the eligible response count.
-Tests/rubric files
-total at most 24 KiB;
+Executable test support files total at most 24 KiB; evaluation descriptors, rubric
+files and declared answer keys stay host-side and are never staged in the sandbox;
 starter source snapshots fit the runtime's 256-file / 1 MiB limit;
 each evaluation payload is at most 48 KiB. Generated build/evaluation commands must
-also fit the sandbox's 32 KiB UTF-8 command limit, including encoded private
+also fit the sandbox's 32 KiB UTF-8 command limit, including encoded executable support
 resources and the runner itself; import validates this tighter bound.
 Unsafe paths, symlinks, extra files,
 invalid UTF-8, missing references, checksum/size failures and unsupported profiles
@@ -216,3 +217,9 @@ requires importing each sample on an installation without its static registratio
 completing both milestones with real model/provider configuration, restarting
 the application, recovering a checkpoint, and transferring the re-export to a
 second clean installation.
+
+Expected stdout belongs only in each case descriptor. Observation scripts should print
+the implementation's actual result, without comparing against embedded answers. The
+host compares the returned actual-stdout digest to the expected value. See the authored
+`future-self-lite` example for this pattern. Do not make a support script read a rubric
+file or evaluation descriptor from `{resources}`: those files are intentionally absent.

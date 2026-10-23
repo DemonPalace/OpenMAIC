@@ -6,10 +6,9 @@ import { startOrchestration } from '@/lib/pbl/v3/domain/orchestration/transition
 import { digest } from '@/lib/server/pbl-v3/runtime';
 import type { Study, LearningStore } from '@/lib/server/pbl-v3/store';
 it('preserves a full approved plan even when report evidence is clipped', async () => {
-  const project = installedProject({ id: 'greeting-python-lab', version: '1.0.0' });
+  const project = installedProject({ id: 'greeting-python-lab', version: '1.1.0' });
   const state = startOrchestration(project.definition).state;
-  state.introCompleted = true;
-  state.position = { milestoneIndex: 1, milestoneId: 'normalize', stageIndex: 1 };
+  state.position = { milestoneIndex: 1, milestoneId: 'normalize', stageIndex: 2 };
   const text = 'Earlier approved section\n'.repeat(1000);
   state.collected.greeting!.plan = {
     id: 'plan',

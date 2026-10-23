@@ -1,4 +1,5 @@
 import 'server-only';
+import { recordLearningEvidence } from './evidence';
 import { assertProjectSource, projectFiles } from './workspace-files';
 import {
   learningWorkspaceId,
@@ -24,6 +25,7 @@ import {
   projectFor,
   readFiles,
   filesFingerprint,
+  saveStudyCheckpoint,
   invalidateWorkspace,
 } from './runtime';
 import { touchEnvironment, assertEnvironmentReady } from './environment';
@@ -38,10 +40,9 @@ import {
   type TeachingPromptInput,
 } from './teaching-prompt';
 import { PROJECT_LIMITS } from '@/lib/pbl/v3/package-policy';
-import { isExplorationStage } from '@/lib/pbl/v3/domain/project/project-schema';
 import { GuidedSkillReview } from './guided-review';
 import { currentTeachingContext, type TeachingHistoryWindow } from './teaching-context';
-import { hasStageCompletion } from './stage-progress';
+import { hasStageCompletion, isFinalProjectRecap } from './stage-progress';
 
 /** Reserved server-created IDs route to a real role binding; a missing binding fails closed. */
 export async function teachingRunnerConfig(input: {
@@ -72,7 +73,14 @@ export async function teachingRunnerConfig(input: {
     final: progression.at(-1)!,
     digest: digest(JSON.stringify([project.ref, bound.stage_key, progression, skill.content])),
   };
-  const review = new GuidedSkillReview(protocol, bound.guided ?? undefined);
+  const review = new GuidedSkillReview(
+    protocol,
+    bound.guided ?? undefined,
+    row.state.position.milestoneIndex === 0 &&
+      row.state.position.stageIndex === 0 &&
+      stage.kind === 'mentor_say' &&
+      stage.skill !== 'recap',
+  );
   const runId = `${bound.stage_key}:${latest?.seq ?? 0}`;
   review.beginRun(
     bound.stage_key,
@@ -80,8 +88,7 @@ export async function teachingRunnerConfig(input: {
     bound.feedback_seq > 1 && !latest?.pblOpening,
     latest?.seq ?? 0,
   );
-  const exploring = isExplorationStage(stage);
-  const guided = (stage.kind === 'produce' && !exploring) || stage.kind === 'mentor_say';
+  const guided = stage.kind === 'produce' || stage.kind === 'mentor_say';
   let completionRecorded = hasStageCompletion(row, stage, bound);
   let turnComplete =
     guided &&
@@ -126,7 +133,11 @@ export async function teachingRunnerConfig(input: {
       params: Static<T>,
       callId: string,
       signal: AbortSignal,
-    ) => Promise<{ value: unknown; transition?: EngineTransition }>,
+    ) => Promise<{
+      value: unknown;
+      transition?: EngineTransition;
+      evidence?: Record<string, unknown>;
+    }>,
   ) {
     return {
       name,
@@ -157,7 +168,9 @@ export async function teachingRunnerConfig(input: {
                   ? ['write']
                   : name === 'run_build'
                     ? ['command']
-                    : [],
+                    : name === 'complete_stage'
+                      ? ['checkpoint']
+                      : [],
             },
             () => execute(current, params, _id, signal),
           );
@@ -165,6 +178,14 @@ export async function teachingRunnerConfig(input: {
           await store.transaction(async (db) => {
             await agents.assertActiveLease(input.sessionId, input.workerId, input.attempt, db);
             assertActive(signal);
+            if (result.evidence)
+              await recordLearningEvidence(
+                db,
+                current,
+                bound.role,
+                name === 'write_file' || name === 'manage_file' ? 'file-edit' : 'artifact',
+                result.evidence,
+              );
             if (result.transition) await store.commit(db, current, result.transition);
             await db.query('UPDATE pbl_v3_roles SET guided=$2 WHERE session_id=$1', [
               input.sessionId,
@@ -232,6 +253,8 @@ export async function teachingRunnerConfig(input: {
           if (bound.role === 'planner' ? p.path !== 'PLAN.md' : p.path === 'PLAN.md')
             throw sandboxConflict('This role cannot write that file.');
           assertProjectSource(project, p.path);
+          if (current.evaluation)
+            throw sandboxConflict('Collect the running build or test before editing files.');
           if (guided) review.assertWritable();
           if (p.path === 'PLAN.md') await assertLearningPlan(store, current, p.text);
           const changed = await (
@@ -250,7 +273,12 @@ export async function teachingRunnerConfig(input: {
               Object.assign(current, invalid);
             },
           );
-          return { value: { written: true, changed, hash: digest(p.text) } };
+          return {
+            value: { written: true, changed, hash: digest(p.text) },
+            ...(changed
+              ? { evidence: { path: p.path, text: p.text, previousHash: p.expectedHash } }
+              : {}),
+          };
         },
       ),
     );
@@ -305,6 +333,8 @@ export async function teachingRunnerConfig(input: {
           expectedHash: Type.Optional(Type.String({ pattern: '^[a-f0-9]{64}$' })),
         }),
         async (current, p, _callId, signal) => {
+          if (current.evaluation)
+            throw sandboxConflict('Collect the running build or test before editing files.');
           if (guided) review.assertWritable();
           assertProjectSource(project, p.path);
           if (p.path === 'PLAN.md' || p.destination === 'PLAN.md')
@@ -327,7 +357,7 @@ export async function teachingRunnerConfig(input: {
             });
             Object.assign(current, invalid);
           });
-          return { value };
+          return { value, evidence: { ...p } };
         },
       ),
     );
@@ -335,28 +365,50 @@ export async function teachingRunnerConfig(input: {
     tools.push(
       tool(
         'read_next_skill',
-        'Read the current or next teaching section. Omit studentFeedback to reread; to advance, explain how the actual student responses answer the pending review. Quotes and summaries are allowed.',
-        Type.Object({ studentFeedback: Type.Optional(Type.String({ maxLength: 2000 })) }),
+        'Read the current or next teaching section. Omit studentFeedback to reread; to advance, explain how the actual student responses answer the pending review. Quotes and summaries are allowed. While welcome is pending, actual later readiness feedback starts A without advancing sections. Set reuseFeedback only when earlier verified learner replies already satisfy the current section; explain the coverage and do not ask again.',
+        Type.Object({
+          studentFeedback: Type.Optional(Type.String({ maxLength: 2000 })),
+          reuseFeedback: Type.Optional(Type.Boolean()),
+        }),
         async (current, p, _callId, signal) => {
           const reread = !!review.state.activeFile && !p.studentFeedback;
-          const next = reread
-            ? review.state.activeFile
-            : protocol.progression[
-                review.state.reviewedFiles.length + (review.state.activeFile ? 2 : 1)
-              ];
+          const startingTeaching =
+            review.state.welcome === 'pending' && !!review.state.activeFile && !!p.studentFeedback;
+          const next =
+            reread || startingTeaching
+              ? review.state.activeFile
+              : protocol.progression[
+                  review.state.reviewedFiles.length + (review.state.activeFile ? 2 : 1)
+                ];
           if (!next)
             throw sandboxConflict(
               'All sections are open; request final feedback and complete the review.',
             );
           // Opening/rereading trusted protocol content does not need a cloud
           // request. Only advancing past a delivered review validates files.
-          if (!reread)
+          if (startingTeaching)
+            review.startTeaching(p.studentFeedback, await fingerprint(current, signal));
+          else if (!reread)
             review.advance(
               next,
               p.studentFeedback,
               review.state.activeFile ? await fingerprint(current, signal) : digest('no-workspace'),
+              p.reuseFeedback,
             );
-          return { value: teachingSection({ skill, stage, milestone }, next) };
+          return {
+            value: teachingSection(
+              {
+                skill,
+                stage,
+                milestone,
+                definition: project.definition,
+                welcome: review.state.welcome,
+                welcomePresented:
+                  review.state.welcome === 'pending' ? !!review.state.pending : undefined,
+              },
+              next,
+            ),
+          };
         },
       ),
     );
@@ -386,17 +438,19 @@ export async function teachingRunnerConfig(input: {
     tools.push(
       tool(
         'complete_stage',
-        'Call only when teachingContext.activeSection equals finalSection and the learner has answered its recorded question. Otherwise use read_next_skill, deliver that section and request_skill_review first. Signal completion after the final student review. In studentFeedback, explain how the actual student responses answer the pending review; quotes and summaries are allowed. The server validates the current artifact; the student must still click Continue.',
-        Type.Object({ studentFeedback: Type.String({ minLength: 1, maxLength: 2000 }) }),
+        'Call only when teachingContext.activeSection equals finalSection and the learner has answered its recorded question. Otherwise use read_next_skill, deliver that section and request_skill_review first. When goals and any required current-version approval are already satisfied by verified learner replies, use reuseFeedback rather than repeat a question. Signal completion after the final student review. In studentFeedback, explain how the actual student responses answer the pending review; quotes and summaries are allowed. The server validates the current artifact. The final project recap finishes the project immediately; other stages wait for the student to click Continue.',
+        Type.Object({
+          studentFeedback: Type.String({ minLength: 1, maxLength: 2000 }),
+          reuseFeedback: Type.Optional(Type.Boolean()),
+        }),
         async (current, p, _callId, signal) => {
           // Reject an out-of-order model action before any remote file access.
           review.assertCompletable();
           const hash = await fingerprint(current, signal);
-          review.assertComplete(p.studentFeedback, hash);
+          review.assertComplete(p.studentFeedback, hash, p.reuseFeedback);
           await assertBuilt(store, current, hash);
           let transition: EngineTransition = { state: current.state, events: [] };
-          if (!current.state.introCompleted)
-            return { value: { readyForStudentConfirmation: true } };
+          let evidence: Record<string, unknown> | undefined;
           if (stage.kind === 'mentor_say') {
             if (stage.agent === 'discussion')
               transition = transitions.completeTeaching(project.definition, current.state);
@@ -430,6 +484,17 @@ export async function teachingRunnerConfig(input: {
                 );
               if (plan) current.state.collected[milestone.id]!.planReviewCompleted = true;
             }
+            const previous =
+              (
+                await store.pool.query<{ detail: { files: Record<string, string> } }>(
+                  "SELECT detail FROM pbl_v3_evidence WHERE study_id=$1 AND kind='artifact' AND detail->>'artifactKind'=$2 ORDER BY id DESC LIMIT 1",
+                  [current.id, stage.writes],
+                )
+              ).rows[0]?.detail.files ?? project.files;
+            const changedPaths = [
+              ...new Set([...Object.keys(previous), ...Object.keys(files)]),
+            ].filter((path) => path !== 'PLAN.md' && previous[path] !== files[path]);
+            evidence = { files, fingerprint: hash, artifactKind: stage.writes };
             const artifact = {
               id: randomUUID(),
               milestoneId: milestone.id,
@@ -449,7 +514,7 @@ export async function teachingRunnerConfig(input: {
                 : { ...artifact, kind: 'code', value: 'Reviewed sandbox files' },
               stage.writes === 'plan'
                 ? { evidence: { content: files['PLAN.md'] } }
-                : { evidence: { changedPaths: Object.keys(files).filter((p) => p !== 'PLAN.md') } },
+                : { evidence: { changedPaths } },
             );
             if (stage.reviewRequired) {
               const approved = transitions.completeArtifactReview(
@@ -463,7 +528,34 @@ export async function teachingRunnerConfig(input: {
               };
             }
           }
-          return { value: { readyForStudentConfirmation: true }, transition };
+          const finalRecap = isFinalProjectRecap(project.definition, current.state.position, stage);
+          if (finalRecap) {
+            evidence = {
+              files: await readFiles(
+                await service(signal),
+                current,
+                project,
+                signal,
+                input.onActivity,
+              ),
+              fingerprint: hash,
+              artifactKind: 'final',
+            };
+            await saveStudyCheckpoint(await service(signal), current);
+            const completed = transitions.completeCurrentStage(
+              project.definition,
+              transition.state,
+            );
+            transition = {
+              state: completed.state,
+              events: [...transition.events, ...completed.events],
+            };
+          }
+          return {
+            value: { readyForStudentConfirmation: !finalRecap, projectCompleted: finalRecap },
+            transition,
+            evidence,
+          };
         },
       ),
     );
@@ -489,6 +581,8 @@ export async function teachingRunnerConfig(input: {
   const currentPromptInput = (): TeachingPromptInput => ({
     ...promptInput,
     completionRecorded,
+    welcome: review.state.welcome,
+    welcomePresented: review.state.welcome === 'pending' ? !!review.state.pending : undefined,
     activeSection: review.state.activeFile,
     reviewedSectionCount: review.state.reviewedFiles.length,
     pendingReview: review.state.pending
@@ -612,6 +706,6 @@ export function prepareTeachingContinuation(agent: Agent): boolean {
   if (!removed || !messages.length) return false;
   agent.state.messages = messages;
   agent.state.systemPrompt +=
-    '\nRuntime continuation: your preceding text reply ended without a committed teaching receipt. Complete the unfinished work for the SAME real learner input using the authoritative live state. If the reply answers the current question, open the next section with read_next_skill; deliver it and record its focused question using request_skill_review. If clarification is still needed, record that question instead. Only after the final section has a real new answer may complete_stage commit completion. Do not claim a Continue button exists before that succeeds. Never invent a student response or repeat already demonstrated reasoning as a new quiz.';
+    '\nRuntime continuation: your preceding text reply ended without a committed teaching receipt. Complete the unfinished work for the SAME real learner input using the authoritative live state. If the reply answers the current question, open the next section with read_next_skill; read it before speaking and check whether earlier verified same-version learner replies already cover its goal. Use reuseFeedback to continue covered sections without another question; otherwise record its necessary question using request_skill_review and wait. While welcome is pending, only a real readiness reply may start the A lesson. After the final goal and any required current-version approval are satisfied by actual learner feedback, complete_stage may commit completion. Do not claim a Continue button exists before that succeeds. Never invent a student response or repeat already demonstrated reasoning as a new quiz.';
   return true;
 }
