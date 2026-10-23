@@ -51,7 +51,14 @@ Scene re-entry reloads durable study state. Dirty file tabs, the unsent reply, q
 choices and pane visibility are retained per study in tab-local browser storage;
 these drafts are not submitted learning records or durable checkpoints.
 
-V3 teaching uses low reasoning effort and no application-level turn duration,
+The project welcome and background/process questions before readiness disable
+thinking. Once the existing readiness tool opens formal teaching, all role requests
+use low effort, including later milestone openings, planning, coding, review and
+repair. The mode follows authoritative teaching state on each model request, so a
+readiness transition takes effect within the same turn; tools have no separate mode.
+Report analysis keeps thinking disabled, including on provider model aliases.
+
+V3 teaching has no application-level turn duration,
 inactivity, model-output-token or tool-call-count ceiling. Its tool wrapper retains
 explicit cancellation/lease-loss handling without a timer. Its model transport has
 no header/body deadline. A prose-only stop can continue until the actual review or

@@ -372,6 +372,7 @@ describe('runner: unbounded V3 teaching turns', () => {
       mocks.teachingRunnerConfig.mockResolvedValue({
         tools: [makeHungTool(captured, started)],
         systemPrompt: 'Teaching test',
+        thinkingConfig: () => ({ mode: 'enabled', effort: 'low', level: 'low' }),
         allowedToolNames: new Set([TOOL_NAME]),
         needsTurnReceipt: () => false,
         isTurnComplete: () => false,
@@ -418,6 +419,7 @@ describe('runner: unbounded V3 teaching turns', () => {
     mocks.teachingRunnerConfig.mockResolvedValue({
       tools: [],
       systemPrompt: 'Teaching test',
+      thinkingConfig: () => ({ mode: 'enabled', effort: 'low', level: 'low' }),
       allowedToolNames: new Set(),
       needsTurnReceipt: () => false,
       isTurnComplete: () => false,
@@ -449,6 +451,47 @@ describe('runner: unbounded V3 teaching turns', () => {
     expect(mocks.streamLLM.mock.calls[0]![2]).toMatchObject({ effort: 'low' });
     expect(JSON.stringify((await session.buildContext()).messages)).toContain(text);
   });
+  it('switches from disabled welcome to low after readiness and retains low across tools', async () => {
+    const meta = makeMeta({ id: 'pbl-role-readiness' }),
+      session = await makeEntryTree(),
+      store = makeStore(meta);
+    mocks.openEntryStorage.mockResolvedValue(session.getStorage());
+    mocks.getAgentSessionStore.mockResolvedValue(store);
+    let ready = false;
+    const tool = {
+      ...makeHungTool([]),
+      execute: vi.fn(async () => {
+        ready = true;
+        return { content: [{ type: 'text' as const, text: 'Teaching is open.' }], details: {} };
+      }),
+    };
+    mocks.teachingRunnerConfig.mockResolvedValue({
+      tools: [tool],
+      systemPrompt: 'Teaching test',
+      thinkingConfig: () =>
+        ready ? { mode: 'enabled', effort: 'low', level: 'low' } : { mode: 'disabled' },
+      allowedToolNames: new Set([TOOL_NAME]),
+      needsTurnReceipt: () => false,
+      isTurnComplete: () => false,
+    });
+    useResponses([
+      [toolCallPart(), finish('tool-calls')],
+      [{ ...toolCallPart(), toolCallId: 'call-2' }, finish('tool-calls')],
+      [{ type: 'text-delta', text: 'The lesson.' }, finish('stop')],
+    ]);
+    await runSession({ running: new Map(), shuttingDown: false }, meta);
+    expect(mocks.streamLLM.mock.calls.map((call) => call[2])).toEqual([
+      { mode: 'disabled' },
+      { mode: 'enabled', effort: 'low', level: 'low' },
+      { mode: 'enabled', effort: 'low', level: 'low' },
+    ]);
+    expect(tool.execute).toHaveBeenCalledTimes(2);
+    expect(store.finishSession).toHaveBeenCalledWith(
+      meta.id,
+      WORKER_ID,
+      expect.objectContaining({ status: 'succeeded' }),
+    );
+  });
   it('runs more than one hundred tool calls without a conversation quota', async () => {
     const meta = makeMeta({ id: 'pbl-role-many-tools' }),
       session = await makeEntryTree(),
@@ -465,6 +508,7 @@ describe('runner: unbounded V3 teaching turns', () => {
     mocks.teachingRunnerConfig.mockResolvedValue({
       tools: [tool],
       systemPrompt: 'Teaching test',
+      thinkingConfig: () => ({ mode: 'enabled', effort: 'low', level: 'low' }),
       allowedToolNames: new Set([TOOL_NAME]),
       needsTurnReceipt: () => false,
       isTurnComplete: () => false,

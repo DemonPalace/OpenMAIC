@@ -1814,11 +1814,16 @@ function getCompatThinkingBodyParams(
     };
   }
 
-  if (providerId === 'deepseek' && config.effort === 'low')
-    return {
-      params: { thinking: { type: 'enabled' }, reasoning_effort: 'low' },
-      disablesThinking: false,
-    };
+  // Explicit modes also apply to provider aliases absent from the local catalogue.
+  if (providerId === 'deepseek') {
+    if (mode === 'disabled' || config.effort === 'none')
+      return { params: { thinking: { type: 'disabled' } }, disablesThinking: true };
+    if (config.effort === 'low')
+      return {
+        params: { thinking: { type: 'enabled' }, reasoning_effort: 'low' },
+        disablesThinking: false,
+      };
+  }
   const capability = getCatalogThinkingCapability(providerId, modelId);
   if (!capability || capability.control === 'none') return undefined;
 

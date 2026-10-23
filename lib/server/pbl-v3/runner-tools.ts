@@ -42,6 +42,7 @@ import {
 import { GuidedSkillReview } from './guided-review';
 import { currentTeachingContext, type TeachingHistoryWindow } from './teaching-context';
 import { hasStageCompletion, isFinalProjectRecap } from './stage-progress';
+import type { ThinkingConfig } from '@/lib/types/provider';
 
 /** Reserved server-created IDs route to a real role binding; a missing binding fails closed. */
 export async function teachingRunnerConfig(input: {
@@ -586,6 +587,10 @@ export async function teachingRunnerConfig(input: {
   return {
     tools,
     systemPrompt,
+    thinkingConfig: (): ThinkingConfig =>
+      review.state.welcome === 'pending'
+        ? { mode: 'disabled' }
+        : { mode: 'enabled', effort: 'low', level: 'low' },
     allowedToolNames: new Set(tools.map((t) => t.name)),
     isTurnComplete: () => turnComplete,
     needsTurnReceipt: () => guided && !completionRecorded && !turnComplete,

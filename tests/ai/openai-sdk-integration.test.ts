@@ -5,6 +5,7 @@ import { z } from 'zod';
 
 import { resolveThinkingProviderOptions, streamLLM } from '@/lib/ai/llm';
 import { getModel, preservesReasoningForModel } from '@/lib/ai/providers';
+import type { ThinkingConfig } from '@/lib/types/provider';
 
 describe('OpenAI SDK integration', () => {
   it('carries the custom gateway toggle in and reasoning_content back out', async () => {
@@ -608,8 +609,8 @@ describe('OpenAI SDK integration', () => {
     });
   });
 
-  describe('DeepSeek effort none disables thinking on the wire', () => {
-    it('strips reasoning and sends no field when the wire disables thinking', async () => {
+  describe('DeepSeek disabled thinking on the wire', () => {
+    async function assertDisabledThinking(modelId: string, thinking: ThinkingConfig) {
       const requestBodies: Array<Record<string, unknown>> = [];
       const originalFetch = globalThis.fetch;
       globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
@@ -697,7 +698,7 @@ describe('OpenAI SDK integration', () => {
       try {
         const { model } = getModel({
           providerId: 'deepseek',
-          modelId: 'deepseek-v4-pro',
+          modelId,
           apiKey: 'sk-test',
         });
         const result = streamLLM(
@@ -715,12 +716,15 @@ describe('OpenAI SDK integration', () => {
             stopWhen: stepCountIs(2),
           },
           'test',
-          { effort: 'none' },
+          thinking,
         );
         await result.consumeStream();
 
         expect(requestBodies).toHaveLength(2);
-        expect(requestBodies[1]).toMatchObject({ thinking: { type: 'disabled' } });
+        for (const body of requestBodies) {
+          expect(body).toMatchObject({ thinking: { type: 'disabled' } });
+          expect(body.reasoning_effort).toBeUndefined();
+        }
         const assistant = (requestBodies[1]?.messages as Array<Record<string, unknown>>).find(
           (message) => message.role === 'assistant',
         );
@@ -729,7 +733,16 @@ describe('OpenAI SDK integration', () => {
       } finally {
         globalThis.fetch = originalFetch;
       }
-    });
+    }
+    it.each([
+      ['deepseek-v4-pro', { effort: 'none' }],
+      ['deepseek-chat', { mode: 'disabled' }],
+      ['deepseek-chat', { mode: 'disabled', effort: 'low' }],
+      ['deepseek-v4-pro', { mode: 'disabled', effort: 'low' }],
+    ] satisfies [string, ThinkingConfig][])(
+      'strips reasoning across tool results for %s with %j',
+      assertDisabledThinking,
+    );
   });
 
   describe('Kimi K3 disabled thinking', () => {

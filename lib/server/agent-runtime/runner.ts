@@ -1354,9 +1354,7 @@ export async function runSession(ctx: RunContext, meta: ClaimedAgentSession): Pr
       supportsToolImages: driver.connection.modelInfo?.capabilities?.vision,
       maxOutputTokens: teaching ? undefined : driver.wireMaxOutputTokens,
       omitMaxOutputTokens: !!teaching || driver.wireMaxOutputTokens === undefined,
-      thinkingConfig: teaching
-        ? { mode: 'enabled', effort: 'low', level: 'low' }
-        : driver.connection.thinkingConfig,
+      thinkingConfig: teaching ? teaching.thinkingConfig : driver.connection.thinkingConfig,
       unbounded: !!teaching,
       source: 'agent-runtime',
       abortSignal: abort.signal,

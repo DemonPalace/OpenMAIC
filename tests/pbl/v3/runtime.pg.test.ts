@@ -494,6 +494,7 @@ async function guided(role: 'teaching' | 'plan' | 'code') {
               ? { studentFeedback: 'The learner explicitly asks to begin teaching.' }
               : {}),
         });
+        expect(config.thinkingConfig()).toEqual({ mode: 'enabled', effort: 'low', level: 'low' });
         if (index === 0 && role !== 'teaching') {
           const path = role === 'plan' ? 'PLAN.md' : 'greeting.py';
           const service = await SandboxService.forOwner(principal),
@@ -1031,6 +1032,7 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
           attempt: claimed!.attempt,
           signal: new AbortController().signal,
         });
+        expect(config.thinkingConfig()).toEqual({ mode: 'disabled' });
         if (readFirst) {
           const welcome = JSON.stringify(await invoke(config, 'read_next_skill'));
           expect(welcome).toContain('Welcome only');
@@ -1053,6 +1055,7 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
         });
         expect((await store.binding(opening.sessionId))?.guided?.welcome).toBe('pending');
         await runTools('Will an Agent help with the implementation?', async (next) => {
+          expect(next.thinkingConfig()).toEqual({ mode: 'disabled' });
           expect(next.liveContext()).toContain('"welcomePresented":true');
           expect(JSON.stringify(await invoke(next, 'read_next_skill'))).toContain('Welcome only');
           await invoke(next, 'request_skill_review', {
@@ -1064,6 +1067,7 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
         expect(before.actions).not.toContain('next');
         expect((await store.binding(opening.sessionId))?.guided?.welcome).toBe('pending');
         await runTools('Ready, please begin the lesson.', async (next) => {
+          expect(next.thinkingConfig()).toEqual({ mode: 'disabled' });
           const lesson = JSON.stringify(
             await invoke(next, 'read_next_skill', {
               studentFeedback: 'The learner explicitly asks to begin.',
@@ -1071,6 +1075,7 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
           );
           expect(lesson).not.toContain('Welcome only');
           expect(next.liveContext()).toContain('"welcome":"ready"');
+          expect(next.thinkingConfig()).toEqual({ mode: 'enabled', effort: 'low', level: 'low' });
           expect(next.liveContext()).toContain('"activeSection":"A-teach.md"');
           await expect(
             invoke(next, 'read_next_skill', {
@@ -1083,6 +1088,7 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
         await runTools(
           'Return sends the value to the caller; printing does not. I also understand the consequences and am ready to continue.',
           async (next) => {
+            expect(next.thinkingConfig()).toEqual({ mode: 'enabled', effort: 'low', level: 'low' });
             await invoke(next, 'read_next_skill', {
               studentFeedback: 'The reply explains the concept and its consequences.',
             });

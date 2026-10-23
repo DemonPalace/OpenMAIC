@@ -151,7 +151,8 @@ export interface CallLlmStreamFnOptions {
    * hard max_tokens on the provider call.
    */
   omitMaxOutputTokens?: boolean;
-  thinkingConfig?: ThinkingConfig;
+  /** Resolve per model request so a validated teaching transition applies within the same turn. */
+  thinkingConfig?: ThinkingConfig | (() => ThinkingConfig);
   /** No application-level header/body deadline for this conversation. */
   unbounded?: boolean;
   source?: string;
@@ -422,7 +423,7 @@ async function pump(
         abortSignal: combinedAbort.signal,
       },
       opts.source ?? 'maic-agent',
-      opts.thinkingConfig,
+      typeof opts.thinkingConfig === 'function' ? opts.thinkingConfig() : opts.thinkingConfig,
     );
 
     for await (const part of result.fullStream as AsyncIterable<Record<string, unknown>>) {
