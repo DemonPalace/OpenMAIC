@@ -1528,6 +1528,21 @@ describe('patch_stage robustness', () => {
     expect(textOf(swapped)).toContain('carries id "act-2" of the action at index 1');
   });
 
+  it('rejects an appended action that reuses an existing id', async () => {
+    const current = richState();
+    const patch = tool(dslTools(current.store), 'patch_stage');
+    for (const path of ['/actions/1', '/actions/-']) {
+      const result = await patch.execute('dup-action', {
+        target: '/scenes/1',
+        intent: 'Add narration',
+        ops: [{ op: 'set', path, value: { id: 'act-1', type: 'speech', text: 'More' } }],
+      } as never);
+      expect(result).toMatchObject({ isError: true });
+      expect(textOf(result)).toContain('duplicate action ids "act-1"');
+    }
+    expect(current.putScene).not.toHaveBeenCalled();
+  });
+
   it('drops audio on speech actions with a new or missing id after a whole-array set', async () => {
     const current = richState();
     const patch = tool(dslTools(current.store), 'patch_stage');

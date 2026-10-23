@@ -1107,6 +1107,20 @@ export function buildDslCourseTools(deps: CourseToolDeps): AgentTool<never, neve
       }
       clearUnverifiedSpeechAudio(resolved.scene, next);
       assignMissingActionIds(next);
+      // Non-array actions are reported by the structure validation below.
+      const actionIds = (Array.isArray(next.actions) ? (next.actions as Array<Action | null>) : [])
+        .map((action) => action?.id)
+        .filter((id): id is string => typeof id === 'string');
+      const duplicateIds = [
+        ...new Set(actionIds.filter((id, index) => actionIds.indexOf(id) !== index)),
+      ];
+      if (duplicateIds.length > 0) {
+        return toolResult(
+          `patch_stage rejected after op ${params.ops.length}: duplicate action ids ${duplicateIds.map((id) => JSON.stringify(id)).join(', ')}; every action needs a unique id (omit id on a new action and the server assigns one)`,
+          { intent: params.intent, failedOp: params.ops.length },
+          true,
+        );
+      }
       // Each op is checked against the previous op's output; re-check the
       // final canvas against the BATCH START so an earlier op cannot launder
       // a violation into "pre-existing" data for a later one.
