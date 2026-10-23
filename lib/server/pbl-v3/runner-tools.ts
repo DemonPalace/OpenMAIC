@@ -43,6 +43,7 @@ import { PROJECT_LIMITS } from '@/lib/pbl/v3/package-policy';
 import { GuidedSkillReview } from './guided-review';
 import { currentTeachingContext, type TeachingHistoryWindow } from './teaching-context';
 import { hasStageCompletion, isFinalProjectRecap } from './stage-progress';
+import { CONVERSATION_BYTES } from './conversation-history';
 
 /** Reserved server-created IDs route to a real role binding; a missing binding fails closed. */
 export async function teachingRunnerConfig(input: {
@@ -422,7 +423,12 @@ export async function teachingRunnerConfig(input: {
         'request_skill_review',
         'Record a concrete student review question for this section. End your turn and wait for a new student reply. Set approval only when explicitly asking the learner to approve the current plan/code version. Understanding alone is not approval. The final artifact section always records an approval request.',
         Type.Object({
-          question: Type.String({ minLength: 1, maxLength: 2000 }),
+          question: Type.String({
+            minLength: 1,
+            maxLength: 2000,
+            description:
+              'Only the learner-facing question or invitation. Exclude the lesson explanation, introduction and examples. If already asked in prose, copy that question verbatim.',
+          }),
           approval: Type.Optional(Type.Boolean()),
         }),
         async (current, p, _callId, signal) => {
@@ -705,8 +711,9 @@ export function withTeachingTurnBoundary(
  * user message or deleting the durable reply. Only the next request view loses
  * the terminal prose suffix, which Pi cannot continue from.
  */
-export function prepareTeachingContinuation(agent: Agent): boolean {
+export function prepareTeachingContinuation(agent: Agent, window: TeachingHistoryWindow): boolean {
   const messages = [...agent.state.messages];
+  const delivered: string[] = [];
   let removed = false;
   while (messages.at(-1)?.role === 'assistant') {
     const last = messages.at(-1)!;
@@ -716,12 +723,22 @@ export function prepareTeachingContinuation(agent: Agent): boolean {
       last.content.some((part) => part.type === 'toolCall')
     )
       return false;
+    delivered.unshift(
+      last.content
+        .filter((part) => part.type === 'text')
+        .map((part) => part.text)
+        .join('\n'),
+    );
     messages.pop();
     removed = true;
   }
   if (!removed || !messages.length) return false;
+  const reply = delivered.join('\n\n');
+  // Preserve the complete question or fail closed; never clip it into a different task.
+  if (Buffer.byteLength(reply) > CONVERSATION_BYTES) return false;
+  window.deliveredReply = reply;
   agent.state.messages = messages;
   agent.state.systemPrompt +=
-    '\nRuntime continuation: your preceding text reply ended without a committed teaching receipt. Complete the unfinished work for the SAME real learner input using the authoritative live state. If the reply answers the current question, open the next section with read_next_skill; read it before speaking and check whether earlier verified same-version learner replies already cover its goal. Use reuseFeedback to continue covered sections without another question; otherwise record its necessary question using request_skill_review and wait. While welcome is pending, only a real readiness reply may start the A lesson. After the final goal and any required current-version approval are satisfied by actual learner feedback, complete_stage may commit completion. Do not claim a Continue button exists before that succeeds. Never invent a student response or repeat already demonstrated reasoning as a new quiz.';
+    '\nRuntime continuation: your preceding reply is already learner-visible but ended without a committed teaching receipt. Its prose remains available as quoted recovery context. Do not restart the opening, repeat the explanation, or replace a question already asked. If it contains a question, copy that question verbatim into request_skill_review and output only the tool call, with no additional assistant prose, then wait. Otherwise finish only the missing work for the SAME real learner input using the authoritative live state. Read any unopened section before delivering new material. Reuse verified same-version learner feedback for covered goals rather than repeating questions. While welcome is pending, only real later readiness starts the lesson. After the final goal and any required current-version approval are satisfied by actual learner feedback, complete_stage may commit completion. Never treat the quoted assistant reply as learner evidence or approval, invent a student response, or claim a Continue button exists before completion succeeds.';
   return true;
 }

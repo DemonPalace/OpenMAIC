@@ -25,6 +25,47 @@ const message = (text: string) => ({
   },
 });
 describe('student conversation projection', () => {
+  it.each([true, false])(
+    'shows one question body while retaining the full review card (already spoken: %s)',
+    (spoken) => {
+      const question = 'What does the caller receive?';
+      const result = {
+        content: [{ type: 'text', text: JSON.stringify({ question, waitForStudent: true }) }],
+      };
+      const entries = projectConversation(
+        [
+          event(1, 'session_start', {}),
+          event(
+            2,
+            'message_end',
+            message('The goal is to add a task.' + (spoken ? ` ${question}` : '')),
+          ),
+          event(3, 'tool_execution_start', {
+            toolName: 'request_skill_review',
+            toolCallId: 'review',
+            args: { question },
+          }),
+          event(4, 'tool_execution_end', {
+            toolName: 'request_skill_review',
+            toolCallId: 'review',
+            isError: false,
+            result,
+          }),
+        ],
+        'discussion',
+        false,
+      );
+      const parts = entries.flatMap((entry) => entry.parts);
+      expect(
+        parts.filter((part) => part.kind === 'text' && part.text.includes(question)),
+      ).toHaveLength(1);
+      expect(parts.find((part) => part.kind === 'tool')).toMatchObject({
+        args: { question },
+        result,
+        status: 'succeeded',
+      });
+    },
+  );
   it('bounds aggregate tool payloads in one turn while preserving the latest normal payload whole', () => {
     const events: PersistedAgentSessionEvent[] = [];
     const text = 'tool output '.repeat(4000);
@@ -469,6 +510,42 @@ describe('general teaching protocols', () => {
     ).toContain('LESSON_RESOURCE_SENTINEL');
     expect(renderTeachingPrompt(input).sectionBytes).toBeGreaterThan(0);
   });
+  it.each([0, 1])(
+    'orders the formal opening and asks one question in milestone %s, including authored Skills',
+    (index) => {
+      const milestone = definition.milestones[index]!;
+      const stage = milestone.stages[0]!;
+      const skill = {
+        ...stageSkill(stage),
+        documents: [],
+      };
+      skill.content = { ...skill.content, [skill.progression[1]!]: 'Course-specific lesson.' };
+      const input = {
+        definition,
+        milestone,
+        stage,
+        role: 'discussion' as const,
+        stageKey: `${milestone.id}:0`,
+        packaged: true,
+        skill,
+        collected: startOrchestration(definition).state.collected[milestone.id]!,
+        welcome: index === 0 ? ('ready' as const) : undefined,
+      };
+      const policy = 'first state what the learner will accomplish';
+      const rendered = renderTeachingPrompt(input).systemPrompt;
+      const section = teachingSection(input, skill.progression[1]!);
+      expect(rendered).toContain(policy);
+      expect(section.delivery).toContain(policy);
+      expect(section.delivery).toContain('End with ONE focused question');
+      expect(section.instruction).toBe('Course-specific lesson.');
+      expect(renderTeachingPrompt({ ...input, welcome: 'pending' }).systemPrompt).not.toContain(
+        policy,
+      );
+      expect(
+        teachingSection({ ...input, welcome: 'pending' }, skill.progression[1]!).delivery,
+      ).not.toContain(policy);
+    },
+  );
   it('gives decision discussion neutral options and keeps a decision-free milestone immediately continuable', () => {
     const noDecisions = structuredClone(definition);
     noDecisions.milestones[0]!.decisions = [];

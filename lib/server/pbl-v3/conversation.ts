@@ -243,7 +243,12 @@ export function projectConversation(
         }
       }
       const question = reviewQuestion(event);
-      if (question)
+      if (
+        question &&
+        !getAssistant(event).parts.some(
+          (part) => part.kind === 'text' && part.text.includes(question),
+        )
+      )
         getAssistant(event).parts.push({
           kind: 'text',
           id: `question-${event.id}`,

@@ -1813,7 +1813,7 @@ export async function runSession(ctx: RunContext, meta: ClaimedAgentSession): Pr
       )
         return false;
       const { prepareTeachingContinuation } = await import('@/lib/server/pbl-v3/runner-tools');
-      if (!prepareTeachingContinuation(agent)) return false;
+      if (!prepareTeachingContinuation(agent, teaching.historyWindow)) return false;
       teachingContinuationUsed = true;
       return true;
     };

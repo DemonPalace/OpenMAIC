@@ -16,6 +16,7 @@ import {
   assessmentRules,
   decisionRules,
   projectWelcomeRules,
+  stageOpeningRules,
 } from './skills';
 
 export interface TeachingSkill {
@@ -80,6 +81,11 @@ export function teachingSection(
     ...(section === skill.progression[1] ? { teaching: milestone.teaching } : {}),
     referenceMaterials: skill.documents,
     delivery:
+      (stage.kind === 'mentor_say' &&
+      stage.agent === 'discussion' &&
+      section === skill.progression[1]
+        ? stageOpeningRules + '\n'
+        : '') +
       'Platform pacing policy takes precedence over any course instruction to repeat a covered question. Check earlier learner replies before asking. If this section is already satisfied by verified same-version feedback, use reuseFeedback with a concrete explanation to continue without another question. Otherwise record one necessary question with request_skill_review and wait for a real reply. Explicit confident understanding is sufficient absent unresolved errors; never invent learner feedback.',
     goal: milestone.goal ?? milestone.title,
     stage: stage.kind === 'mentor_say' ? stage.say : stage.kind === 'produce' ? stage.writes : '',
@@ -247,6 +253,9 @@ function buildTeachingPrompt({
     teachingRules +
     (stage.kind === 'check' ? assessmentRules : interactionRules) +
     (welcome === 'pending' ? '\n' + projectWelcomeRules : '') +
+    (welcome !== 'pending' && stage.kind === 'mentor_say' && stage.agent === 'discussion'
+      ? '\n' + stageOpeningRules
+      : '') +
     (stage.kind === 'dialogue' ? '\n' + decisionRules : '') +
     (completionRecorded
       ? '\nThe current stage is ALREADY complete for the recorded evidence. Answer any follow-up directly. Do not restart teaching, invent a new required question, or require complete_stage again just because the learner sent another message. Actual artifact changes invalidate the affected review and require reviewing that new version before completion.'
