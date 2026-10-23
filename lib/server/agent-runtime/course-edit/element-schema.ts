@@ -894,11 +894,12 @@ export function validateSlideCanvas(canvas: unknown, previous?: Slide): string[]
 }
 
 /**
- * Index-free identity of an issue inside `root`: every array index on the way
- * to the offending value is replaced by the item's `id` (when it has one) or
- * by the item's full JSON, and the offending value's own JSON is included. Two
- * issues share a key only when they sit on the same (or a deep-equal) item and
- * the offending value itself is unchanged.
+ * Index-free identity of an issue inside `root`. The offending value is
+ * anchored to the INNERMOST array item containing it — identified by its `id`
+ * when it has one, otherwise by its own JSON — plus the property path inside
+ * that item, and the offending value's own JSON. Ancestor arrays contribute
+ * nothing, so shifts at any nesting level keep an old issue matched, while a
+ * new item or a changed offending value never shares a key with an old issue.
  */
 function issueKey(root: unknown, issue: SchemaIssue): string {
   const tokens = issue.location
@@ -906,22 +907,22 @@ function issueKey(root: unknown, issue: SchemaIssue): string {
     .slice(1)
     .map((token) => token.replace(/~1/g, '/').replace(/~0/g, '~'));
   let node: unknown = root;
-  const parts: string[] = [];
+  let anchor = '';
+  let parts: string[] = [];
   for (const token of tokens) {
     if (Array.isArray(node)) {
       const item: unknown = node[Number(token)];
       const id = (item as { id?: unknown } | null)?.id;
-      parts.push(typeof id === 'string' ? `#${id}` : `=${JSON.stringify(item)}`);
+      anchor = typeof id === 'string' ? `#${id}` : `=${JSON.stringify(item)}`;
+      parts = [];
       node = item;
-    } else if (node && typeof node === 'object') {
-      parts.push(encodeToken(token));
-      node = (node as Record<string, unknown>)[token];
     } else {
       parts.push(encodeToken(token));
-      node = undefined;
+      node =
+        node && typeof node === 'object' ? (node as Record<string, unknown>)[token] : undefined;
     }
   }
-  return `${parts.join('/')}|${issue.message}|${JSON.stringify(node) ?? 'undefined'}`;
+  return `${anchor}/${parts.join('/')}|${issue.message}|${JSON.stringify(node) ?? 'undefined'}`;
 }
 
 function projectUnchangedHistoricalGeometry(canvas: unknown, previous?: Slide): unknown {

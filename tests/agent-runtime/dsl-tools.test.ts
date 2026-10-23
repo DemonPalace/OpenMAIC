@@ -1406,6 +1406,45 @@ describe('patch_stage robustness', () => {
     expect(validateSlideCanvas(changed, before)).toHaveLength(1);
   });
 
+  it('grandfathers a legacy table-cell issue when an earlier cell in the row is removed', async () => {
+    const scene = richSlideScene();
+    const table = (scene.content as SlideContent).canvas.elements[3] as unknown as {
+      data: Array<Array<Record<string, unknown>>>;
+    };
+    table.data[0]![1]!.legacyFlag = true;
+    const current = state(course([scene]));
+    const patch = tool(dslTools(current.store), 'patch_stage');
+    const removed = await patch.execute('cell-shift', {
+      target: '/scenes/1',
+      intent: 'Drop the first cell',
+      ops: [{ op: 'remove', path: '/content/canvas/elements/3/data/0/0' }],
+    } as never);
+    expect(removed).not.toHaveProperty('isError');
+
+    // A new cell carrying the same violation is still rejected, as is a
+    // changed offending value on the legacy cell.
+    const added = await patch.execute('cell-new', {
+      target: '/scenes/1',
+      intent: 'Add a cell',
+      ops: [
+        {
+          op: 'set',
+          path: '/content/canvas/elements/3/data/0/1',
+          value: { id: 'c02', colspan: 1, rowspan: 1, text: 'New', legacyFlag: true },
+        },
+      ],
+    } as never);
+    expect(textOf(added)).toContain(
+      'canvas/elements/3/data/0/1 (table): unexpected property "legacyFlag"',
+    );
+    const changed = await patch.execute('cell-changed', {
+      target: '/scenes/1',
+      intent: 'Touch the flag',
+      ops: [{ op: 'set', path: '/content/canvas/elements/3/data/0/0/legacyFlag', value: false }],
+    } as never);
+    expect(changed).toMatchObject({ isError: true });
+  });
+
   it('runs identity and schema checks on str_replace into slide content', async () => {
     const current = richState();
     const patch = tool(dslTools(current.store), 'patch_stage');
