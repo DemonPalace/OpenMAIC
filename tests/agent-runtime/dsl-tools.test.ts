@@ -1406,6 +1406,27 @@ describe('patch_stage robustness', () => {
     expect(validateSlideCanvas(changed, before)).toHaveLength(1);
   });
 
+  it('does not exempt an appended duplicate of a legacy-invalid id-less item', async () => {
+    const scene = richSlideScene();
+    const canvas = (scene.content as SlideContent).canvas;
+    canvas.theme.themeColors = ['#2563eb', 42 as unknown as string];
+    const current = state(course([scene]));
+    const patch = tool(dslTools(current.store), 'patch_stage');
+    const untouched = await patch.execute('theme-ok', {
+      target: '/scenes/1',
+      intent: 'Darken the background',
+      ops: [{ op: 'set', path: '/content/canvas/theme/backgroundColor', value: '#000' }],
+    } as never);
+    expect(untouched).not.toHaveProperty('isError');
+    const duplicated = await patch.execute('theme-dup', {
+      target: '/scenes/1',
+      intent: 'Add a theme color',
+      ops: [{ op: 'set', path: '/content/canvas/theme/themeColors/2', value: 42 }],
+    } as never);
+    expect(duplicated).toMatchObject({ isError: true });
+    expect(textOf(duplicated)).toContain('canvas/theme/themeColors/');
+  });
+
   it('grandfathers a legacy table-cell issue when an earlier cell in the row is removed', async () => {
     const scene = richSlideScene();
     const table = (scene.content as SlideContent).canvas.elements[3] as unknown as {

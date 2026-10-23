@@ -850,13 +850,13 @@ export function validateSlideCanvas(canvas: unknown, previous?: Slide): string[]
   // malformed tuples. Project unchanged geometry solely for the schema check;
   // new and changed geometry still receives full validation below.
   const schemaCanvas = projectUnchangedHistoricalGeometry(canvas, previous);
-  const baselineCanvas = new Set(
+  const baselineCanvas = baselineConsumer(
     previous
       ? schemaIssues(SlideCanvasSchema, previous).map((issue) => issueKey(previous, issue))
       : [],
   );
   const issues = schemaIssues(SlideCanvasSchema, schemaCanvas)
-    .filter((issue) => !baselineCanvas.has(issueKey(schemaCanvas, issue)))
+    .filter((issue) => !baselineCanvas(issueKey(schemaCanvas, issue)))
     .map((issue) => `canvas${issue.at}: ${issue.message}`);
   const elements = (schemaCanvas as { elements?: unknown }).elements;
   if (Array.isArray(elements)) {
@@ -874,11 +874,11 @@ export function validateSlideCanvas(canvas: unknown, previous?: Slide): string[]
       const baseline = before
         ? elementIssues(before, PERSISTED_ELEMENT_SCHEMAS)
         : { type: '', issues: [] };
-      const known = new Set(
+      const known = baselineConsumer(
         baseline.type === type ? baseline.issues.map((issue) => issueKey(before, issue)) : [],
       );
       for (const issue of current) {
-        if (known.has(issueKey(element, issue))) continue;
+        if (known(issueKey(element, issue))) continue;
         issues.push(formatElementIssue(`canvas/elements/${index}`, type, issue));
       }
     });
@@ -891,6 +891,22 @@ export function validateSlideCanvas(canvas: unknown, previous?: Slide): string[]
     if (before?.type === 'shape' && !shapeGeometryChanged(before, element)) return [];
     return shapeGeometryIssues(element, `canvas/elements/${index}`);
   });
+}
+
+/**
+ * Baseline issues as a multiset: each current issue consumes one matching
+ * baseline occurrence, so a duplicate of a legacy-invalid id-less item (same
+ * key) is still reported as new. Returns true when `key` was grandfathered.
+ */
+function baselineConsumer(keys: string[]): (key: string) => boolean {
+  const counts = new Map<string, number>();
+  for (const key of keys) counts.set(key, (counts.get(key) ?? 0) + 1);
+  return (key) => {
+    const remaining = counts.get(key) ?? 0;
+    if (remaining === 0) return false;
+    counts.set(key, remaining - 1);
+    return true;
+  };
 }
 
 /**
