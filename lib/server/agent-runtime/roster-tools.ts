@@ -388,10 +388,7 @@ export function buildRosterTools(deps: RosterToolDeps): AgentTool<never, never>[
               `Classroom roster set: ${roster.length} agents, teacher "${teacher?.name}". ${summary}. ` +
               // Synthesis reads the roster at call time, but only for lines it
               // voices: audio already on a page is not redone by this write.
-              (teacher?.voiceConfig?.providerId && teacher.voiceConfig.voiceId
-                ? "Server narration is voiced with the teacher's binding"
-                : 'The teacher has no voice binding, so server narration uses the provider default voice') +
-              '; narration audio already on pages keeps its old voice until generate_tts runs on them with force.',
+              'Narration audio already on pages keeps its old voice until generate_tts runs on them with force; generate_tts reports the voice it actually used.',
           },
         ],
         details: { roster },
