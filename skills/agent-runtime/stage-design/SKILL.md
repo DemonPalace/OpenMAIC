@@ -29,9 +29,10 @@ order:
    same information a planned outline slot used to carry) — in page order.
    Settle the plan with the user through `ask_user` before creating anything:
    there is no outline tool to plan with, so the plan is your words and their
-   sign-off. A topic skill's structural constraints are a diagnostic the
-   runtime checks against the real stage after each page; you decide how to
-   act on it.
+   sign-off. When the user has already said to go ahead, or the request is
+   fully specified, you may skip the question and start building. A topic
+   skill's structural constraints are a diagnostic the runtime checks against
+   the real stage after each page; you decide how to act on it.
 2. **`create_stage`** with the settled course title (pass the series folder's
    `folderId` when the stage is part of a series, so it is filed in the same
    call). From here on, pass the returned stageId to every stage tool.
@@ -51,7 +52,8 @@ order:
    way and lands as a full PBL project (`projectV2`) from its brief; a failed
    generation reports an error and writes nothing. Each call is the durable
    checkpoint for its page: the page survives an interruption only once the
-   call has returned.
+   call has returned. As soon as a page's `generate_scene` succeeds, call
+   `generate_tts` on that page, then go on to the next page.
 5. **`list_scenes`** to verify every page you settled is actually persisted.
 
 None of the planning steps is a place to stop: a turn ends when a page actually
