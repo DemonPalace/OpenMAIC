@@ -87,10 +87,11 @@ export function buildMaterialMediaTool(deps: MaterialMediaDeps): AgentTool<never
             {
               type: 'text',
               text:
-                `"${params.materialId}" is a stored asset id, not a material id. An ast_ id from ` +
-                'generate_image, generate_video or an earlier use_material_media call is already a ' +
-                'usable src: put it on the media element directly with patch_stage, or pass it in ' +
-                'generate_scene media. use_material_media takes a mat_ id from list_materials.',
+                `"${params.materialId}" is not a material id; use_material_media takes a mat_ id ` +
+                'from list_materials. If this ast_ id was returned by a successful generate_image, ' +
+                'generate_video or use_material_media result, it is already a usable src: put it on ' +
+                'the media element directly with patch_stage, or pass it in generate_scene media. ' +
+                'Otherwise it is not a known asset; do not use it.',
             },
           ],
           details: { materialId: params.materialId, error: 'asset-id-not-material' },
