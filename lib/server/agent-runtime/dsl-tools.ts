@@ -1,3 +1,4 @@
+import { nanoid } from 'nanoid';
 import { Type, type Static } from 'typebox';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import type { Action } from '@/lib/types/action';
@@ -10,6 +11,9 @@ import {
   applyJsonPointerEdit,
   applySlideEdit,
   applyStrReplace,
+  closestExcerpt,
+  collectStringFields,
+  describeStringFieldsNear,
   inventoryScene,
   textSlide,
   type SlideEditOp,
@@ -49,18 +53,26 @@ export const READ_COURSE_SCHEMA = Type.Object({
   ),
 });
 
+const PATCH_OP_NAMES = ['set', 'remove', 'add_element', 'delete_element', 'str_replace'] as const;
+type PatchOpName = (typeof PATCH_OP_NAMES)[number];
+
 const PATCH_OP_SCHEMA = Type.Object({
-  op: Type.Union([
-    Type.Literal('set'),
-    Type.Literal('remove'),
-    Type.Literal('add_element'),
-    Type.Literal('delete_element'),
-    Type.Literal('str_replace'),
-  ]),
+  op: Type.Optional(
+    Type.Union(
+      [
+        Type.Literal('set'),
+        Type.Literal('remove'),
+        Type.Literal('add_element'),
+        Type.Literal('delete_element'),
+        Type.Literal('str_replace'),
+      ],
+      { description: 'Operation; inferred from the other fields when omitted and unambiguous.' },
+    ),
+  ),
   path: Type.Optional(
     Type.String({
       description:
-        'For set/remove/str_replace: JSON Pointer rooted at the exact scene source returned by read_stage.',
+        'For set/remove/str_replace: JSON Pointer rooted at the exact scene source returned by read_stage. str_replace may omit it to search every string field of the scene for oldText.',
     }),
   ),
   value: Type.Optional(Type.Unknown({ description: 'For set only: exact JSON value to store.' })),
@@ -281,39 +293,52 @@ function stripHtml(html: string): string {
     .trim();
 }
 
-function visibleActionText(action: Action): string[] {
-  const common = [action.title, action.description].filter(
-    (value): value is string => typeof value === 'string',
-  );
+/** Visible string fields of an action, by their real field name. */
+function visibleActionFields(action: Action): string[] {
+  const common = ['title', 'description'];
   switch (action.type) {
     case 'speech':
-      return [...common, action.text];
+      return [...common, 'text'];
     case 'discussion':
-      return [...common, action.topic, ...(action.prompt ? [action.prompt] : [])];
+      return [...common, 'topic', 'prompt'];
     case 'wb_draw_text':
-      return [...common, action.content];
+      return [...common, 'content'];
     case 'wb_draw_code':
-      return [...common, action.code, ...(action.fileName ? [action.fileName] : [])];
+      return [...common, 'code', 'fileName'];
     case 'widget_highlight':
     case 'widget_annotation':
     case 'widget_reveal':
-      return [...common, action.target, ...(action.content ? [action.content] : [])];
+      return [...common, 'target', 'content'];
     case 'widget_setState':
-      return [...common, ...(action.content ? [action.content] : [])];
+      return [...common, 'content'];
     default:
       return common;
   }
 }
 
+/** Scene-rooted pointers (/actions/<i>/<field>) for every visible action string. */
+function actionTextEntries(actions: readonly Action[]): Array<{ path: string; text: string }> {
+  return actions.flatMap((action, index) =>
+    visibleActionFields(action).flatMap((field) => {
+      const value = (action as unknown as Record<string, unknown>)[field];
+      return typeof value === 'string' && value.trim()
+        ? [{ path: `/actions/${index}/${field}`, text: value }]
+        : [];
+    }),
+  );
+}
+
 function textScene(scene: Scene) {
-  const entries: Array<{ path: string; text: string }> = [];
-  const add = (path: string, value: unknown) => {
-    if (typeof value === 'string' && value.trim()) entries.push({ path, text: value });
+  const entries: Array<{ path: string; text: string; html?: true }> = [];
+  const add = (path: string, value: unknown, html = false) => {
+    if (typeof value === 'string' && value.trim()) {
+      entries.push({ path, text: value, ...(html ? { html: true as const } : {}) });
+    }
   };
   add('/title', scene.title);
   if (scene.content.type === 'slide') {
     for (const entry of textSlide(scene.content as SlideContent).elements) {
-      add(`/content${entry.path}`, entry.text);
+      add(`/content${entry.path}`, entry.text, entry.html === true);
     }
   } else if (scene.content.type === 'quiz') {
     scene.content.questions.forEach((question, questionIndex) => {
@@ -326,7 +351,7 @@ function textScene(scene: Scene) {
       add(`${base}/commentPrompt`, question.commentPrompt);
     });
   } else if (scene.content.type === 'interactive') {
-    add('/content/html', scene.content.html ? stripHtml(scene.content.html) : undefined);
+    add('/content/html', scene.content.html ? stripHtml(scene.content.html) : undefined, true);
     const config = scene.content.widgetConfig as Record<string, unknown> | undefined;
     if (config) {
       for (const field of ['title', 'label', 'description', 'concept', 'task'] as const) {
@@ -363,20 +388,14 @@ function textScene(scene: Scene) {
       });
     });
   }
-  ((scene.actions ?? []) as Action[]).forEach((action, index) => {
-    visibleActionText(action).forEach((value, valueIndex) =>
-      add(`/actions/${index}/visible/${valueIndex}`, value),
-    );
-  });
+  entries.push(...actionTextEntries((scene.actions ?? []) as Action[]));
   return { entries, combinedText: entries.map((entry) => entry.text).join('\n') };
 }
 
 function textAt(doc: CourseDocument, resolved: ResolvedPath): unknown {
   if (resolved.kind === 'scene') return textScene(resolved.scene);
   if (resolved.kind === 'actions') {
-    const entries = ((resolved.scene.actions ?? []) as Action[]).flatMap((action, index) =>
-      visibleActionText(action).map((text, part) => ({ path: `/${index}/visible/${part}`, text })),
-    );
+    const entries = actionTextEntries((resolved.scene.actions ?? []) as Action[]);
     return { entries, combinedText: entries.map((entry) => entry.text).join('\n') };
   }
   if (resolved.kind === 'outline') {
@@ -532,7 +551,44 @@ function clearStaleSpeechAudio(before: Scene, after: Scene): void {
   }
 }
 
-function slideOperation(op: PatchParams['ops'][number], _scene: Scene): SlideEditOp | string {
+type RawPatchOp = PatchParams['ops'][number];
+type ResolvedPatchOp = Omit<RawPatchOp, 'op'> & { op: PatchOpName };
+
+/**
+ * Resolve a missing `op` from the fields that are present, but only when
+ * exactly one operation fits; ambiguous ops (and `remove`, which is
+ * destructive) are never guessed.
+ */
+function resolveOpName(op: RawPatchOp): { op: PatchOpName; inferred: boolean } | string {
+  if (op.op) return { op: op.op, inferred: false };
+  const candidates: PatchOpName[] = [];
+  if (op.oldText !== undefined) candidates.push('str_replace');
+  if (op.element !== undefined) candidates.push('add_element');
+  if (op.path !== undefined && op.value !== undefined) candidates.push('set');
+  if (
+    op.elementId !== undefined &&
+    op.path === undefined &&
+    op.value === undefined &&
+    op.oldText === undefined &&
+    op.element === undefined
+  ) {
+    candidates.push('delete_element');
+  }
+  if (candidates.length === 1) return { op: candidates[0]!, inferred: true };
+  const fields = Object.keys(op).join(', ') || 'none';
+  return `op is missing and cannot be inferred from the given fields (${fields}); set op to one of ${PATCH_OP_NAMES.join(', ')}`;
+}
+
+/** Slide content lives under /content/canvas; /content/elements has no other meaning. */
+function canonicalSlidePath(scene: Scene, path: string | undefined): string | undefined {
+  if (scene.content.type !== 'slide' || path === undefined) return path;
+  if (path === '/content/elements' || path.startsWith('/content/elements/')) {
+    return `/content/canvas${path.slice('/content'.length)}`;
+  }
+  return path;
+}
+
+function slideOperation(op: ResolvedPatchOp): SlideEditOp | string {
   if (op.op === 'add_element') {
     if (op.element === undefined) return 'add_element needs element';
     if (containsReadSceneMediaPlaceholder(op.element))
@@ -564,74 +620,216 @@ function slideOperation(op: PatchParams['ops'][number], _scene: Scene): SlideEdi
   };
 }
 
+interface PatchOpDetails {
+  op: string;
+  path?: string;
+  occurrences?: number;
+  /** Human-readable notes about how the op was interpreted. */
+  notes?: string[];
+}
+
 type PatchOpResult =
-  | { ok: true; value: Scene; details?: { op: string; path?: string; occurrences?: number } }
+  | { ok: true; value: Scene; details: PatchOpDetails }
   | { ok: false; error: string };
 
-function applyPatchOp(scene: Scene, op: PatchParams['ops'][number]): PatchOpResult {
+function isWritableScenePath(path: string): boolean {
+  return path.startsWith('/content/') || path === '/actions' || path.startsWith('/actions/');
+}
+
+/** Writable string fields of a scene (the same roots str_replace accepts). */
+function sceneStringFields(scene: Scene) {
+  return [
+    ...collectStringFields(scene.content, '/content'),
+    ...collectStringFields(scene.actions ?? [], '/actions'),
+  ];
+}
+
+const MAX_CANDIDATE_POINTERS = 10;
+
+function listPointers(paths: string[]): string {
+  const shown = paths.slice(0, MAX_CANDIDATE_POINTERS).join(', ');
+  return paths.length > MAX_CANDIDATE_POINTERS
+    ? `${shown} (+${paths.length - MAX_CANDIDATE_POINTERS} more)`
+    : shown;
+}
+
+/** Closest text across every string field, for an anchor found nowhere. */
+function closestInScene(scene: Scene, anchor: string): string {
+  let best: { path: string; excerpt: string; score: number } | null = null;
+  for (const field of sceneStringFields(scene)) {
+    if (field.value.startsWith('data:')) continue;
+    const found = closestExcerpt(field.value, anchor);
+    if (found && (!best || found.score > best.score)) best = { path: field.path, ...found };
+  }
+  return best && best.score >= 0.3
+    ? `; closest stored text is in ${best.path}: ${JSON.stringify(best.excerpt)}`
+    : '';
+}
+
+function applyStrReplaceOp(scene: Scene, op: ResolvedPatchOp): PatchOpResult {
+  if (!op.oldText) return { ok: false as const, error: 'str_replace needs oldText' };
+  if (op.newText === undefined) return { ok: false as const, error: 'str_replace needs newText' };
+  const notes: string[] = [];
+  let path = op.path;
+  if (!path) {
+    const oldText = op.oldText;
+    const matches = sceneStringFields(scene).filter((field) => field.value.includes(oldText));
+    if (matches.length === 0) {
+      return {
+        ok: false as const,
+        error: `str_replace without path: anchor text not found in any string field of this scene${closestInScene(scene, oldText)}`,
+      };
+    }
+    if (matches.length > 1) {
+      return {
+        ok: false as const,
+        error: `str_replace without path: anchor text occurs in ${matches.length} fields (${listPointers(matches.map((field) => field.path))}); pass path to choose one`,
+      };
+    }
+    path = matches[0]!.path;
+    notes.push(`str_replace path resolved to ${path}`);
+  }
+  if (!isWritableScenePath(path)) {
+    return {
+      ok: false as const,
+      error: 'str_replace path must start /content/ or /actions/; use edit_deck for scene metadata',
+    };
+  }
+  const applied = applyStrReplace(scene, {
+    path,
+    oldText: op.oldText,
+    newText: op.newText,
+    replaceAll: op.replaceAll ?? false,
+  });
+  if (!applied.ok) {
+    let error = applied.error;
+    if (error.startsWith('str_replace requires a string field')) {
+      const near = describeStringFieldsNear(scene, path);
+      if (near) error += `. ${near}`;
+    } else if (error.startsWith('anchor text not found')) {
+      const oldText = op.oldText;
+      const elsewhere = sceneStringFields(scene)
+        .filter((field) => field.path !== path && field.value.includes(oldText))
+        .map((field) => field.path);
+      if (elsewhere.length > 0) {
+        error += `; the anchor occurs verbatim in ${listPointers(elsewhere)}`;
+      }
+    }
+    return { ok: false as const, error };
+  }
+  const next = applied.value as Scene;
+  clearStaleSpeechAudio(scene, next);
+  return {
+    ok: true as const,
+    value: next,
+    details: {
+      op: 'str_replace',
+      path,
+      occurrences: applied.occurrences,
+      ...(notes.length ? { notes } : {}),
+    },
+  };
+}
+
+function applyPatchOp(scene: Scene, raw: RawPatchOp): PatchOpResult {
+  const resolvedName = resolveOpName(raw);
+  if (typeof resolvedName === 'string') return { ok: false as const, error: resolvedName };
+  const notes: string[] = [];
+  if (resolvedName.inferred) notes.push(`op inferred as ${resolvedName.op}`);
+  const path = canonicalSlidePath(scene, raw.path);
+  if (path !== raw.path) notes.push(`path ${raw.path} read as ${path} (canonical form)`);
+  const op: ResolvedPatchOp = { ...raw, op: resolvedName.op, path };
+  const withNotes = (result: PatchOpResult): PatchOpResult => {
+    if (!result.ok || notes.length === 0) return result;
+    const merged = [...notes, ...(result.details.notes ?? [])];
+    return { ...result, details: { ...result.details, notes: merged } };
+  };
+  const baseDetails: PatchOpDetails = {
+    op: op.op,
+    ...(typeof op.path === 'string' ? { path: op.path } : {}),
+  };
   if (op.op === 'add_element' || op.op === 'delete_element') {
     if (scene.content.type !== 'slide')
       return { ok: false as const, error: `${op.op} is only valid for slide scenes` };
-    const parsed = slideOperation(op, scene);
+    const parsed = slideOperation(op);
     if (typeof parsed === 'string') return { ok: false as const, error: parsed };
     const applied = applySlideEdit(scene.content, parsed);
     return applied.ok
-      ? { ok: true as const, value: { ...scene, content: applied.value } as Scene }
+      ? withNotes({
+          ok: true as const,
+          value: { ...scene, content: applied.value } as Scene,
+          details: baseDetails,
+        })
       : applied;
   }
-  if (op.op === 'str_replace') {
-    if (!op.path) return { ok: false as const, error: 'str_replace needs path' };
-    if (!op.oldText) return { ok: false as const, error: 'str_replace needs oldText' };
-    if (op.newText === undefined) return { ok: false as const, error: 'str_replace needs newText' };
-    if (
-      !op.path.startsWith('/content/') &&
-      op.path !== '/actions' &&
-      !op.path.startsWith('/actions/')
-    ) {
-      return {
-        ok: false as const,
-        error:
-          'str_replace path must start /content/ or /actions/; use edit_deck for scene metadata',
-      };
-    }
-    const applied = applyStrReplace(scene, {
-      path: op.path,
-      oldText: op.oldText,
-      newText: op.newText,
-      replaceAll: op.replaceAll ?? false,
-    });
-    if (!applied.ok) return applied;
-    const next = applied.value as Scene;
-    clearStaleSpeechAudio(scene, next);
+  if (op.op === 'str_replace') return withNotes(applyStrReplaceOp(scene, op));
+  if (!op.path) return { ok: false as const, error: `${op.op} needs path` };
+  if (op.op === 'set' && op.value === undefined) {
     return {
-      ok: true as const,
-      value: next,
-      details: { op: 'str_replace', path: op.path, occurrences: applied.occurrences },
+      ok: false as const,
+      error: 'set needs value; to clear a field use op:"remove" with the same path',
     };
   }
-  if (!op.path) return { ok: false as const, error: `${op.op} needs path` };
-  if (
-    !op.path.startsWith('/content/') &&
-    op.path !== '/actions' &&
-    !op.path.startsWith('/actions/')
-  ) {
+  if (!isWritableScenePath(op.path)) {
     return {
       ok: false as const,
       error: 'set/remove path must start /content/ or /actions/; use edit_deck for scene metadata',
     };
   }
   if (scene.content.type === 'slide' && op.path.startsWith('/content/')) {
-    const parsed = slideOperation(op, scene);
+    const parsed = slideOperation(op);
     if (typeof parsed === 'string') return { ok: false as const, error: parsed };
     const applied = applySlideEdit(scene.content, parsed);
     return applied.ok
-      ? { ok: true as const, value: { ...scene, content: applied.value } as Scene }
+      ? withNotes({
+          ok: true as const,
+          value: { ...scene, content: applied.value } as Scene,
+          details: baseDetails,
+        })
       : applied;
   }
   const applied = applyJsonPointerEdit(scene, { action: op.op, path: op.path, value: op.value });
   if (!applied.ok) return applied;
   clearStaleSpeechAudio(scene, applied.value as Scene);
-  return { ok: true as const, value: applied.value as Scene };
+  return withNotes({ ok: true as const, value: applied.value as Scene, details: baseDetails });
+}
+
+/** True when an op removes array items, shifting the indices of later items. */
+function removesArrayItems(op: string, path: string | undefined): boolean {
+  if (op === 'delete_element') return true;
+  return op === 'remove' && typeof path === 'string' && /\/\d+$/.test(path);
+}
+
+/** Current index→id listing for the collection an out-of-bounds path points into. */
+function currentIndexListing(scene: Scene, path: string | undefined): string {
+  const list = (items: readonly unknown[]) =>
+    items
+      .map((item, index) => {
+        const id = (item as { id?: unknown } | null)?.id;
+        return `${index}=${typeof id === 'string' ? id : '?'}`;
+      })
+      .join(', ') || '(empty)';
+  const canonical = canonicalSlidePath(scene, path) ?? '';
+  if (scene.content.type === 'slide' && canonical.startsWith('/content/canvas/elements/')) {
+    return `; current element indices: ${list(scene.content.canvas.elements)}`;
+  }
+  if (canonical.startsWith('/actions/')) {
+    return `; current action indices: ${list(scene.actions ?? [])}`;
+  }
+  return '';
+}
+
+/** Actions are server-identified like elements: fill a missing id. */
+function assignMissingActionIds(scene: Scene): void {
+  if (!Array.isArray(scene.actions)) return;
+  for (const action of scene.actions as unknown[]) {
+    if (!action || typeof action !== 'object' || Array.isArray(action)) continue;
+    const record = action as Record<string, unknown>;
+    if (typeof record.id === 'string' && record.id) continue;
+    let id = `action-${nanoid(8)}`;
+    while ((scene.actions as Action[]).some((item) => item.id === id)) id = `action-${nanoid(8)}`;
+    record.id = id;
+  }
 }
 
 interface FoldedText {
@@ -772,7 +970,7 @@ export function buildDslCourseTools(deps: CourseToolDeps): AgentTool<never, neve
     name: 'patch_stage',
     label: 'Patch stage',
     description:
-      'Atomically patch ONE scene at /scenes/<order|sceneId>. Read source first. set/remove use JSON Pointers rooted at that exact scene source (/content/... or /actions/...); str_replace swaps one exact occurrence of oldText inside a string field at a pointer (all occurrences with replaceAll); add_element/delete_element preserve server-owned slide element identity. Any failed op or resulting validation error rejects the whole batch. Stage/page-list operations remain on edit_deck.',
+      'Atomically patch ONE scene at /scenes/<order|sceneId>. Read source first. set/remove use JSON Pointers rooted at that exact scene source (/content/... or /actions/...); str_replace swaps one exact occurrence of oldText inside a string field at a pointer (all occurrences with replaceAll; without path it searches every string field of the scene); add_element/delete_element preserve server-owned slide element identity. Any failed op or resulting validation error rejects the whole batch. Stage/page-list operations remain on edit_deck.',
     parameters: PATCH_COURSE_SCHEMA,
     async execute(_id, params: PatchParams, signal) {
       if (!params.intent.trim()) return toolResult('intent must not be blank', {}, true);
@@ -789,25 +987,29 @@ export function buildDslCourseTools(deps: CourseToolDeps): AgentTool<never, neve
         );
       }
       let next = structuredClone(resolved.scene);
-      const opDetails: unknown[] = [];
+      const opDetails: PatchOpDetails[] = [];
+      let shiftedIndices = false;
       for (let index = 0; index < params.ops.length; index += 1) {
-        const applied = applyPatchOp(next, params.ops[index]!);
+        const op = params.ops[index]!;
+        const applied = applyPatchOp(next, op);
         if (!applied.ok) {
+          let error = applied.error;
+          if (shiftedIndices && error.includes('out of bounds')) {
+            error += `; an earlier op in this batch removed items, so later indices have shifted${currentIndexListing(next, op.path)}`;
+          }
           return toolResult(
-            `patch_stage rejected at op ${index + 1}: ${applied.error}`,
+            `patch_stage rejected at op ${index + 1}: ${error}`,
             { intent: params.intent, failedOp: index + 1 },
             true,
           );
         }
         next = applied.value;
-        const op = params.ops[index]!;
-        opDetails.push(
-          applied.details ?? {
-            op: op.op,
-            ...(typeof op.path === 'string' ? { path: op.path } : {}),
-          },
-        );
+        if (removesArrayItems(applied.details.op, op.path)) {
+          shiftedIndices = true;
+        }
+        opDetails.push(applied.details);
       }
+      assignMissingActionIds(next);
       // Final-state placeholder guard. The per-op checks above are the friendly
       // errors for a model that copies a placeholder verbatim, but they inspect
       // each op's payload in ISOLATION — a batch can assemble a complete
@@ -852,7 +1054,11 @@ export function buildDslCourseTools(deps: CourseToolDeps): AgentTool<never, neve
         sceneType: next.type,
         detail: params.intent,
       });
-      return toolResult(`Updated scene "${next.title}": ${params.intent}`, {
+      const notes = opDetails.flatMap((detail, index) =>
+        (detail.notes ?? []).map((note) => `op ${index + 1}: ${note}`),
+      );
+      const summary = `Updated scene "${next.title}": ${params.intent}`;
+      return toolResult(notes.length ? `${summary}\nNotes: ${notes.join('; ')}` : summary, {
         intent: params.intent,
         updated: { sceneId: next.id, order: next.order, type: next.type, ops: params.ops.length },
         ops: opDetails,

@@ -29,6 +29,7 @@ import { withPlainJsonDocumentWrites } from '@/lib/document-store/plain-json-sto
 import { createOwnerBoundDocumentStore } from '@/lib/persistence/owner-bound-document-store';
 import { ensureStageMetaSchema } from '@/lib/persistence/stage-meta';
 import { validateAppScene, validateAppStage } from '@/lib/document-store/validators';
+import { validateSlideCanvas } from '@/lib/server/agent-runtime/course-edit/element-schema';
 import type {
   InteractiveContent,
   PBLContent,
@@ -501,7 +502,7 @@ describe('patch_stage', () => {
       ops: [{ op: 'set', path: '/content/canvas/elements/0/defaultColour', value: '#f00' }],
     } as never);
     expect(unknown).toMatchObject({ isError: true });
-    expect(textOf(unknown)).toContain('additional properties');
+    expect(textOf(unknown)).toContain('unexpected property "defaultColour"');
 
     const placeholder =
       '<image bytes omitted: image/png, 5000 bytes; read-only placeholder; to replace it, write a new media src/URL at this path>';
@@ -1014,6 +1015,423 @@ describe('patch_stage', () => {
         ops: [{ op: 'str_replace', path: '/content/html', oldText: '', newText: 'y' }],
       }),
     ).toBe(false);
+  });
+});
+
+/** A slide carrying every text-bearing element kind plus legacy line data. */
+function richSlideScene(): Scene {
+  const scene = slideScene();
+  (scene.content as SlideContent).canvas.elements.push(
+    {
+      id: 'el-shape',
+      type: 'shape',
+      left: 0,
+      top: 100,
+      width: 200,
+      height: 100,
+      rotate: 0,
+      viewBox: [200, 100],
+      path: 'M 0 0 L 200 0 L 200 100 L 0 100 Z',
+      fixedRatio: false,
+      fill: '#eee',
+      text: {
+        content: '<p>Shape <strong>bold</strong> words</p>',
+        defaultFontName: 'Inter',
+        defaultColor: '#111',
+        align: 'middle',
+      },
+    },
+    // Lines commonly carry `rotate` in stored data even though the DSL line
+    // type omits it.
+    {
+      id: 'el-line',
+      type: 'line',
+      left: 0,
+      top: 300,
+      width: 2,
+      rotate: 0,
+      start: [0, 0],
+      end: [100, 0],
+      style: 'solid',
+      color: '#000',
+      points: ['', ''],
+    } as never,
+    {
+      id: 'el-table',
+      type: 'table',
+      left: 300,
+      top: 100,
+      width: 300,
+      height: 100,
+      rotate: 0,
+      outline: { width: 1, style: 'solid', color: '#000' },
+      colWidths: [0.5, 0.5],
+      cellMinHeight: 30,
+      data: [
+        [
+          { id: 'c00', colspan: 1, rowspan: 1, text: 'Mass' },
+          { id: 'c01', colspan: 1, rowspan: 1, text: 'Weight' },
+        ],
+      ],
+    },
+    {
+      id: 'el-latex',
+      type: 'latex',
+      left: 0,
+      top: 400,
+      width: 100,
+      height: 40,
+      rotate: 0,
+      latex: 'E = mc^2',
+    },
+    {
+      id: 'el-code',
+      type: 'code',
+      left: 600,
+      top: 300,
+      width: 300,
+      height: 100,
+      rotate: 0,
+      language: 'python',
+      lines: [
+        { id: 'l1', content: 'print("hi")' },
+        { id: 'l2', content: 'x = 1' },
+      ],
+    },
+  );
+  return scene;
+}
+
+function richState() {
+  return state(course([richSlideScene()]));
+}
+
+function slideElements(current: ReturnType<typeof state>) {
+  return (current.get().scenes[0]!.content as SlideContent).canvas.elements;
+}
+
+describe('patch_stage robustness', () => {
+  it('lets a background patch through when an unrelated element carries legacy fields', async () => {
+    const scene = richSlideScene();
+    // Legacy data the closed schema would reject on its own.
+    Object.assign((scene.content as SlideContent).canvas.elements[0]!, { legacyFlag: true });
+    const current = state(course([scene]));
+    const patch = tool(dslTools(current.store), 'patch_stage');
+    const result = await patch.execute('bg', {
+      target: '/scenes/1',
+      intent: 'Darken the background',
+      ops: [
+        { op: 'set', path: '/content/canvas/background', value: { type: 'solid', color: '#000' } },
+      ],
+    } as never);
+    expect(result).not.toHaveProperty('isError');
+    expect((current.get().scenes[0]!.content as SlideContent).canvas.background).toEqual({
+      type: 'solid',
+      color: '#000',
+    });
+  });
+
+  it('still rejects violations the patch introduces, per the element’s own type', async () => {
+    const current = richState();
+    const patch = tool(dslTools(current.store), 'patch_stage');
+    const result = await patch.execute('bad-line', {
+      target: '/scenes/1',
+      intent: 'Give the line a label',
+      ops: [{ op: 'set', path: '/content/canvas/elements/2/label', value: 'x' }],
+    } as never);
+    expect(result).toMatchObject({ isError: true });
+    expect(textOf(result)).toContain('canvas/elements/2 (line): unexpected property "label"');
+    expect(textOf(result)).not.toContain('defaultFontName');
+    expect(current.putScene).not.toHaveBeenCalled();
+    // `rotate` on a stored line is accepted outright.
+    expect(validateSlideCanvas((richSlideScene().content as SlideContent).canvas)).toEqual([]);
+  });
+
+  it('read_stage text view emits writable field-level pointers', async () => {
+    const current = richState();
+    const read = tool(dslTools(current.store), 'read_stage');
+    const view = JSON.parse(
+      textOf(await read.execute('text', { path: '/scenes/1', detail: 'text' } as never)),
+    ) as { entries: Array<{ path: string; text: string; html?: boolean }> };
+    const byPath = Object.fromEntries(view.entries.map((entry) => [entry.path, entry]));
+    expect(byPath['/content/canvas/elements/0/content']).toMatchObject({
+      text: 'Hello AI',
+      html: true,
+    });
+    expect(byPath['/content/canvas/elements/1/text/content']?.text).toBe('Shape bold words');
+    expect(byPath['/content/canvas/elements/3/data/0/1/text']?.text).toBe('Weight');
+    expect(byPath['/content/canvas/elements/4/latex']?.text).toBe('E = mc^2');
+    expect(byPath['/content/canvas/elements/5/lines/1/content']?.text).toBe('x = 1');
+    expect(byPath['/actions/0/text']?.text).toBe('Welcome');
+    expect(view.entries.some((entry) => entry.path.includes('/visible/'))).toBe(false);
+
+    const actions = JSON.parse(
+      textOf(await read.execute('actions', { path: '/scenes/1/actions', detail: 'text' } as never)),
+    ) as { entries: Array<{ path: string }> };
+    expect(actions.entries.map((entry) => entry.path)).toEqual(['/actions/0/text']);
+
+    // Every pointer the view shows is writable as-is.
+    const patch = tool(dslTools(current.store), 'patch_stage');
+    const written = await patch.execute('cell', {
+      target: '/scenes/1',
+      intent: 'Rename a column',
+      ops: [
+        {
+          op: 'str_replace',
+          path: '/content/canvas/elements/3/data/0/1/text',
+          oldText: 'Weight',
+          newText: 'Force',
+        },
+      ],
+    } as never);
+    expect(written).not.toHaveProperty('isError');
+  });
+
+  it('lists the element’s real string fields when str_replace targets a missing field', async () => {
+    const current = richState();
+    const patch = tool(dslTools(current.store), 'patch_stage');
+    const result = await patch.execute('missing-field', {
+      target: '/scenes/1',
+      intent: 'Edit the shape label',
+      ops: [
+        {
+          op: 'str_replace',
+          path: '/content/canvas/elements/1/content',
+          oldText: 'Shape',
+          newText: 'Box',
+        },
+      ],
+    } as never);
+    expect(result).toMatchObject({ isError: true });
+    expect(textOf(result)).toContain('/content/canvas/elements/1/content is missing');
+    expect(textOf(result)).toContain('String fields under /content/canvas/elements/1');
+    expect(textOf(result)).toContain('/content/canvas/elements/1/text/content');
+  });
+
+  it('explains a missing anchor with the closest excerpt, markup, and other fields', async () => {
+    const current = richState();
+    const patch = tool(dslTools(current.store), 'patch_stage');
+    const paraphrased = await patch.execute('paraphrase', {
+      target: '/scenes/1',
+      intent: 'Fix wording',
+      ops: [
+        {
+          op: 'str_replace',
+          path: '/content/canvas/elements/1/text/content',
+          oldText: 'Shape bold word',
+          newText: 'x',
+        },
+      ],
+    } as never);
+    expect(textOf(paraphrased)).toContain('anchor text not found');
+    expect(textOf(paraphrased)).toContain('HTML markup');
+    expect(textOf(paraphrased)).toContain('closest stored text');
+
+    const elsewhere = await patch.execute('elsewhere', {
+      target: '/scenes/1',
+      intent: 'Fix wording',
+      ops: [
+        {
+          op: 'str_replace',
+          path: '/content/canvas/elements/0/content',
+          oldText: 'Welcome',
+          newText: 'Hi',
+        },
+      ],
+    } as never);
+    expect(textOf(elsewhere)).toContain('the anchor occurs verbatim in /actions/0/text');
+    expect(current.putScene).not.toHaveBeenCalled();
+  });
+
+  it('resolves str_replace without path to the single field holding the anchor', async () => {
+    const current = richState();
+    const patch = tool(dslTools(current.store), 'patch_stage');
+    const result = await patch.execute('no-path', {
+      target: '/scenes/1',
+      intent: 'Fix the formula',
+      ops: [{ op: 'str_replace', oldText: 'mc^2', newText: 'm c^2' }],
+    } as never);
+    expect(result).not.toHaveProperty('isError');
+    expect(textOf(result)).toContain(
+      'op 1: str_replace path resolved to /content/canvas/elements/4/latex',
+    );
+    expect(slideElements(current)[4]).toMatchObject({ latex: 'E = m c^2' });
+
+    const ambiguous = await patch.execute('ambiguous', {
+      target: '/scenes/1',
+      intent: 'Rename',
+      ops: [{ op: 'str_replace', oldText: 'Inter', newText: 'Arial' }],
+    } as never);
+    expect(textOf(ambiguous)).toContain('anchor text occurs in');
+    expect(textOf(ambiguous)).toContain('/content/canvas/elements/0/defaultFontName');
+
+    const none = await patch.execute('none', {
+      target: '/scenes/1',
+      intent: 'Rename',
+      ops: [{ op: 'str_replace', oldText: 'Welcom everyone', newText: 'Hi' }],
+    } as never);
+    expect(textOf(none)).toContain('not found in any string field');
+    expect(textOf(none)).toContain('closest stored text is in /actions/0/text');
+  });
+
+  it('appends with set at index == length and explains shifted indices', async () => {
+    const current = richState();
+    const patch = tool(dslTools(current.store), 'patch_stage');
+    const appended = await patch.execute('append', {
+      target: '/scenes/1',
+      intent: 'Add narration',
+      ops: [{ op: 'set', path: '/actions/1', value: { type: 'speech', text: 'More' } }],
+    } as never);
+    expect(appended).not.toHaveProperty('isError');
+    const actions = current.get().scenes[0]!.actions!;
+    expect(actions).toHaveLength(2);
+    // Actions are server-identified like elements: a missing id is assigned.
+    expect(actions[1]).toMatchObject({ type: 'speech', text: 'More', id: expect.any(String) });
+
+    const shifted = await patch.execute('shifted', {
+      target: '/scenes/1',
+      intent: 'Remove and recolor',
+      ops: [
+        { op: 'delete_element', elementId: 'el-shape' },
+        { op: 'set', path: '/content/canvas/elements/5/color', value: '#f00' },
+      ],
+    } as never);
+    expect(shifted).toMatchObject({ isError: true, details: { failedOp: 2 } });
+    expect(textOf(shifted)).toContain('out of bounds (current length 5)');
+    expect(textOf(shifted)).toContain('indices have shifted');
+    expect(textOf(shifted)).toContain('0=el-title, 1=el-line');
+  });
+
+  it('keeps the server-owned id on a whole-element set and names changed ids', async () => {
+    const current = richState();
+    const patch = tool(dslTools(current.store), 'patch_stage');
+    const replaced = await patch.execute('replace', {
+      target: '/scenes/1',
+      intent: 'Rewrite the formula element',
+      ops: [
+        {
+          op: 'set',
+          path: '/content/canvas/elements/4',
+          value: {
+            type: 'latex',
+            left: 0,
+            top: 400,
+            width: 120,
+            height: 40,
+            rotate: 0,
+            latex: 'F = ma',
+          },
+        },
+      ],
+    } as never);
+    expect(replaced).not.toHaveProperty('isError');
+    expect(slideElements(current)[4]).toMatchObject({ id: 'el-latex', latex: 'F = ma' });
+
+    const retyped = await patch.execute('retype', {
+      target: '/scenes/1',
+      intent: 'Swap element kind',
+      ops: [
+        {
+          op: 'set',
+          path: '/content/canvas/elements/4',
+          value: { id: 'el-new', type: 'text' },
+        },
+      ],
+    } as never);
+    expect(textOf(retyped)).toContain('added "el-new"; removed "el-latex"');
+  });
+
+  it('accepts /content/elements as the canonical /content/canvas/elements and says so', async () => {
+    const current = richState();
+    const patch = tool(dslTools(current.store), 'patch_stage');
+    const result = await patch.execute('alias', {
+      target: '/scenes/1',
+      intent: 'Recolor title',
+      ops: [{ op: 'set', path: '/content/elements/0/defaultColor', value: '#f00' }],
+    } as never);
+    expect(result).not.toHaveProperty('isError');
+    expect(textOf(result)).toContain(
+      'path /content/elements/0/defaultColor read as /content/canvas/elements/0/defaultColor',
+    );
+    expect(slideElements(current)[0]).toMatchObject({ defaultColor: '#f00' });
+  });
+
+  it('infers a missing op only when unambiguous and hints remove for valueless set', async () => {
+    const current = richState();
+    const patch = tool(dslTools(current.store), 'patch_stage');
+    const inferred = await patch.execute('infer', {
+      target: '/scenes/1',
+      intent: 'Mixed edits',
+      ops: [
+        { path: '/content/canvas/elements/0/defaultColor', value: '#0f0' },
+        {
+          path: '/content/canvas/elements/4/latex',
+          oldText: 'mc^2',
+          newText: 'mc^3',
+        },
+        { elementId: 'el-code' },
+      ],
+    } as never);
+    expect(inferred).not.toHaveProperty('isError');
+    expect(textOf(inferred)).toContain('op 1: op inferred as set');
+    expect(textOf(inferred)).toContain('op 2: op inferred as str_replace');
+    expect(textOf(inferred)).toContain('op 3: op inferred as delete_element');
+    expect(slideElements(current).map((element) => element.id)).not.toContain('el-code');
+
+    const ambiguous = await patch.execute('ambiguous', {
+      target: '/scenes/1',
+      intent: 'Unclear',
+      ops: [{ path: '/content/canvas/elements/0/fill' }],
+    } as never);
+    expect(textOf(ambiguous)).toContain('op is missing and cannot be inferred');
+
+    const valueless = await patch.execute('valueless', {
+      target: '/scenes/1',
+      intent: 'Clear fill',
+      ops: [{ op: 'set', path: '/content/canvas/elements/0/fill' }],
+    } as never);
+    expect(textOf(valueless)).toContain('to clear a field use op:"remove"');
+  });
+
+  it('fills renderer defaults on add_element but never invents text content', async () => {
+    const current = richState();
+    const patch = tool(dslTools(current.store), 'patch_stage');
+    const added = await patch.execute('add', {
+      target: '/scenes/1',
+      intent: 'Add a caption',
+      ops: [
+        {
+          op: 'add_element',
+          element: {
+            type: 'text',
+            left: 0,
+            top: 500,
+            width: 300,
+            height: 40,
+            content: '<p>Caption</p>',
+          },
+        },
+      ],
+    } as never);
+    expect(added).not.toHaveProperty('isError');
+    expect(slideElements(current).at(-1)).toMatchObject({
+      content: '<p>Caption</p>',
+      rotate: 0,
+      defaultFontName: expect.any(String),
+      defaultColor: expect.any(String),
+    });
+
+    const empty = await patch.execute('add-empty', {
+      target: '/scenes/1',
+      intent: 'Add a caption',
+      ops: [
+        {
+          op: 'add_element',
+          element: { type: 'text', left: 0, top: 500, width: 300, height: 40 },
+        },
+      ],
+    } as never);
+    expect(textOf(empty)).toContain('element (text): missing required property "content"');
   });
 });
 
