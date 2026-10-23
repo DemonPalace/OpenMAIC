@@ -226,9 +226,28 @@ describe('student conversation projection', () => {
       'interrupted',
       'succeeded',
       undefined,
-      'failed',
     ]);
     expect(output[1]?.parts[0]).toMatchObject({ text: 'Partial', streaming: false });
+  });
+  it('keeps setup failures in run status without manufacturing empty assistant replies', () => {
+    const history = [
+      event(1, 'pbl_stage_entered', { milestoneId: 'one' }),
+      event(2, 'user_message', { text: 'System opening', pblOpening: true }),
+      ...Array.from({ length: 6 }, (_, i) =>
+        event(
+          3 + i,
+          'session_end',
+          { status: 'failed', error: 'This project version is not installed.' },
+          i + 1,
+        ),
+      ),
+    ];
+    const failed = projectConversation(history, 'discussion', false, 'failed');
+    expect(failed).toHaveLength(1);
+    expect(failed[0].boundary).toBeDefined();
+    const retrying = projectConversation(history, 'discussion', true, 'queued');
+    expect(retrying.at(-1)).toMatchObject({ status: 'running', parts: [] });
+    expect(learningRunFailure('This project version is not installed.')).toBe('project');
   });
   it('distinguishes a recovered tool gate from a stalled model turn without leaking diagnostics', () => {
     const recovered = projectConversation(

@@ -108,6 +108,7 @@ vi.mock('@/lib/server/agent-runtime/user-skills', async (importActual) => {
 
 import { runSession } from '@/lib/server/agent-runtime/runner';
 import { AGENT_TOOL_TIMEOUT_ENV } from '@/lib/agent/runtime/tool-timeout';
+import { SandboxError } from '@/lib/sandbox/errors';
 
 const SESSION_ID = 'session-1';
 const TOOL_NAME = 'read_stage';
@@ -191,6 +192,7 @@ function makeStore(meta: ClaimedAgentSession, options: { cancelRequested?: () =>
     getCancelRequestedAt: vi.fn(async () => (options.cancelRequested?.() ? 123 : null)),
     isCancelRequested: vi.fn(async () => options.cancelRequested?.() ?? false),
     listUserMessages: vi.fn(async () => []),
+    markUserMessageDelivered: vi.fn(async () => true),
     releaseLease: vi.fn(async () => undefined),
     requeueForRetry: vi.fn(async () => false),
     requeueSession: vi.fn(async () => false),
@@ -353,6 +355,48 @@ describe('runner: cancel of a hung tool', () => {
 });
 
 describe('runner: unbounded V3 teaching turns', () => {
+  it.each([true, false])(
+    'preserves undelivered input and only retries recoverable setup failures (missing project: %s)',
+    async (missingProject) => {
+      const meta = makeMeta({ id: 'pbl-role-setup', claimSeq: 1 });
+      const session = await makeEntryTree();
+      const store = makeStore(meta);
+      const opening = {
+        id: 1,
+        ts: 1,
+        attempt: 0,
+        type: 'user_message',
+        data: { text: 'Open the learning step', pblOpening: true },
+      };
+      store.readEventsAfter.mockResolvedValue([opening] as never);
+      mocks.openEntryStorage.mockResolvedValue(session.getStorage());
+      mocks.getAgentSessionStore.mockResolvedValue(store);
+      mocks.teachingRunnerConfig.mockRejectedValueOnce(
+        missingProject
+          ? new SandboxError(
+              'PBL_PROJECT_UNAVAILABLE',
+              404,
+              'This project version is not installed.',
+            )
+          : new Error('Temporary database connection failure'),
+      );
+      await runSession({ running: new Map(), shuttingDown: false }, meta);
+
+      expect(mocks.streamLLM).not.toHaveBeenCalled();
+      expect(store.finishSession).toHaveBeenCalledWith(
+        meta.id,
+        WORKER_ID,
+        expect.objectContaining({ status: 'failed', expectedAttempt: 1 }),
+      );
+      expect(store.requeueForRetry).toHaveBeenCalledTimes(missingProject ? 0 : 1);
+      expect(store.requeueSession).not.toHaveBeenCalled();
+      expect(store.markUserMessageDelivered).not.toHaveBeenCalled();
+      // Setup has not consumed the durable opening. An explicit retry can use it
+      // after the course configuration is repaired, without fabricating feedback.
+      expect((await store.getSession()).deliveredUserMessageSeq).toBe(0);
+      expect(await store.readEventsAfter()).toEqual([opening]);
+    },
+  );
   it.each(['cancel', 'shutdown', 'lease-loss'] as const)(
     'keeps a tool alive beyond all former deadlines, then honors %s',
     async (outcome) => {

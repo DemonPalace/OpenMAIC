@@ -8,6 +8,7 @@ import { CONVERSATION_BYTES } from './conversation-history';
 /** Never send provider diagnostics, addresses or credentials to a learner. */
 export function learningRunFailure(error: unknown): LearningRunFailure {
   const message = typeof error === 'string' ? error : '';
+  if (message === 'This project version is not installed.') return 'project';
   if (message.startsWith('Teaching turn ended without recording')) return 'incomplete';
   return /\b(401|403)\b|unauthori[sz]ed|authentication|api.?key/i.test(message)
     ? 'authentication'
@@ -275,8 +276,9 @@ export function projectConversation(
           e.boundary ||
           e.omitted ||
           e.parts.length ||
+          // A setup failure is a run status, not an assistant reply. The view's
+          // run banner explains it; retain partial replies and active waiters.
           e.status === 'running' ||
-          e.status === 'failed' ||
           e.status === 'cancelled' ||
           e.status === 'interrupted',
       )
