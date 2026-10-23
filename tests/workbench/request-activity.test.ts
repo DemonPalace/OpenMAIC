@@ -151,3 +151,108 @@ describe('waiting for the user to confirm a plan (ask_user)', () => {
     expect(requestActivity(settled.chat, settled.status, false)).toBeNull();
   });
 });
+
+describe('an open question is found by its answered flag, not by its position', () => {
+  /** Frames recorded as they fold, so a cold replay can fold the same log again. */
+  const session = () => {
+    const frames: WorkbenchEvent[] = [];
+    let state: WorkbenchFold = createInitialSessionState();
+    const emit = (type: string, data: unknown = {}) => {
+      const frame: WorkbenchEvent = {
+        id: frames.length + 1,
+        ts: frames.length + 1,
+        attempt: 1,
+        type,
+        data,
+      };
+      frames.push(frame);
+      state = foldEvent(state, frame);
+      return state;
+    };
+    const replay = () => frames.reduce(foldEvent, createInitialSessionState() as WorkbenchFold);
+    return { emit, replay };
+  };
+  const askPlan = (emit: (type: string, data?: unknown) => WorkbenchFold) => {
+    emit('session_start', { prompt: 'Make a course on photosynthesis' });
+    emit('tool_execution_start', { toolCallId: 'ask', toolName: 'ask_user', args: {} });
+    emit('user_question', {
+      question: 'Shall I build this plan?',
+      options: [{ id: 'yes', label: 'Go ahead' }],
+    });
+    emit('tool_execution_end', { toolCallId: 'ask', toolName: 'ask_user', result: {} });
+  };
+  const pendingText = (state: WorkbenchFold) => {
+    const activity = requestActivity(state.chat, state.status, false);
+    return activity?.node.kind === 'question' ? activity.node.text : null;
+  };
+
+  it('keeps waiting after a textless attachment, live and after a cold replay', () => {
+    const { emit, replay } = session();
+    askPlan(emit);
+    emit('agent_end');
+    emit('session_end', { status: 'succeeded' });
+    const state = emit('user_message', {
+      text: '',
+      delivery: 'queued',
+      materials: [{ path: 'materials/notes.pdf', originalName: 'notes.pdf' }],
+    });
+    // The fold's own rule: an attachment with no words answers nothing.
+    expect(state.chat.find((node) => node.kind === 'question')?.questionAnswered).toBeFalsy();
+    expect(pendingText(state)).toBe('Shall I build this plan?');
+    expect(pendingText(replay())).toBe('Shall I build this plan?');
+  });
+
+  it('is not hidden by a later tool call in the same batch as ask_user', () => {
+    const { emit, replay } = session();
+    askPlan(emit);
+    emit('tool_execution_start', { toolCallId: 'create', toolName: 'create_stage', args: {} });
+    let state = emit('stage_link', { stageId: 'course' });
+    expect(pendingText(state)).toBe('Shall I build this plan?');
+    emit('tool_execution_end', {
+      toolCallId: 'create',
+      toolName: 'create_stage',
+      result: { details: { stageId: 'course' } },
+    });
+    emit('agent_end');
+    state = emit('session_end', { status: 'succeeded' });
+    expect(pendingText(state)).toBe('Shall I build this plan?');
+    expect(pendingText(replay())).toBe('Shall I build this plan?');
+  });
+
+  it.each([
+    ['an answer', 'Go ahead'],
+    ['a change of topic', 'Actually, what is chlorophyll?'],
+  ])('leaves waiting on %s, and follows the next run', (_case, text) => {
+    const { emit, replay } = session();
+    askPlan(emit);
+    emit('agent_end');
+    emit('session_end', { status: 'succeeded' });
+    let state = emit('user_message', { text, delivery: 'queued' });
+    expect(pendingText(state)).toBeNull();
+    state = emit('session_resumed', { reason: 'follow_up' });
+    expect(requestActivity(state.chat, state.status, false)?.node.kind).toBe('waiting');
+    emit('agent_end');
+    state = emit('session_end', { status: 'succeeded' });
+    // A plain turn with no course still settles, and the answered question stays history.
+    expect(requestActivity(state.chat, state.status, false)).toBeNull();
+    expect(requestActivity(replay().chat, state.status, false)).toBeNull();
+  });
+
+  it('follows the running tool once a steer answers the question mid-batch', () => {
+    const { emit } = session();
+    askPlan(emit);
+    emit('tool_execution_start', { toolCallId: 'create', toolName: 'create_stage', args: {} });
+    const state = emit('user_message', { text: 'Go ahead', delivery: 'steer' });
+    expect(state.chat.find((node) => node.kind === 'question')?.questionAnswered).toBe(true);
+    const activity = requestActivity(state.chat, state.status, false);
+    expect(activity?.node.kind).toBe('tool');
+    expect(activity?.node.toolName).toBe('create_stage');
+  });
+
+  it('stays quiet while the backlog is replaying', () => {
+    const { emit } = session();
+    askPlan(emit);
+    const state = emit('session_end', { status: 'succeeded' });
+    expect(requestActivity(state.chat, state.status, true)).toBeNull();
+  });
+});

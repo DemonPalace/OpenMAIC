@@ -1698,6 +1698,48 @@ describe('the knowledge base page', () => {
       expect(container?.querySelector('[data-testid="workspace-request-activity"]')).toBeNull();
     });
 
+    it('keeps the question card waiting through a textless attachment, until a real answer', async () => {
+      const { createInitialSessionState, foldEvent } = await vi.importActual<
+        typeof import('@/lib/workbench/session-store')
+      >('@/lib/workbench/session-store');
+      let folded: import('@/lib/workbench/session-store').WorkbenchFold =
+        createInitialSessionState();
+      let id = 0;
+      const event = async (type: string, data: unknown = {}) => {
+        folded = foldEvent(folded, { id: ++id, ts: id, attempt: 1, type, data });
+        Object.assign(mocks.store, folded, { sessionId: 'session-1', replaying: false });
+        await render();
+      };
+      const card = () =>
+        container?.querySelector(
+          '[data-testid="workspace-request-activity"] [data-testid="workbench-question-card"]',
+        );
+      await event('session_start', { prompt: 'Make a course' });
+      await event('tool_execution_start', { toolCallId: 'ask', toolName: 'ask_user', args: {} });
+      await event('user_question', {
+        question: 'Shall I build this plan?',
+        options: [{ id: 'yes', label: 'Go ahead' }],
+      });
+      await event('tool_execution_end', { toolCallId: 'ask', toolName: 'ask_user', result: {} });
+      await event('agent_end');
+      await event('session_end', { status: 'succeeded' });
+      expect(card()?.getAttribute('data-answered')).toBe('false');
+
+      await event('user_message', {
+        text: '',
+        delivery: 'queued',
+        materials: [{ path: 'materials/notes.pdf', originalName: 'notes.pdf' }],
+      });
+      expect(card()?.getAttribute('data-answered')).toBe('false');
+      expect(card()?.textContent).toContain('Shall I build this plan?');
+      expect(mocks.chatPaneProps?.fill).toBe(true);
+
+      await event('user_message', { text: 'Go ahead', delivery: 'queued' });
+      await event('session_resumed', { reason: 'follow_up' });
+      expect(container?.querySelector('[data-testid="workspace-request-activity"]')).not.toBeNull();
+      expect(card()).toBeNull();
+    });
+
     it.each(['linked', 'touched', 'bound', 'generated'] as const)(
       'adds no panel once this conversation has a course with scenes (%s)',
       async (how) => {

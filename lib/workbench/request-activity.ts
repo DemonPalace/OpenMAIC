@@ -25,18 +25,18 @@ export function requestActivity(
   replaying: boolean,
 ) {
   if (replaying) return null;
+  // An open question is the user's move, whatever followed it: `ask_user` ends
+  // the run, a tool later in the same batch may still run, and a textless
+  // attachment answers nothing. Only the fold's answered flag retires it (the
+  // same rule as the conversation's pending question).
+  const question = chat.findLast((item) => item.kind === 'question' && !item.questionAnswered);
+  if (question) return { node: question, stepId: undefined };
   // Never borrow the preceding answer's activity while the next request starts.
   const start = requestStartIndex(chat);
   const node = chat
     .slice(start + 1)
-    .findLast((item) =>
-      ['waiting', 'thinking', 'assistant', 'tool', 'question'].includes(item.kind),
-    );
+    .findLast((item) => ['waiting', 'thinking', 'assistant', 'tool'].includes(item.kind));
   if (!node) return null;
-  // `ask_user` ends the run, but its open question is still the request's
-  // current state: the user is the one to move next. The fold's answered flag
-  // retires it.
-  if (node.kind === 'question') return node.questionAnswered ? null : { node, stepId: undefined };
   if (!['running', 'queued', 'connecting'].includes(status)) return null;
   return {
     node,
