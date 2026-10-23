@@ -890,7 +890,7 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
 
 export function PBLV3Workspace({ sceneId }: { sceneId: string }) {
   return (
-    <WorkspaceFrame>
+    <WorkspaceFrame sceneId={sceneId}>
       <PBLV3WorkspaceContent sceneId={sceneId} />
     </WorkspaceFrame>
   );

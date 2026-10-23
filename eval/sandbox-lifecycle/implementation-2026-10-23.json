@@ -134,6 +134,25 @@
       "method": "Browser screenshot of a real persisted released study; automatic compute preparation and teaching turns suppressed in the screenshot harness to avoid allocating additional resources"
     },
     "packageVersionCheck": "storage 0.39.0 -> 0.39.1 passed",
+    "navigationAndArchiveDeadlineFollowUp": {
+      "comments": [
+        "https://github.com/THU-MAIC/OpenMAIC/pull/2011#discussion_r4359423366",
+        "https://github.com/THU-MAIC/OpenMAIC/pull/2011#discussion_r4359423383"
+      ],
+      "targetedUnitTests": 28,
+      "postgresIntegrationTests": 86,
+      "browserWorkspaceJourney": "passed",
+      "mode": "Controlled E2B adapter I/O, real disposable PostgreSQL schemas, and browser API fixture on local Next.js; no additional cloud compute allocated",
+      "coverage": [
+        "Classroom navigation pointer-down does not restore inactive compute",
+        "Trusted project content input still restores inactive compute",
+        "Pre-expired export deadline starts no connection or archive generation",
+        "Generation and download receive the same shared cancellation signal",
+        "Stalled SDK generation and cleanup cannot retain the caller after expiry",
+        "Late connection or generation results cannot advance export after cancellation"
+      ],
+      "selfReview": "Targeted subagent review found no new confirmed defect in activity scoping, deadline propagation or cleanup bounds"
+    },
     "terminalReviewFollowUp": {
       "comment": "https://github.com/THU-MAIC/OpenMAIC/pull/2011#discussion_r4359159199",
       "newPostgresRegressions": 6,

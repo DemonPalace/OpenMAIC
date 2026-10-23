@@ -12,6 +12,7 @@ const sdk = vi.hoisted(() => ({
 }));
 vi.mock('e2b', () => ({
   Sandbox: sdk,
+  CommandExitError: class extends Error {},
   FileNotFoundError: class extends Error {},
   SandboxNotFoundError: class extends Error {},
 }));
@@ -21,6 +22,47 @@ import { WORKSPACE_EXCLUDES } from '@/lib/server/sandbox/workspace-archive';
 import { isProjectSource, projectFiles } from '@/lib/server/pbl-v3/workspace-files';
 import { installedProject } from '@/lib/server/pbl-v3/catalog';
 import type { SandboxService } from '@/lib/server/sandbox/service';
+
+function archiveFixture() {
+  sdk.getInfo.mockResolvedValue({
+    sandboxId: 'resource',
+    state: 'running',
+    endAt: new Date(Date.now() + 300000),
+    network: { allowPublicTraffic: false },
+    metadata: { openmaic_connection: 'test-installation', openmaic_operation: 'op' },
+  });
+  const run = vi.fn(
+    async (
+      _command: string,
+      _options?: { signal?: AbortSignal; timeoutMs?: number; requestTimeoutMs?: number },
+    ) => ({ stdout: '' }),
+  );
+  const read = vi.fn(
+    async (
+      _path: string,
+      _options?: { signal?: AbortSignal; format?: string; requestTimeoutMs?: number },
+    ) =>
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array([1, 2, 3]));
+          controller.close();
+        },
+      }),
+  );
+  const remove = vi.fn(
+    async (_path: string, _options?: { signal?: AbortSignal; requestTimeoutMs?: number }) =>
+      undefined,
+  );
+  const sandbox = { commands: { run }, files: { read, remove } };
+  sdk.connect.mockResolvedValue(sandbox);
+  return {
+    provider: new E2BCompatibleSandboxProvider(sandboxConfig()),
+    sandbox,
+    run,
+    read,
+    remove,
+  };
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -190,4 +232,79 @@ it('initializes the workspace idempotently through the owned private connection'
   await provider.initializeWorkspace('resource', 'op');
   expect(mkdir).toHaveBeenNthCalledWith(1, '/home/user/project');
   expect(mkdir).toHaveBeenNthCalledWith(2, '/home/user/project');
+});
+
+describe('checkpoint generation deadline', () => {
+  it('does not connect or generate an archive after a pre-expired checkpoint deadline', async () => {
+    const { provider, run } = archiveFixture();
+    const controller = new AbortController();
+    controller.abort(new DOMException('checkpoint deadline', 'TimeoutError'));
+    await expect(
+      provider.exportWorkspace('resource', 'op', controller.signal)[Symbol.asyncIterator]().next(),
+    ).rejects.toMatchObject({ name: 'TimeoutError' });
+    expect(sdk.getInfo).not.toHaveBeenCalled();
+    expect(sdk.connect).not.toHaveBeenCalled();
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it('shares the remaining cancellation signal between generation and archive download', async () => {
+    const { provider, run, read, remove } = archiveFixture();
+    const controller = new AbortController();
+    const chunks = [];
+    for await (const chunk of provider.exportWorkspace('resource', 'op', controller.signal))
+      chunks.push(chunk);
+    expect(chunks).toEqual([new Uint8Array([1, 2, 3])]);
+    expect(run.mock.calls[0]?.[1]?.signal).toBe(controller.signal);
+    expect(read.mock.calls[0]?.[1]?.signal).toBe(controller.signal);
+    expect(remove).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops waiting for generation at the shared deadline even if the SDK and cleanup stall', async () => {
+    const { provider, run, read, remove } = archiveFixture();
+    let finish!: () => void;
+    run.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = () => resolve({ stdout: '' });
+        }),
+    );
+    remove.mockImplementation(() => new Promise(() => {}));
+    const controller = new AbortController();
+    const next = provider
+      .exportWorkspace('resource', 'op', controller.signal)
+      [Symbol.asyncIterator]()
+      .next();
+    const failed = expect(next).rejects.toMatchObject({ name: 'TimeoutError' });
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    controller.abort(new DOMException('checkpoint deadline', 'TimeoutError'));
+    await failed;
+    expect(run.mock.calls[0]?.[1]?.signal).toBe(controller.signal);
+    expect(read).not.toHaveBeenCalled();
+    finish();
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  it('does not start generation if connection completes after cancellation', async () => {
+    const { provider, run, sandbox } = archiveFixture();
+    let connected!: () => void;
+    sdk.connect.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          connected = () => resolve(sandbox);
+        }),
+    );
+    const controller = new AbortController();
+    const next = provider
+      .exportWorkspace('resource', 'op', controller.signal)
+      [Symbol.asyncIterator]()
+      .next();
+    const failed = expect(next).rejects.toMatchObject({ name: 'TimeoutError' });
+    await vi.waitFor(() => expect(sdk.connect).toHaveBeenCalledTimes(1));
+    controller.abort(new DOMException('checkpoint deadline', 'TimeoutError'));
+    await failed;
+    connected();
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(run).not.toHaveBeenCalled();
+  });
 });

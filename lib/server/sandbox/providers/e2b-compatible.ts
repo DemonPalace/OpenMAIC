@@ -30,6 +30,7 @@ import {
 } from '../workspace-archive';
 import { CHECKPOINT_RUNNER } from '../checkpoint-runner';
 import { checkpointPolicy, checkpointArchiveLimit } from '../checkpoint-policy';
+import { checkpointIO } from '../checkpoint-errors';
 import { Readable } from 'node:stream';
 import { TERMINAL_CLEANUP } from '../terminal-cleanup';
 import { openSdkPreviewConnection } from '../preview-connection';
@@ -584,27 +585,36 @@ export class E2BCompatibleSandboxProvider implements SandboxProvider {
   async *exportWorkspace(
     resourceId: string,
     operationId: string,
-    signal?: AbortSignal,
+    signal = AbortSignal.timeout(120_000),
   ): AsyncIterable<Uint8Array> {
-    const sandbox = await this.connect(resourceId, operationId);
+    signal.throwIfAborted();
+    const sandbox = await checkpointIO(() => this.connect(resourceId, operationId), signal);
     const path = `/tmp/openmaic-archive-${randomUUID()}.tar`;
     const policy = checkpointPolicy();
     const encoded = Buffer.from(JSON.stringify(policy)).toString('base64');
     try {
-      await sandbox.commands.run(
-        `python3 -c ${shellQuote(CHECKPOINT_RUNNER)} export ${shellQuote(path)} ${shellQuote(encoded)}`,
-        { timeoutMs: 120_000, requestTimeoutMs: 125_000 },
+      await checkpointIO(
+        () =>
+          sandbox.commands.run(
+            `python3 -c ${shellQuote(CHECKPOINT_RUNNER)} export ${shellQuote(path)} ${shellQuote(encoded)}`,
+            { timeoutMs: 120_000, requestTimeoutMs: 125_000, signal },
+          ),
+        signal,
       );
-      const stream = await sandbox.files.read(path, {
-        format: 'stream',
-        requestTimeoutMs: 120_000,
-        signal: signal ?? AbortSignal.timeout(120_000),
-      });
+      const stream = await checkpointIO(
+        () =>
+          sandbox.files.read(path, {
+            format: 'stream',
+            requestTimeoutMs: 120_000,
+            signal,
+          }),
+        signal,
+      );
       const reader = stream.getReader();
       let size = 0;
       try {
         while (true) {
-          const { done, value } = await reader.read();
+          const { done, value } = await checkpointIO(() => reader.read(), signal);
           if (done) break;
           size += value.byteLength;
           if (size > checkpointArchiveLimit(policy))
@@ -616,7 +626,8 @@ export class E2BCompatibleSandboxProvider implements SandboxProvider {
           yield value;
         }
       } finally {
-        await reader.cancel().catch(() => {});
+        const closing = reader.cancel().catch(() => {});
+        if (!signal.aborted) await checkpointIO(() => closing, signal).catch(() => {});
         reader.releaseLock();
       }
     } catch (error) {
@@ -636,7 +647,15 @@ export class E2BCompatibleSandboxProvider implements SandboxProvider {
       if (tag) throw new SandboxError(codes[tag], 409, 'Workspace export could not complete.');
       throw error;
     } finally {
-      await sandbox.files.remove(path).catch(() => {});
+      // Best-effort temp cleanup has its own short I/O bound, but must never retain
+      // the caller's study/environment lock after the shared deadline expires.
+      const cleanup = sandbox.files
+        .remove(path, {
+          requestTimeoutMs: 5_000,
+          signal: AbortSignal.timeout(5_000),
+        })
+        .catch(() => {});
+      if (!signal.aborted) await checkpointIO(() => cleanup, signal).catch(() => {});
     }
   }
 

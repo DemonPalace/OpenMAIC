@@ -42,11 +42,14 @@ keep the cloud lease at least five minutes for normal hosted use. The applicatio
 30-second reconciliation schedule from `instrumentation.ts`. Replicas share the existing
 study/environment locks, and application restart does not reset durable usage timestamps.
 
-The active PBL scene reports coalesced trusted pointer, keyboard and wheel input at most
-once every 30 seconds, plus entry/visibility return. Ordinary view polling and automatic
-scrolling do not count. Switching scenes or leaving a course stops that scene's activity
-reports; another tab can still update the same study. No unload callback or tab counter is
-required. A long static reading period can reach inactivity; subsequent input restores the
+The active PBL scene reports coalesced trusted pointer, keyboard and wheel input inside
+the project frame at most once every 30 seconds, plus entry/visibility return. The activity
+provider stays above scene rendering, while input capture belongs to the project frame
+(including its React portals). Classroom navigation controls do not restore idle compute.
+Ordinary view polling and automatic scrolling do not count. Switching scenes or leaving
+a course stops that scene's activity reports; another tab can still update the same study.
+No unload callback or tab counter is required. A long static reading period can reach
+inactivity; subsequent input restores the
 workspace automatically. Returning to a completed project's report does not allocate compute;
 its explicit restore control opens the project files when wanted.
 After a preparation failure, further typing/scrolling does not automatically retry it;
@@ -101,10 +104,15 @@ deletion under the original ID before preparing a replacement. If metadata canno
 persisted, no intentional destructive release occurs; the remaining provider lease is the
 compute bound. Maintenance checks database writability before renewing.
 
-Archive transmission has a 120-second total deadline, including provider export and chunk
-upload. Built-in S3 uploads receive its cancellation signal; custom byte adapters should
-honor the optional write signal. Even an adapter ignoring cancellation cannot commit a
-late checkpoint head; uncertain chunks remain pending for the existing collector.
+Checkpoint I/O shares a 120-second total deadline, including provider connection, archive
+generation, download and chunk upload. Generation and download receive the same cancellation
+signal; a pre-expired deadline starts neither connection nor generation. Temporary archive
+cleanup is best effort with its own short I/O bound and cannot extend the caller's lock
+beyond the shared deadline. Cancellation bounds caller waiting; it does not confirm that
+a remote archive process has stopped. Built-in S3 uploads receive its cancellation signal;
+custom byte adapters should honor the optional write signal. Even an adapter ignoring
+cancellation cannot commit a late checkpoint head; uncertain chunks remain pending for the
+existing collector.
 Logs contain safe reason/stage and study/environment IDs, never raw provider errors.
 Do not disable/change provider or storage configuration until outstanding environments are
 drained. The provider lease remains the final compute bound if application workers disappear;

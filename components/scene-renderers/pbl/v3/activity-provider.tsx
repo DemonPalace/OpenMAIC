@@ -11,10 +11,19 @@ import {
 import { useStageStore } from '@/lib/store';
 import { createPblActivity } from '@/lib/pbl/v3/activity';
 
-const Activity = createContext({ sceneId: '', generation: 0 });
+const Activity = createContext({
+  sceneId: '',
+  generation: 0,
+  input: (_event: SyntheticEvent) => {},
+});
 export function usePblActivityGeneration(sceneId: string) {
   const activity = useContext(Activity);
   return activity.sceneId === sceneId ? activity.generation : 0;
+}
+
+export function usePblActivityInput(sceneId: string) {
+  const activity = useContext(Activity);
+  return activity.sceneId === sceneId ? activity.input : undefined;
 }
 
 /** Lives above scene rendering: whiteboard/fullscreen changes do not invent a departure. */
@@ -74,16 +83,5 @@ export function PblActivityProvider({
   const input = (event: SyntheticEvent) => {
     if (event.isTrusted && document.visibilityState === 'visible') reporter.current?.mark();
   };
-  return (
-    <Activity.Provider value={activity}>
-      <div
-        className="contents"
-        onPointerDownCapture={input}
-        onKeyDownCapture={input}
-        onWheelCapture={input}
-      >
-        {children}
-      </div>
-    </Activity.Provider>
-  );
+  return <Activity.Provider value={{ ...activity, input }}>{children}</Activity.Provider>;
 }
