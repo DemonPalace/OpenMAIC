@@ -81,7 +81,13 @@ export interface SandboxProvider {
     operationId: string,
     signal?: AbortSignal,
   ): Promise<Array<{ path: string; bytes: number }>>;
-  renew(resourceId: string, operationId: string, lifetimeMs: number): Promise<void>;
+  /** Extend the lease without shortening any existing remaining lifetime. */
+  renew(
+    resourceId: string,
+    operationId: string,
+    lifetimeMs: number,
+    signal?: AbortSignal,
+  ): Promise<void>;
   /** Server-only descriptor. Never serialize its credentials into a browser API response. */
   nativePreview(
     resourceId: string,

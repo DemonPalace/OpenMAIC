@@ -12,6 +12,7 @@ import { SandboxError, sandboxConflict } from '@/lib/sandbox/errors';
 import type { SandboxRow } from './store';
 import { checkpointIO } from './checkpoint-errors';
 import {
+  CHECKPOINT_TIMEOUT_MS,
   checkpointPolicy,
   checkpointArchiveLimit,
   checkpointOwnerQuota,
@@ -140,7 +141,7 @@ export class CheckpointStorage {
     row: SandboxRow,
     revision: number,
     source: AsyncIterable<Uint8Array>,
-    signal = AbortSignal.timeout(120_000),
+    signal = AbortSignal.timeout(CHECKPOINT_TIMEOUT_MS),
   ) {
     const policy = checkpointPolicy(),
       id = randomUUID();

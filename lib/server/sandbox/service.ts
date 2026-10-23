@@ -16,7 +16,12 @@ import {
 import { assertWorkspaceMutation, type WorkspaceMutation } from './managed-workspace';
 import { issuePreviewGrant, previewConfig, verifyPreviewGrant } from './preview';
 import { WORKSPACE_ROOT, workspacePath } from './workspace-archive';
-import { checkpointPolicy } from './checkpoint-policy';
+import {
+  checkpointPolicy,
+  CHECKPOINT_TIMEOUT_MS,
+  CHECKPOINT_MIN_LIFETIME_MS,
+} from './checkpoint-policy';
+import { checkpointIO } from './checkpoint-errors';
 import type { SandboxConfig } from './config';
 import { resolvedSandboxConfig } from './settings';
 import { publicEnvironment, SandboxStore, type SandboxRow } from './store';
@@ -742,9 +747,33 @@ export class SandboxService {
     await this.binding(id);
     return this.store.exclusive(id, async () => {
       const row = await this.running(id);
-      await this.provider.renew(row.resource_id, row.id, this.config.lifetimeMs);
-      return { renewed: true, lifetimeMs: this.config.lifetimeMs };
+      return this.renewUnlocked(row, this.config.lifetimeMs);
     });
+  }
+
+  /** Protect source snapshot I/O before the archive path acquires its own environment lock. */
+  async renewForCheckpoint(id: string, signal?: AbortSignal) {
+    signal?.throwIfAborted();
+    await this.binding(id);
+    return this.store.exclusive(id, async () =>
+      this.renewUnlocked(
+        await this.running(id),
+        Math.max(this.config.lifetimeMs, CHECKPOINT_MIN_LIFETIME_MS),
+        signal,
+      ),
+    );
+  }
+
+  private async renewUnlocked(
+    row: SandboxRow & { resource_id: string },
+    lifetimeMs: number,
+    signal?: AbortSignal,
+  ) {
+    await checkpointIO(
+      () => this.provider.renew(row.resource_id, row.id, lifetimeMs, signal),
+      signal,
+    );
+    return { renewed: true, lifetimeMs };
   }
 
   async listFiles(id: string, signal?: AbortSignal) {
@@ -799,13 +828,19 @@ export class SandboxService {
     id: string,
     expectedRevision: unknown,
     release = false,
-    signal = AbortSignal.timeout(120_000),
+    signal = AbortSignal.timeout(CHECKPOINT_TIMEOUT_MS),
   ) {
+    signal.throwIfAborted();
     if (!Number.isSafeInteger(expectedRevision) || (expectedRevision as number) < 0)
       throw sandboxInvalid('An expected checkpoint revision is required (0 for the first save).');
     await this.mutation(id, 'checkpoint');
     return this.store.exclusive(id, async () => {
       const row = await this.running(id);
+      await this.renewUnlocked(
+        row,
+        Math.max(this.config.lifetimeMs, CHECKPOINT_MIN_LIFETIME_MS),
+        signal,
+      );
       await this.assertWorkspaceIdleUnlocked(row);
       const checkpoint = await this.store.saveCheckpoint(
         row,

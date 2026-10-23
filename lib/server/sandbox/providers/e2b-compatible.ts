@@ -29,7 +29,11 @@ import {
   workspacePath,
 } from '../workspace-archive';
 import { CHECKPOINT_RUNNER } from '../checkpoint-runner';
-import { checkpointPolicy, checkpointArchiveLimit } from '../checkpoint-policy';
+import {
+  checkpointPolicy,
+  checkpointArchiveLimit,
+  CHECKPOINT_TIMEOUT_MS,
+} from '../checkpoint-policy';
 import { checkpointIO } from '../checkpoint-errors';
 import { Readable } from 'node:stream';
 import { TERMINAL_CLEANUP } from '../terminal-cleanup';
@@ -579,11 +583,16 @@ export class E2BCompatibleSandboxProvider implements SandboxProvider {
       await sandbox.files.remove(transfer).catch(() => {});
     }
   }
-  async renew(resourceId: string, operationId: string, lifetimeMs: number) {
-    const info = await this.ownedInfo(resourceId, operationId);
+  async renew(resourceId: string, operationId: string, lifetimeMs: number, signal?: AbortSignal) {
+    const info = await this.ownedInfo(resourceId, operationId, signal);
     if (!info || info.state !== 'running')
       throw sandboxConflict('Only a running sandbox can be renewed.');
-    await Sandbox.setTimeout(resourceId, lifetimeMs, this.options);
+    // Ordinary short renewals must not shorten a checkpoint's temporary lease.
+    const duration = Math.max(lifetimeMs, info.endAt.getTime() - Date.now());
+    await checkpointIO(
+      () => Sandbox.setTimeout(resourceId, duration, { ...this.options, signal }),
+      signal,
+    );
   }
 
   async previewLifetime(resourceId: string, operationId: string) {
@@ -623,7 +632,7 @@ export class E2BCompatibleSandboxProvider implements SandboxProvider {
   async *exportWorkspace(
     resourceId: string,
     operationId: string,
-    signal = AbortSignal.timeout(120_000),
+    signal = AbortSignal.timeout(CHECKPOINT_TIMEOUT_MS),
   ): AsyncIterable<Uint8Array> {
     signal.throwIfAborted();
     const sandbox = await this.connect(resourceId, operationId, signal);
@@ -635,7 +644,11 @@ export class E2BCompatibleSandboxProvider implements SandboxProvider {
         () =>
           sandbox.commands.run(
             `python3 -c ${shellQuote(CHECKPOINT_RUNNER)} export ${shellQuote(path)} ${shellQuote(encoded)}`,
-            { timeoutMs: 120_000, requestTimeoutMs: 125_000, signal },
+            {
+              timeoutMs: CHECKPOINT_TIMEOUT_MS,
+              requestTimeoutMs: CHECKPOINT_TIMEOUT_MS + 5_000,
+              signal,
+            },
           ),
         signal,
       );
@@ -643,7 +656,7 @@ export class E2BCompatibleSandboxProvider implements SandboxProvider {
         () =>
           sandbox.files.read(path, {
             format: 'stream',
-            requestTimeoutMs: 120_000,
+            requestTimeoutMs: CHECKPOINT_TIMEOUT_MS,
             signal,
           }),
         signal,

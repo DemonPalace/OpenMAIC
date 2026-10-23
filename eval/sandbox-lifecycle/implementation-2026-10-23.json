@@ -134,6 +134,25 @@
       "method": "Browser screenshot of a real persisted released study; automatic compute preparation and teaching turns suppressed in the screenshot harness to avoid allocating additional resources"
     },
     "packageVersionCheck": "storage 0.39.0 -> 0.39.1 passed",
+    "checkpointLeaseFollowUp": {
+      "comment": "https://github.com/THU-MAIC/OpenMAIC/pull/2011#discussion_r4360496405",
+      "checkpointTimeoutMs": 120000,
+      "checkpointMinimumLeaseMs": 180000,
+      "newUnitRegressions": 9,
+      "newPostgresRegressions": 2,
+      "postgresIntegrationTests": 100,
+      "sandboxAndPblUnitTests": { "passed": 431, "skipped": 11 },
+      "mode": "Real disposable PostgreSQL schemas and local Python/Java execution; the two lease regressions model 75 seconds of remote elapsed time under a configured 60-second lease without a wall-clock wait or live cloud calls",
+      "coverage": [
+        "PBL manual and maintenance checkpoints protect the lease before source snapshot I/O",
+        "Generic workspace saves renew within their existing environment lock before idle/export work",
+        "Checkpoint renewal requests the longer of the configured lifetime and the shared deadline plus 60 seconds",
+        "Ordinary provider renewal never shortens a longer remaining lease",
+        "Failed, stalled or expired checkpoint renewal cannot start export, commit a checkpoint or release the environment",
+        "Late ownership lookup after cancellation cannot start a provider timeout update"
+      ],
+      "selfReview": "Targeted subagent re-review found no new confirmed lease, deadline, lock or authorization regression; expired-grace and discard paths remain unchanged."
+    },
     "sourceDeadlineFollowUp": {
       "comment": "https://github.com/THU-MAIC/OpenMAIC/pull/2011#discussion_r4360261199",
       "newSourceIoUnitRegressions": 13,

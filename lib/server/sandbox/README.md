@@ -42,6 +42,14 @@ keep the cloud lease at least five minutes for normal hosted use. The applicatio
 30-second reconciliation schedule from `instrumentation.ts`. Replicas share the existing
 study/environment locks, and application restart does not reset durable usage timestamps.
 
+Short configured leases remain valid. Before a PBL source snapshot and before a generic
+workspace archive, the service renews for at least **180000 ms**: the shared 120-second
+checkpoint deadline plus 60 seconds of margin, or the configured lease if longer. Ordinary
+provider renewals preserve any longer remaining lease, so a concurrent short renewal cannot
+remove that protection. Renewal honors the checkpoint signal; an expired or failed renewal
+starts no snapshot/export or checkpoint commit. The existing failure-grace/discard paths
+still release without requesting a new checkpoint lease.
+
 Study-lock admission is shared by all stores using the same PostgreSQL pool. Maintenance
 leaves one admission slot for interactive work when the pool supports multiple slots: the
 default ten-connection pool admits two study operations, of which maintenance may occupy

@@ -6,6 +6,7 @@ import { projectEditAccess } from '@/lib/pbl/v3/edit-access';
 import { reviewQuestion } from './review-question';
 import { createHash, randomUUID } from 'node:crypto';
 import { checkpointIO, checkpointStep } from '@/lib/server/sandbox/checkpoint-errors';
+import { CHECKPOINT_TIMEOUT_MS } from '@/lib/server/sandbox/checkpoint-policy';
 import type { PoolClient } from 'pg';
 import type { OwnerPrincipal } from '@/lib/server/identity/types';
 import { writeSessionGrant } from '@/lib/server/sandbox/store';
@@ -121,8 +122,11 @@ export async function fileSnapshot(service: SandboxService, row: Study, signal?:
   return { files, fingerprint: filesFingerprint(files) };
 }
 export async function saveStudyCheckpoint(service: SandboxService, row: Study) {
-  const signal = AbortSignal.timeout(120_000);
-  const snapshot = await checkpointStep('snapshot', () => fileSnapshot(service, row, signal));
+  const signal = AbortSignal.timeout(CHECKPOINT_TIMEOUT_MS);
+  const snapshot = await checkpointStep('snapshot', async () => {
+    await service.renewForCheckpoint(requireEnvironment(row), signal);
+    return fileSnapshot(service, row, signal);
+  });
   const previous = await service.checkpoint(requireEnvironment(row));
   const saved = await checkpointStep('archive', () =>
     service.saveWorkspace(requireEnvironment(row), previous?.revision ?? 0, false, signal),

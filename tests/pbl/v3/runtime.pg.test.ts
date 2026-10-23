@@ -38,6 +38,7 @@ const mocked = vi.hoisted(() => ({
   hideDiscovery: false,
   creates: [] as string[],
   renewals: [] as string[],
+  lifetimeMs: 300_000,
   terminals: new Map<string, number>(),
   inputs: [] as string[],
   objects: new Map<string, Uint8Array>(),
@@ -118,7 +119,7 @@ vi.mock('@/lib/server/sandbox/settings', () => ({
   resolvedSandboxConfig: async () => ({
     fingerprint: 'test',
     settingsRevision: 0,
-    lifetimeMs: 300000,
+    lifetimeMs: mocked.lifetimeMs,
     maxActive: 100,
     maxActivePerOwner: 100,
   }),
@@ -3690,6 +3691,58 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
       [id],
     );
   }
+
+  it.each(['command', 'maintenance'] as const)(
+    'protects a slow %s checkpoint when the configured lease is only sixty seconds',
+    async (mode) => {
+      mocked.lifetimeMs = 60_000;
+      let reading: ReturnType<typeof vi.spyOn> | undefined;
+      let renewing: ReturnType<typeof vi.spyOn> | undefined;
+      try {
+        const fresh = await freshStudy();
+        const row = await store.get(fresh.id, principal.ownerId);
+        const environmentId = row.environment_id!;
+        await writeFile(join(mocked.root, environmentId, 'PLAN.md'), 'Protected short-lease plan');
+        let elapsed = 0,
+          expiresAt = 60_000;
+        const originalRenew = E2BCompatibleSandboxProvider.prototype.renew;
+        renewing = vi
+          .spyOn(E2BCompatibleSandboxProvider.prototype, 'renew')
+          .mockImplementation(async function (this: E2BCompatibleSandboxProvider, ...args) {
+            await originalRenew.apply(this, args);
+            if (args[0] === environmentId) expiresAt = Math.max(expiresAt, elapsed + args[2]);
+          });
+        const originalRead = E2BCompatibleSandboxProvider.prototype.readText;
+        reading = vi
+          .spyOn(E2BCompatibleSandboxProvider.prototype, 'readText')
+          .mockImplementation(async function (this: E2BCompatibleSandboxProvider, ...args) {
+            if (args[0] === environmentId) {
+              elapsed = 75_000; // Model remote elapsed time without a wall-clock wait.
+              if (elapsed >= expiresAt) throw new Error('Provider lease expired during snapshot');
+            }
+            return originalRead.apply(this, args);
+          });
+        if (mode === 'maintenance') {
+          await ageStudy(fresh.id);
+          await maintainStudy(store, fresh.id, principal.ownerId);
+        } else await fresh.send('checkpoint');
+        const service = await SandboxService.forOwner(principal);
+        expect(await service.checkpoint(environmentId)).toMatchObject({ revision: 1 });
+        if (mode === 'maintenance') {
+          expect(await service.get(environmentId)).toMatchObject({ state: 'destroyed' });
+          await fresh.send('prepare');
+          const restored = await store.get(fresh.id, principal.ownerId);
+          expect(await service.readText(restored.environment_id!, 'PLAN.md')).toBe(
+            'Protected short-lease plan',
+          );
+        }
+      } finally {
+        reading?.mockRestore();
+        renewing?.mockRestore();
+        mocked.lifetimeMs = 300_000;
+      }
+    },
+  );
 
   it.each(['file', 'listing'] as const)(
     'releases source snapshot %s admission at the shared deadline and fences late reads',

@@ -9,6 +9,7 @@ const sdk = vi.hoisted(() => ({
   getInfo: vi.fn(),
   connect: vi.fn(),
   kill: vi.fn(),
+  setTimeout: vi.fn(),
 }));
 vi.mock('e2b', () => ({
   Sandbox: sdk,
@@ -432,4 +433,69 @@ describe('checkpoint source-read deadline', () => {
       if (mode === 'pre-expired') expect(sdk.getInfo).not.toHaveBeenCalled();
     },
   );
+});
+
+describe('checkpoint lease protection', () => {
+  it.each([60_000, 300_000])(
+    'preserves a longer remaining lease when renewing for %s ms',
+    async (requested) => {
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000);
+      const { provider } = archiveFixture();
+      const controller = new AbortController();
+      sdk.getInfo.mockResolvedValue({
+        sandboxId: 'resource',
+        state: 'running',
+        endAt: new Date(Date.now() + 180_000),
+        metadata: { openmaic_connection: 'test-installation', openmaic_operation: 'op' },
+      });
+      try {
+        await provider.renew('resource', 'op', requested, controller.signal);
+        expect(sdk.setTimeout).toHaveBeenCalledExactlyOnceWith(
+          'resource',
+          Math.max(requested, 180_000),
+          expect.objectContaining({ signal: controller.signal }),
+        );
+      } finally {
+        clock.mockRestore();
+      }
+    },
+  );
+
+  it('starts no renewal after a pre-expired checkpoint deadline', async () => {
+    const { provider } = archiveFixture();
+    const controller = new AbortController();
+    controller.abort(new DOMException('checkpoint deadline', 'TimeoutError'));
+    await expect(
+      provider.renew('resource', 'op', 180_000, controller.signal),
+    ).rejects.toMatchObject({ name: 'TimeoutError' });
+    expect(sdk.getInfo).not.toHaveBeenCalled();
+    expect(sdk.setTimeout).not.toHaveBeenCalled();
+  });
+
+  it('does not renew after a canceled ownership lookup completes late', async () => {
+    const { provider } = archiveFixture();
+    let finish!: () => void;
+    sdk.getInfo.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = () =>
+            resolve({
+              sandboxId: 'resource',
+              state: 'running',
+              endAt: new Date(Date.now() + 180_000),
+              metadata: { openmaic_connection: 'test-installation', openmaic_operation: 'op' },
+            });
+        }),
+    );
+    const controller = new AbortController();
+    const failed = expect(
+      provider.renew('resource', 'op', 180_000, controller.signal),
+    ).rejects.toMatchObject({ name: 'TimeoutError' });
+    await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+    controller.abort(new DOMException('checkpoint deadline', 'TimeoutError'));
+    await failed;
+    finish();
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(sdk.setTimeout).not.toHaveBeenCalled();
+  });
 });
