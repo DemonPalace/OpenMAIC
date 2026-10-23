@@ -218,8 +218,10 @@ async function validateBootConfiguration(): Promise<void> {
   // `docker compose up` for a deployment).
   const { requireDatabaseUrl } = await import('@/lib/server/database-requirement');
   runConfigurationCheck(() => requireDatabaseUrl());
-  const { pblIdleTimeoutMs } = await import('@/lib/server/pbl-v3/lifecycle-config');
+  const { pblIdleTimeoutMs, pblArchiveFailureGraceMs } =
+    await import('@/lib/server/pbl-v3/lifecycle-config');
   runConfigurationCheck(() => pblIdleTimeoutMs());
+  runConfigurationCheck(() => pblArchiveFailureGraceMs());
 
   // The deployment's model configuration: openmaic.yml (or the file named by
   // OPENMAIC_CONFIG), else the legacy provider variables translated. A

@@ -541,6 +541,8 @@ describe('instrumentation registration', () => {
   beforeEach(() => {
     vi.resetModules();
     vi.unstubAllEnvs();
+    // Model routing is independent of scheduling and must not read local deployment files.
+    vi.doMock('@/lib/server/model-config/runtime', () => ({ deploymentConfig: vi.fn() }));
     // register() refuses to boot without a database; these cases start past it.
     vi.stubEnv('DATABASE_URL', 'postgres://collector-registration/openmaic');
   });
@@ -590,4 +592,28 @@ describe('instrumentation registration', () => {
 
     expect(startAssetCollectorSchedule).not.toHaveBeenCalled();
   });
+
+  it.each(['OPENMAIC_PBL_IDLE_TIMEOUT_MS', 'OPENMAIC_PBL_ARCHIVE_FAILURE_GRACE_MS'])(
+    'refuses malformed %s through the fatal boot path before scheduling work',
+    async (setting) => {
+      const startAssetCollectorSchedule = vi.fn();
+      vi.doMock('@/lib/persistence/asset-collector-schedule', () => ({
+        startAssetCollectorSchedule,
+      }));
+      const startLegacyClassroomImport = vi.fn(() => ({ stop: async () => {} }));
+      vi.doMock('@/lib/server/legacy-classroom-import', () => ({ startLegacyClassroomImport }));
+      const exitOnBootFailure = vi.fn(async () => {});
+      vi.doMock('@/lib/server/boot-failure', () => ({ exitOnBootFailure }));
+      vi.stubEnv('NEXT_RUNTIME', 'nodejs');
+      vi.stubEnv(setting, 'Infinity');
+
+      const { register } = await import('@/instrumentation');
+      await expect(register()).rejects.toThrow(setting);
+      expect(exitOnBootFailure).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ name: 'InvalidBootConfigurationError' }),
+      );
+      expect(startLegacyClassroomImport).not.toHaveBeenCalled();
+      expect(startAssetCollectorSchedule).not.toHaveBeenCalled();
+    },
+  );
 });

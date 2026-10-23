@@ -9,7 +9,7 @@ import {
   type SyntheticEvent,
 } from 'react';
 import { useStageStore } from '@/lib/store';
-import { createPblActivity } from '@/lib/pbl/v3/activity';
+import { createPblActivity, PBL_ACTIVITY_INTERVAL_MS } from '@/lib/pbl/v3/activity';
 
 const Activity = createContext({
   sceneId: '',
@@ -67,13 +67,12 @@ export function PblActivityProvider({
       if (document.visibilityState !== 'visible') return;
       nextWake = 0;
       current.mark();
-      void current.flush();
     };
     enter();
     document.addEventListener('visibilitychange', enter);
     const timer = setInterval(() => {
       if (document.visibilityState === 'visible') void current.flush();
-    }, 30_000);
+    }, PBL_ACTIVITY_INTERVAL_MS);
     return () => {
       clearInterval(timer);
       document.removeEventListener('visibilitychange', enter);

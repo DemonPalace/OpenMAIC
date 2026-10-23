@@ -43,9 +43,12 @@ keep the cloud lease at least five minutes for normal hosted use. The applicatio
 study/environment locks, and application restart does not reset durable usage timestamps.
 
 The active PBL scene reports coalesced trusted pointer, keyboard and wheel input inside
-the project frame at most once every 30 seconds, plus entry/visibility return. The activity
-provider stays above scene rendering, while input capture belongs to the project frame
+the project frame at most once every 30 seconds. Entry and visibility return also mark
+activity. The provider stays above scene rendering, while input capture belongs to the project frame
 (including its React portals). Classroom navigation controls do not restore idle compute.
+The first input after a reporting gap sends immediately; later input is coalesced within
+the 30-second interval. The existing heartbeat flushes pending input and retries failed
+batches, but never sends an empty batch. No additional activity timer is required.
 Ordinary view polling and automatic scrolling do not count. Switching scenes or leaving
 a course stops that scene's activity reports; another tab can still update the same study.
 No unload callback or tab counter is required. A long static reading period can reach
@@ -94,6 +97,8 @@ for user activity or an explicit retry instead of repeatedly exporting unchanged
 and accepts 60000–86400000. It starts on the first failed **idle reclamation**, not a
 periodic dirty checkpoint. Retries and polling never extend it. Real learner activity
 clears the pending failure cycle; task completion starts a fresh inactivity interval.
+Both the idle timeout and archive failure grace are validated during fatal boot checks,
+before background workers start; malformed settings refuse startup.
 
 After that grace, maintenance stops renewing and records release-without-archive intent
 before deletion. The previous successful checkpoint remains intact; the UI shows its

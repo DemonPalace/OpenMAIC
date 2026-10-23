@@ -134,6 +134,23 @@
       "method": "Browser screenshot of a real persisted released study; automatic compute preparation and teaching turns suppressed in the screenshot harness to avoid allocating additional resources"
     },
     "packageVersionCheck": "storage 0.39.0 -> 0.39.1 passed",
+    "inputAndBootValidationFollowUp": {
+      "comments": [
+        "https://github.com/THU-MAIC/OpenMAIC/pull/2011#discussion_r4359910066",
+        "https://github.com/THU-MAIC/OpenMAIC/pull/2011#discussion_r4359910073"
+      ],
+      "targetedTests": 28,
+      "pblAndStartupTests": { "passed": 264, "skipped": 4 },
+      "browserWorkspaceJourney": "passed",
+      "mode": "Hermetic activity/startup suites with a controlled clock and mocked background workers, plus browser API fixture on local Next.js; no additional cloud compute allocated",
+      "coverage": [
+        "First trusted input after idle expiry reports without waiting for a heartbeat",
+        "Continuous input remains throttled and empty heartbeats do not renew activity",
+        "Failed batches and input arriving during a report remain pending without retry storms",
+        "Both lifecycle timeouts reject malformed values through fatal boot handling before background work starts"
+      ],
+      "selfReview": "Targeted subagent review found no confirmed new defect in activity coalescing, scene cleanup or fatal boot validation"
+    },
     "navigationAndArchiveDeadlineFollowUp": {
       "comments": [
         "https://github.com/THU-MAIC/OpenMAIC/pull/2011#discussion_r4359423366",
