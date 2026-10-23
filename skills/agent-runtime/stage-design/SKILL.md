@@ -29,7 +29,9 @@ order:
    same information a planned outline slot used to carry) — in page order.
    Settle the plan with the user through `ask_user` before creating anything:
    there is no outline tool to plan with, so the plan is your words and their
-   sign-off. A topic skill's structural constraints are a diagnostic the
+   sign-off. Skip that confirmation round when the user already gave a complete
+   page structure or explicitly asked you to go ahead directly — their message
+   is the sign-off. A topic skill's structural constraints are a diagnostic the
    runtime checks against the real stage after each page; you decide how to
    act on it.
 2. **`create_stage`** with the settled course title (pass the series folder's
@@ -90,12 +92,16 @@ and not re-synthesized ships as a silent page.
 Every settled page has to be persisted — a stage is done when the deck is
 complete, not when it is planned or half built.
 
-Every speech action must have audio. `read_stage` each page at
-`path:/scenes/<order|id>` with `detail:"source"`, check the
-`audioId` field on its speech actions, and call `generate_tts` on any page that
-is missing it. Read what those actions say while you are there: narration that
-talks about material this stage does not teach is a defect, whatever its audio
-status. Only then is the stage finished.
+As soon as every settled page is persisted, tell the user the classroom is
+ready to preview while the remaining checks run.
 
-When every settled page is persisted, say so to the user in one or two
-sentences.
+Every speech action must have audio. Call `generate_tts` once on each page in
+its default mode: it fills only the lines missing audio and reports how many
+were generated, skipped, or failed, so there is no need to read each page's
+source to check `audioId`. Re-run it only where it reported failures or where
+narration wording changed afterwards. Treat narration that talks about material
+this stage does not teach as a defect, whatever its audio status. Only then is the
+stage finished.
+
+Close with a brief report: what was built, any gap left, and anything that
+needs the user's decision.
