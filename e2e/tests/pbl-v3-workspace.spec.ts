@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import { test, expect } from '@playwright/test';
+import { expect } from '@playwright/test';
+import { test } from '../fixtures/pbl-learning-events';
 import type { LearningView } from '@/lib/pbl/v3/types';
 
 /** Browser interaction contract; backend/runner/Python execution is covered by runtime.pg.test.ts. */
@@ -7,6 +8,7 @@ test.setTimeout(120000);
 
 test('installed sample opens in the normal classroom and preserves progress after refresh', async ({
   page,
+  learningEvents,
 }) => {
   await page.addInitScript(() => localStorage.setItem('locale', 'en-US'));
   const state = {
@@ -308,6 +310,22 @@ test('installed sample opens in the normal classroom and preserves progress afte
     }
     return route.fulfill({ json: view });
   });
+  await learningEvents(() => ({
+    view: view as unknown as LearningView,
+    workbench: view.environmentId
+      ? {
+          environmentId: view.environmentId,
+          revision: view.revision,
+          epoch: workEpoch,
+          canEdit: view.actions.includes('edit'),
+          canManageFiles: view.actions.includes('edit'),
+          canRun: view.actions.includes('edit'),
+          planning: false,
+          commands: [],
+          terminals: [],
+        }
+      : null,
+  }));
   await page.goto('/pbl-v3');
   await page.getByRole('button', { name: 'Open selected sample' }).click();
   await expect(page).toHaveURL(/\/classroom\/pbl-/, { timeout: 60000 });
@@ -449,6 +467,7 @@ test('installed sample opens in the normal classroom and preserves progress afte
   expect(calls.filter((c) => c.type === 'retry')).toHaveLength(1);
   expect(calls.filter((c) => c.type === 'chat')).toHaveLength(1);
   await page.getByLabel('Your message').fill('Continue after restoring my environment.');
+  const preparationsBeforeDisconnect = calls.filter((c) => c.type === 'prepare').length;
   view.environment = { state: 'destroyed', ready: false };
   failPreparation = true;
   await page.getByRole('button', { name: 'Refresh progress' }).click();
@@ -459,6 +478,9 @@ test('installed sample opens in the normal classroom and preserves progress afte
   const submitted = calls.filter((c) => c.type === 'chat').length;
   await page.getByLabel('Your message').press('Enter');
   expect(calls.filter((c) => c.type === 'chat')).toHaveLength(submitted);
+  // A passive health update never allocates an environment; recovery is explicit.
+  expect(calls.filter((c) => c.type === 'prepare')).toHaveLength(preparationsBeforeDisconnect);
+  await page.getByRole('button', { name: 'Retry project setup', exact: true }).click();
   await expect(
     page
       .getByRole('alert')

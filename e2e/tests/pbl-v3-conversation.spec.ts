@@ -1,4 +1,5 @@
-import { test, expect } from '@playwright/test';
+import { expect } from '@playwright/test';
+import { test } from '../fixtures/pbl-learning-events';
 import { seedServerDocument, uniqueStageId } from '../fixtures/server-seed';
 import { createSettingsStorage } from '../fixtures/test-data/settings';
 import { defaultTheme } from '../fixtures/test-data/slide-theme';
@@ -6,6 +7,7 @@ import type { LearningView } from '@/lib/pbl/v3/types';
 
 test('PBL conversation stays in the host classroom through expansion, scene navigation and refresh', async ({
   page,
+  learningEvents,
 }) => {
   test.setTimeout(120000);
   await page.addInitScript(
@@ -327,6 +329,20 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
       });
     return route.fulfill({ json: view });
   });
+  await learningEvents(() => ({
+    view,
+    workbench: {
+      environmentId: view.environmentId!,
+      revision: view.revision,
+      epoch: 0,
+      canEdit: view.actions.includes('edit'),
+      canManageFiles: false,
+      canRun: false,
+      planning: view.stage.kind === 'produce' && view.stage.writes === 'plan',
+      commands: [],
+      terminals: [],
+    },
+  }));
   await page.goto(`/classroom/${stageId}`);
   await page.getByTestId('scene-title').filter({ hasText: 'Practice project' }).click();
   await page.getByRole('button', { name: 'Continue Project', exact: true }).click();
