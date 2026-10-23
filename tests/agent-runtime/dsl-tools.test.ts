@@ -1496,6 +1496,38 @@ describe('patch_stage robustness', () => {
     expect(current.putScene).not.toHaveBeenCalled();
   });
 
+  it('keeps the action id on a whole-action set and clears stale audio', async () => {
+    const scene = richSlideScene();
+    scene.actions = [
+      { id: 'act-1', type: 'speech', text: 'Welcome', audioId: 'asset-old' },
+      { id: 'act-2', type: 'speech', text: 'Next' },
+    ] as never;
+    const current = state(course([scene]));
+    const patch = tool(dslTools(current.store), 'patch_stage');
+    const replaced = await patch.execute('replace-action', {
+      target: '/scenes/1',
+      intent: 'Rewrite narration',
+      ops: [
+        {
+          op: 'set',
+          path: '/actions/0',
+          value: { type: 'speech', text: 'Hello again', audioId: 'asset-old' },
+        },
+      ],
+    } as never);
+    expect(replaced).not.toHaveProperty('isError');
+    const action = current.get().scenes[0]!.actions![0]!;
+    expect(action).toMatchObject({ id: 'act-1', text: 'Hello again' });
+    expect(action).not.toHaveProperty('audioId');
+
+    const swapped = await patch.execute('swap-action', {
+      target: '/scenes/1',
+      intent: 'Swap narration',
+      ops: [{ op: 'set', path: '/actions/0', value: { id: 'act-2', type: 'speech', text: 'x' } }],
+    } as never);
+    expect(textOf(swapped)).toContain('carries id "act-2" of the action at index 1');
+  });
+
   it('reports a bad action list instead of throwing on null actions', async () => {
     const current = richState();
     const patch = tool(dslTools(current.store), 'patch_stage');

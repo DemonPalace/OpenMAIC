@@ -808,10 +808,49 @@ function applyPatchOp(scene: Scene, raw: RawPatchOp): PatchOpResult {
         })
       : applied;
   }
-  const applied = applyJsonPointerEdit(scene, { action: op.op, path: op.path, value: op.value });
+  const kept = keepActionIdentity(scene, op.op, op.path, op.value);
+  if ('error' in kept) return { ok: false as const, error: kept.error };
+  const applied = applyJsonPointerEdit(scene, {
+    action: op.op,
+    path: op.path,
+    value: kept.value,
+  });
   if (!applied.ok) return applied;
   clearStaleSpeechAudio(scene, applied.value as Scene);
   return withNotes({ ok: true as const, value: applied.value as Scene, details: baseDetails });
+}
+
+/**
+ * Action ids are server-owned like element ids. A whole-action `set` at an
+ * existing index that omits the id and keeps the type replaces that action, so
+ * it keeps the existing id — which also lets stale-audio cleanup match it to
+ * the previous action. Carrying another existing action's id is rejected.
+ */
+function keepActionIdentity(
+  scene: Scene,
+  op: 'set' | 'remove',
+  path: string,
+  value: unknown,
+): { value: unknown } | { error: string } {
+  const match = /^\/actions\/(0|[1-9]\d*)$/.exec(path);
+  if (op !== 'set' || !match || !value || typeof value !== 'object' || Array.isArray(value)) {
+    return { value };
+  }
+  const actions = (scene.actions ?? []) as Array<Action | null>;
+  const index = Number(match[1]);
+  const existing = actions[index];
+  if (!existing) return { value };
+  const record = value as Record<string, unknown>;
+  if (record.id === undefined) {
+    return { value: record.type === existing.type ? { ...record, id: existing.id } : value };
+  }
+  const other = actions.findIndex((action, at) => at !== index && action?.id === record.id);
+  if (other >= 0) {
+    return {
+      error: `set /actions/${index} carries id ${JSON.stringify(record.id)} of the action at index ${other}; actions cannot be reordered or swapped with set. Edit each action's fields in place, or set the whole /actions array`,
+    };
+  }
+  return { value };
 }
 
 /** Array length when `set` at `path` appends (index == length or `-`), else null. */
