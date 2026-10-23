@@ -2877,8 +2877,8 @@
     "environmentSleeping": "專案環境已休眠。繼續操作即可恢復，也可以按下方按鈕恢復專案檔案。",
     "recoverWorkspace": "恢復專案檔案",
     "checkpointUnavailable": "最新修改未能封存，請重試儲存。若持續閒置，環境可能被釋放，未封存的修改可能遺失。",
-    "checkpointSkipped": "環境已在未完成新封存的情況下釋放，最後成功封存之後的修改可能遺失。",
-    "lastDurableCheckpoint": "最後成功封存時間：{{time}}。",
+    "checkpointSkipped": "封存持續失敗，復原時可能遺失已封存版本之後的修改。",
+    "lastDurableCheckpoint": "本次回收可復原的封存時間：{{time}}。",
     "noDurableCheckpoint": "沒有可復原的封存，專案檔案將從初始版本重新開始。",
     "checkpointReasons": {
       "source-limit": "專案超過檔案數量或大小限制。",

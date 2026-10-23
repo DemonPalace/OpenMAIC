@@ -2877,8 +2877,8 @@
     "environmentSleeping": "L’environnement du projet est inactif. Reprenez vos actions ou restaurez les fichiers ci-dessous.",
     "recoverWorkspace": "Restaurer les fichiers du projet",
     "checkpointUnavailable": "Les dernières modifications ne sont pas archivées. Réessayez de les enregistrer. En cas d’inactivité, l’environnement peut être libéré et les modifications non archivées perdues.",
-    "checkpointSkipped": "L’environnement a été libéré sans nouvelle archive. Les modifications depuis la dernière sauvegarde peuvent être perdues.",
-    "lastDurableCheckpoint": "Dernière sauvegarde réussie : {{time}}.",
+    "checkpointSkipped": "L’archivage échoue de façon persistante. La restauration peut perdre les modifications plus récentes que la sauvegarde.",
+    "lastDurableCheckpoint": "Sauvegarde récupérable pour cette libération : {{time}}.",
     "noDurableCheckpoint": "Aucune archive disponible ; les fichiers du projet repartent de la version initiale.",
     "checkpointReasons": {
       "source-limit": "Le projet dépasse la limite de fichiers ou de taille.",

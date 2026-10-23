@@ -122,13 +122,18 @@
     },
     "boundedFailureUnitTests": {
       "passed": 175,
-      "skipped": 72,
-      "note": "PG tests are intentionally skipped by the hermetic unit invocation and run separately"
+      "skipped": 4,
+      "note": "Hermetic unit invocation excludes the PostgreSQL suite, which runs separately"
     },
     "s3AdapterTests": {
       "passed": 36
     },
-    "archiveFailureLiveEvidence": "archive-failure-2026-10-23.json"
+    "archiveFailureLiveEvidence": "archive-failure-2026-10-23.json",
+    "uiScreenshot": {
+      "file": "archive-loss-notice-2026-10-23.png",
+      "method": "Browser screenshot of a real persisted released study; automatic compute preparation and teaching turns suppressed in the screenshot harness to avoid allocating additional resources"
+    },
+    "packageVersionCheck": "storage 0.39.0 -> 0.39.1 passed"
   },
   "observations": [
     "Scene return restored the exact acknowledged file",
@@ -159,6 +164,8 @@
       "Bound permanently unknown overdue commands using the idle failure grace even when cancellation cannot be acknowledged",
       "Preserve the actual destroyed state while fencing discard-intent writes",
       "Use the same resolved failure stage in diagnostics and durable metadata"
-    ]
+    ],
+    "verifiedFixCommit": "317f8ea0",
+    "reReview": "Both reviewers confirmed their findings addressed and reported no new high-confidence blocker"
   }
 }

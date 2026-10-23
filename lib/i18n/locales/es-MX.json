@@ -2877,8 +2877,8 @@
     "environmentSleeping": "El entorno del proyecto está inactivo. Continúa trabajando o restaura los archivos con el botón de abajo.",
     "recoverWorkspace": "Restaurar archivos del proyecto",
     "checkpointUnavailable": "No se pudieron archivar los últimos cambios. Intenta guardar de nuevo. Si permanece inactivo, el entorno puede liberarse y los cambios sin archivar pueden perderse.",
-    "checkpointSkipped": "El entorno se liberó sin crear un archivo nuevo. Los cambios desde el último respaldo pueden haberse perdido.",
-    "lastDurableCheckpoint": "Último respaldo correcto: {{time}}.",
+    "checkpointSkipped": "El archivado ha fallado repetidamente. Al recuperar, pueden perderse los cambios posteriores al respaldo.",
+    "lastDurableCheckpoint": "Respaldo recuperable para esta liberación: {{time}}.",
     "noDurableCheckpoint": "No hay respaldo disponible; los archivos del proyecto volverán a la versión inicial.",
     "checkpointReasons": {
       "source-limit": "El proyecto supera el límite de archivos o tamaño.",
