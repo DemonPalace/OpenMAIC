@@ -1528,6 +1528,42 @@ describe('patch_stage robustness', () => {
     expect(textOf(swapped)).toContain('carries id "act-2" of the action at index 1');
   });
 
+  it('keeps audio only when the batch-start action with the same id has the same text', async () => {
+    const current = richState();
+    const patch = tool(dslTools(current.store), 'patch_stage');
+    const changed = await patch.execute('reuse-changed', {
+      target: '/scenes/1',
+      intent: 'Rewrite narration',
+      ops: [
+        { op: 'remove', path: '/actions/0' },
+        {
+          op: 'set',
+          path: '/actions/0',
+          value: { id: 'act-1', type: 'speech', text: 'Different', audioId: 'asset-old' },
+        },
+      ],
+    } as never);
+    expect(changed).not.toHaveProperty('isError');
+    expect(current.get().scenes[0]!.actions![0]).not.toHaveProperty('audioId');
+
+    const fresh = state(course([richSlideScene()]));
+    const freshPatch = tool(dslTools(fresh.store), 'patch_stage');
+    const unchanged = await freshPatch.execute('reuse-same', {
+      target: '/scenes/1',
+      intent: 'Re-add narration',
+      ops: [
+        { op: 'remove', path: '/actions/0' },
+        {
+          op: 'set',
+          path: '/actions/0',
+          value: { id: 'act-1', type: 'speech', text: 'Welcome', audioId: 'asset-old' },
+        },
+      ],
+    } as never);
+    expect(unchanged).not.toHaveProperty('isError');
+    expect(fresh.get().scenes[0]!.actions![0]).toMatchObject({ audioId: 'asset-old' });
+  });
+
   it('rejects an appended action that reuses an existing id', async () => {
     const current = richState();
     const patch = tool(dslTools(current.store), 'patch_stage');

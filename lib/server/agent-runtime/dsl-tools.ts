@@ -896,17 +896,22 @@ function currentIndexListing(scene: Scene, path: string | undefined): string {
 }
 
 /**
- * A speech action without an id, or with an id no action had at batch start,
- * is a new identity: any audio it carries was never generated for its text,
- * so drop it. Runs before missing ids are minted.
+ * Final audio rule for the whole batch: a speech action keeps its audio only
+ * when an action with the same id existed at batch start as a speech action
+ * with the SAME text. A new or missing id (including an id reused after a
+ * delete in this batch with different text) or changed text drops
+ * audioId/audioUrl, since that audio was not generated for the current text.
+ * Runs before missing ids are minted.
  */
 function clearUnverifiedSpeechAudio(start: Scene, after: Scene): void {
-  const known = new Set(
-    ((start.actions ?? []) as Array<Action | null>).map((action) => action?.id),
+  if (!Array.isArray(after.actions)) return;
+  const startById = new Map(
+    ((start.actions ?? []) as Array<Action | null>).map((action) => [action?.id, action]),
   );
-  for (const action of (after.actions ?? []) as Array<Action | null>) {
+  for (const action of after.actions as Array<Action | null>) {
     if (action?.type !== 'speech') continue;
-    if (typeof action.id === 'string' && action.id && known.has(action.id)) continue;
+    const original = typeof action.id === 'string' ? startById.get(action.id) : undefined;
+    if (original?.type === 'speech' && original.text === action.text) continue;
     const legacy = action as typeof action & { audioUrl?: string };
     delete legacy.audioId;
     delete legacy.audioUrl;
