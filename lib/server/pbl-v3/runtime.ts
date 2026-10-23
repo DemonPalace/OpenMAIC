@@ -5,7 +5,7 @@ import 'server-only';
 import { projectEditAccess } from '@/lib/pbl/v3/edit-access';
 import { reviewQuestion } from './review-question';
 import { createHash, randomUUID } from 'node:crypto';
-import { checkpointStep } from '@/lib/server/sandbox/checkpoint-errors';
+import { checkpointIO, checkpointStep } from '@/lib/server/sandbox/checkpoint-errors';
 import type { PoolClient } from 'pg';
 import type { OwnerPrincipal } from '@/lib/server/identity/types';
 import { writeSessionGrant } from '@/lib/server/sandbox/store';
@@ -97,9 +97,13 @@ export async function readFiles(
   // A process can modify files without using our file API. Refuse evidence until managed writers stop.
   await service.assertWorkspaceIdle(environmentId);
   let bytes = 0;
-  for (const path of await projectFiles(service, environmentId, project)) {
+  const paths = await checkpointIO(
+    () => projectFiles(service, environmentId, project, signal),
+    signal,
+  );
+  for (const path of paths) {
     signal?.throwIfAborted();
-    const text = await service.readText(environmentId, path);
+    const text = await checkpointIO(() => service.readText(environmentId, path, signal), signal);
     signal?.throwIfAborted();
     onProgress?.();
     bytes += Buffer.byteLength(text);

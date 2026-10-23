@@ -334,6 +334,7 @@ import {
   digest,
   stageFor,
   stageKey,
+  saveStudyCheckpoint,
 } from '@/lib/server/pbl-v3/runtime';
 import { teachingRunnerConfig } from '@/lib/server/pbl-v3/runner-tools';
 import { touchEnvironment } from '@/lib/server/pbl-v3/environment';
@@ -704,9 +705,11 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
       expect(started.size).toBe(1);
       release();
       await scanning;
-      // A deferred candidate gets its normal checkpoint/release on the next scan.
-      await maintainLearningEnvironments();
-      expect(started.size).toBe(2);
+      // A short renewal can win admission first; later scans still reclaim the deferred candidate.
+      await vi.waitFor(async () => {
+        await maintainLearningEnvironments();
+        expect(started.size).toBe(2);
+      });
     } finally {
       release();
       try {
@@ -3687,6 +3690,83 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
       [id],
     );
   }
+
+  it.each(['file', 'listing'] as const)(
+    'releases source snapshot %s admission at the shared deadline and fences late reads',
+    async (kind) => {
+      const fresh = await freshStudy();
+      await fresh.send('checkpoint');
+      const row = await store.get(fresh.id, principal.ownerId);
+      const service = await SandboxService.forOwner(principal);
+      let finish!: () => void;
+      const reading = vi.spyOn(E2BCompatibleSandboxProvider.prototype, 'readText');
+      const originalRead = reading.getMockImplementation()!;
+      const listing = vi.spyOn(E2BCompatibleSandboxProvider.prototype, 'listWorkspace');
+      const originalList = listing.getMockImplementation()!;
+      const block = () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        });
+      if (kind === 'file')
+        reading.mockImplementationOnce(async function (
+          this: E2BCompatibleSandboxProvider,
+          ...args
+        ) {
+          await block();
+          return originalRead.apply(this, args);
+        });
+      else {
+        row.project = { ...project, sourceRoots: ['src'] };
+        listing.mockImplementationOnce(async function (
+          this: E2BCompatibleSandboxProvider,
+          ...args
+        ) {
+          await block();
+          return originalList.apply(this, args);
+        });
+      }
+      const controller = new AbortController();
+      const timeout = AbortSignal.timeout.bind(AbortSignal);
+      const deadline = vi
+        .spyOn(AbortSignal, 'timeout')
+        .mockImplementation((ms) => (ms === 120_000 ? controller.signal : timeout(ms)));
+      const saving = store.exclusive(fresh.id, () => saveStudyCheckpoint(service, row));
+      const outcome = saving.then(
+        () => ({ saved: true }),
+        (error: unknown) => ({ error }),
+      );
+      try {
+        await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+        controller.abort(new DOMException('checkpoint deadline', 'TimeoutError'));
+        const result = await Promise.race([
+          outcome,
+          new Promise((resolve) => setTimeout(() => resolve({ stillWaiting: true }), 1000)),
+        ]);
+        expect(result).toMatchObject({
+          error: { stage: 'snapshot', failure: { reason: 'timeout' } },
+        });
+        expect(kind === 'file' ? reading.mock.calls[0]?.[3] : listing.mock.calls[0]?.[2]).toBe(
+          controller.signal,
+        );
+        expect((await service.checkpoint(row.environment_id!))?.revision).toBe(1);
+        await expect(store.exclusive(fresh.id, async () => 'available')).resolves.toBe('available');
+        reading.mockRestore();
+        listing.mockRestore();
+        deadline.mockRestore();
+        await fresh.send('checkpoint');
+        finish();
+        await new Promise((resolve) => setImmediate(resolve));
+        expect((await service.checkpoint(row.environment_id!))?.revision).toBe(2);
+        expect(row.environment_recovery?.savedPosition?.revision).toBe(1);
+      } finally {
+        finish?.();
+        await outcome;
+        reading.mockRestore();
+        listing.mockRestore();
+        deadline.mockRestore();
+      }
+    },
+  );
 
   it('archives between-stage file edits before idle release and restores the same study', async () => {
     const fresh = await freshStudy();

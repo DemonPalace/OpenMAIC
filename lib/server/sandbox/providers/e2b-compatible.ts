@@ -100,10 +100,17 @@ export class E2BCompatibleSandboxProvider implements SandboxProvider {
     return matches;
   }
 
-  private async ownedInfo(resourceId: string, operationId: string): Promise<SandboxInfo | null> {
+  private async ownedInfo(
+    resourceId: string,
+    operationId: string,
+    signal?: AbortSignal,
+  ): Promise<SandboxInfo | null> {
     let info: SandboxInfo;
     try {
-      info = await Sandbox.getInfo(resourceId, this.options);
+      info = await checkpointIO(
+        () => Sandbox.getInfo(resourceId, { ...this.options, signal }),
+        signal,
+      );
     } catch (error) {
       if (error instanceof SandboxNotFoundError) return null;
       throw error;
@@ -125,8 +132,8 @@ export class E2BCompatibleSandboxProvider implements SandboxProvider {
     }
   }
 
-  private async connectionOptions(resourceId: string, operationId: string) {
-    const info = await this.ownedInfo(resourceId, operationId);
+  private async connectionOptions(resourceId: string, operationId: string, signal?: AbortSignal) {
+    const info = await this.ownedInfo(resourceId, operationId, signal);
     if (!info || info.state !== 'running') {
       throw sandboxConflict('Sandbox is not running. Reconcile its state before using files.');
     }
@@ -138,11 +145,24 @@ export class E2BCompatibleSandboxProvider implements SandboxProvider {
     // Reconnect must not extend a billable environment past its current lease.
     const remainingMs = Math.floor(info.endAt.getTime() - Date.now() - 1000);
     if (remainingMs < 1000) throw sandboxConflict('Sandbox lease is expiring.');
-    return { ...this.options, timeoutMs: remainingMs };
+    return { ...this.options, timeoutMs: remainingMs, signal };
   }
 
-  private async connect(resourceId: string, operationId: string) {
-    return Sandbox.connect(resourceId, await this.connectionOptions(resourceId, operationId));
+  private async connect(resourceId: string, operationId: string, signal?: AbortSignal) {
+    const options = await this.connectionOptions(resourceId, operationId, signal);
+    return checkpointIO(() => Sandbox.connect(resourceId, options), signal);
+  }
+
+  private async removeTransfer(sandbox: Sandbox, path: string, signal?: AbortSignal) {
+    const cleanupSignal = AbortSignal.timeout(5_000);
+    const cleanup = sandbox.files
+      .remove(path, { requestTimeoutMs: 5_000, signal: cleanupSignal })
+      .catch(() => {});
+    // Cleanup may continue best effort after cancellation, without retaining the caller's lock.
+    await checkpointIO(
+      () => cleanup,
+      signal ? AbortSignal.any([signal, cleanupSignal]) : cleanupSignal,
+    ).catch(() => {});
   }
 
   private fileFailure(error: unknown): never {
@@ -170,19 +190,29 @@ export class E2BCompatibleSandboxProvider implements SandboxProvider {
     throw error;
   }
 
-  async readText(resourceId: string, operationId: string, path: string): Promise<string> {
-    const sandbox = await this.connect(resourceId, operationId);
+  async readText(
+    resourceId: string,
+    operationId: string,
+    path: string,
+    signal?: AbortSignal,
+  ): Promise<string> {
+    const sandbox = await this.connect(resourceId, operationId, signal);
     const transfer = `/tmp/openmaic-file-${randomUUID()}`;
     try {
-      await sandbox.commands.run(
-        `python3 -c ${shellQuote(WORKSPACE_FILE_RUNNER)} read ${shellQuote(Buffer.from(workspacePath(path)).toString('base64'))} ${shellQuote(transfer)}`,
-        { timeoutMs: 30_000, requestTimeoutMs: 35_000 },
+      await checkpointIO(
+        () =>
+          sandbox.commands.run(
+            `python3 -c ${shellQuote(WORKSPACE_FILE_RUNNER)} read ${shellQuote(Buffer.from(workspacePath(path)).toString('base64'))} ${shellQuote(transfer)}`,
+            { timeoutMs: 30_000, requestTimeoutMs: 35_000, signal },
+          ),
+        signal,
       );
-      return await this.readUtf8(resourceId, operationId, transfer, MAX_TEXT_FILE_BYTES);
+      return await this.readUtf8(resourceId, operationId, transfer, MAX_TEXT_FILE_BYTES, signal);
     } catch (error) {
-      this.fileFailure(error);
+      return this.fileFailure(error);
     } finally {
-      await sandbox.files.remove(transfer).catch(() => {});
+      await this.removeTransfer(sandbox, transfer, signal);
+      signal?.throwIfAborted();
     }
   }
 
@@ -191,20 +221,27 @@ export class E2BCompatibleSandboxProvider implements SandboxProvider {
     operationId: string,
     path: string,
     limit: number,
+    signal?: AbortSignal,
   ): Promise<string> {
-    const sandbox = await this.connect(resourceId, operationId);
+    const sandbox = await this.connect(resourceId, operationId, signal);
+    const local = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+    const readSignal = signal ? AbortSignal.any([signal, local]) : local;
     try {
-      const stream = await sandbox.files.read(path, {
-        format: 'stream',
-        requestTimeoutMs: REQUEST_TIMEOUT_MS,
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-      });
+      const stream = await checkpointIO(
+        () =>
+          sandbox.files.read(path, {
+            format: 'stream',
+            requestTimeoutMs: REQUEST_TIMEOUT_MS,
+            signal: readSignal,
+          }),
+        readSignal,
+      );
       const reader = stream.getReader();
       const chunks: Uint8Array[] = [];
       let size = 0;
       try {
         while (true) {
-          const { done, value } = await reader.read();
+          const { done, value } = await checkpointIO(() => reader.read(), readSignal);
           if (done) break;
           size += value.byteLength;
           if (size > limit) {
@@ -217,7 +254,8 @@ export class E2BCompatibleSandboxProvider implements SandboxProvider {
           chunks.push(value);
         }
       } finally {
-        await reader.cancel().catch(() => {});
+        const closing = reader.cancel().catch(() => {});
+        if (!readSignal.aborted) await checkpointIO(() => closing, readSignal).catch(() => {});
         reader.releaseLock();
       }
       try {
@@ -588,7 +626,7 @@ export class E2BCompatibleSandboxProvider implements SandboxProvider {
     signal = AbortSignal.timeout(120_000),
   ): AsyncIterable<Uint8Array> {
     signal.throwIfAborted();
-    const sandbox = await checkpointIO(() => this.connect(resourceId, operationId), signal);
+    const sandbox = await this.connect(resourceId, operationId, signal);
     const path = `/tmp/openmaic-archive-${randomUUID()}.tar`;
     const policy = checkpointPolicy();
     const encoded = Buffer.from(JSON.stringify(policy)).toString('base64');
@@ -647,15 +685,7 @@ export class E2BCompatibleSandboxProvider implements SandboxProvider {
       if (tag) throw new SandboxError(codes[tag], 409, 'Workspace export could not complete.');
       throw error;
     } finally {
-      // Best-effort temp cleanup has its own short I/O bound, but must never retain
-      // the caller's study/environment lock after the shared deadline expires.
-      const cleanup = sandbox.files
-        .remove(path, {
-          requestTimeoutMs: 5_000,
-          signal: AbortSignal.timeout(5_000),
-        })
-        .catch(() => {});
-      if (!signal.aborted) await checkpointIO(() => cleanup, signal).catch(() => {});
+      await this.removeTransfer(sandbox, path, signal);
     }
   }
 
@@ -690,10 +720,12 @@ export class E2BCompatibleSandboxProvider implements SandboxProvider {
     await sandbox.files.makeDir(WORKSPACE_ROOT);
   }
 
-  async listWorkspace(resourceId: string, operationId: string) {
-    const sandbox = await this.connect(resourceId, operationId);
-    const result = await sandbox.commands.run(
-      `python3 -c ${shellQuote(String.raw`
+  async listWorkspace(resourceId: string, operationId: string, signal?: AbortSignal) {
+    const sandbox = await this.connect(resourceId, operationId, signal);
+    const result = await checkpointIO(
+      () =>
+        sandbox.commands.run(
+          `python3 -c ${shellQuote(String.raw`
 import os,json,stat
 root='/home/user/project'; out=[]
 if os.path.realpath(root)!=root: raise ValueError('root')
@@ -707,10 +739,13 @@ for parent,dirs,files in os.walk(root,followlinks=False):
         if len(out)>4096: raise ValueError('listing limit')
 print(json.dumps(out))
 `)}`,
-      {
-        timeoutMs: 30_000,
-        requestTimeoutMs: 35_000,
-      },
+          {
+            timeoutMs: 30_000,
+            requestTimeoutMs: 35_000,
+            signal,
+          },
+        ),
+      signal,
     );
     const entries = JSON.parse(result.stdout) as Array<{ path: string; bytes: number }>;
     if (

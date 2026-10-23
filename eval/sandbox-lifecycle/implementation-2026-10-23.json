@@ -134,6 +134,23 @@
       "method": "Browser screenshot of a real persisted released study; automatic compute preparation and teaching turns suppressed in the screenshot harness to avoid allocating additional resources"
     },
     "packageVersionCheck": "storage 0.39.0 -> 0.39.1 passed",
+    "sourceDeadlineFollowUp": {
+      "comment": "https://github.com/THU-MAIC/OpenMAIC/pull/2011#discussion_r4360261199",
+      "newSourceIoUnitRegressions": 13,
+      "newPostgresRegressions": 2,
+      "postgresIntegrationTests": 98,
+      "sandboxAndPblUnitTests": { "passed": 422, "skipped": 11 },
+      "mode": "Controlled SDK I/O and real disposable PostgreSQL schemas with local Python/Java execution; no additional cloud compute allocated",
+      "coverage": [
+        "Source enumeration and file reads propagate the shared signal through service/provider boundaries and both provider connections",
+        "Stalled ownership lookup, connection, source copy, download, stream and cleanup cannot retain the caller after the shared deadline",
+        "Existing local 30-second stream timeout remains effective with a longer live Agent signal",
+        "Pre-expired requests start no provider I/O and late copy results cannot start downloads",
+        "Ignored adapter cancellation releases study admission, preserves the previous checkpoint and cannot overwrite a later checkpoint with late file/list results",
+        "Deferred-archive regression waits for later scans rather than assuming exact next-scan admission order"
+      ],
+      "selfReview": "Targeted subagent review confirmed both connection stages, enumeration, local timeout composition and bounded cleanup; no new confirmed issue. Races remain limited to read-only/provider I/O."
+    },
     "maintenanceAdmissionFollowUp": {
       "comment": "https://github.com/THU-MAIC/OpenMAIC/pull/2011#discussion_r4360037244",
       "newPostgresRegressions": 10,

@@ -381,11 +381,13 @@ export class SandboxService {
     return row as SandboxRow & { resource_id: string };
   }
 
-  async readText(id: string, path: unknown) {
+  async readText(id: string, path: unknown, signal?: AbortSignal) {
+    signal?.throwIfAborted();
     path = `${WORKSPACE_ROOT}/${workspacePath(path)}`;
     assertPath(path);
     const row = await this.running(id);
-    return this.provider.readText(row.resource_id, row.id, path);
+    signal?.throwIfAborted();
+    return this.provider.readText(row.resource_id, row.id, path, signal);
   }
 
   async writeText(id: string, path: unknown, text: unknown) {
@@ -745,9 +747,11 @@ export class SandboxService {
     });
   }
 
-  async listFiles(id: string) {
+  async listFiles(id: string, signal?: AbortSignal) {
+    signal?.throwIfAborted();
     const row = await this.running(id);
-    return this.provider.listWorkspace(row.resource_id, row.id);
+    signal?.throwIfAborted();
+    return this.provider.listWorkspace(row.resource_id, row.id, signal);
   }
 
   async checkpoint(id: string) {

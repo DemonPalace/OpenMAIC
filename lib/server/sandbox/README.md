@@ -120,9 +120,13 @@ deletion under the original ID before preparing a replacement. If metadata canno
 persisted, no intentional destructive release occurs; the remaining provider lease is the
 compute bound. Maintenance checks database writability before renewing.
 
-Checkpoint I/O shares a 120-second total deadline, including provider connection, archive
-generation, download and chunk upload. Generation and download receive the same cancellation
-signal; a pre-expired deadline starts neither connection nor generation. Temporary archive
+Checkpoint I/O shares a 120-second total deadline, including source enumeration, source
+copy/download, provider connections, archive generation/download and chunk upload. Source
+reads and enumeration pass cancellation through the service/provider boundary; read-only
+I/O races also bound callers of adapters that ignore it. A late source result cannot start
+another read, archive or checkpoint commit. Source downloads keep their local 30-second
+bound even with a longer Agent-turn signal. A pre-expired deadline starts no source or
+archive I/O. Temporary transfer
 cleanup is best effort with its own short I/O bound and cannot extend the caller's lock
 beyond the shared deadline. Cancellation bounds caller waiting; it does not confirm that
 a remote archive process has stopped. Built-in S3 uploads receive its cancellation signal;

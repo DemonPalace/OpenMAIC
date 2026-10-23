@@ -79,6 +79,7 @@ export interface SandboxProvider {
   listWorkspace(
     resourceId: string,
     operationId: string,
+    signal?: AbortSignal,
   ): Promise<Array<{ path: string; bytes: number }>>;
   renew(resourceId: string, operationId: string, lifetimeMs: number): Promise<void>;
   /** Server-only descriptor. Never serialize its credentials into a browser API response. */
@@ -107,7 +108,12 @@ export interface SandboxProvider {
   find(operationId: string): Promise<SandboxResource[]>;
   inspect(resourceId: string, operationId: string): Promise<SandboxResource | null>;
   destroy(resourceId: string, operationId: string): Promise<void>;
-  readText(resourceId: string, operationId: string, path: string): Promise<string>;
+  readText(
+    resourceId: string,
+    operationId: string,
+    path: string,
+    signal?: AbortSignal,
+  ): Promise<string>;
   writeText(resourceId: string, operationId: string, path: string, text: string): Promise<void>;
   mutateFile?(
     resourceId: string,

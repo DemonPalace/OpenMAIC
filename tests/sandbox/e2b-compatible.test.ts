@@ -308,3 +308,128 @@ describe('checkpoint generation deadline', () => {
     expect(run).not.toHaveBeenCalled();
   });
 });
+
+describe('checkpoint source-read deadline', () => {
+  it('starts no source I/O after a pre-expired checkpoint deadline', async () => {
+    const { provider, run, read } = archiveFixture();
+    const controller = new AbortController();
+    controller.abort(new DOMException('checkpoint deadline', 'TimeoutError'));
+    await expect(
+      provider.readText('resource', 'op', 'PLAN.md', controller.signal),
+    ).rejects.toMatchObject({ name: 'TimeoutError' });
+    expect(sdk.getInfo).not.toHaveBeenCalled();
+    expect(sdk.connect).not.toHaveBeenCalled();
+    expect(run).not.toHaveBeenCalled();
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    'ownership',
+    'copy-connection',
+    'command',
+    'download-connection',
+    'download',
+    'stream',
+    'cleanup',
+  ])('stops waiting for stalled %s I/O at the shared deadline', async (stage) => {
+    const { provider, sandbox, run, read, remove } = archiveFixture();
+    const blocked = vi.fn(() => new Promise<never>(() => {}));
+    if (stage === 'ownership') sdk.getInfo.mockImplementationOnce(blocked);
+    if (stage === 'copy-connection') sdk.connect.mockImplementationOnce(blocked);
+    if (stage === 'command') run.mockImplementationOnce(blocked);
+    if (stage === 'download-connection')
+      sdk.connect.mockResolvedValueOnce(sandbox).mockImplementationOnce(blocked);
+    if (stage === 'download') read.mockImplementationOnce(blocked);
+    if (stage === 'stream')
+      read.mockResolvedValueOnce(new ReadableStream({ pull: blocked, cancel: blocked }));
+    if (stage === 'cleanup') remove.mockImplementationOnce(blocked);
+    const controller = new AbortController();
+    const failed = expect(
+      provider.readText('resource', 'op', 'PLAN.md', controller.signal),
+    ).rejects.toMatchObject({ name: 'TimeoutError' });
+    await vi.waitFor(() => expect(blocked).toHaveBeenCalled());
+    controller.abort(new DOMException('checkpoint deadline', 'TimeoutError'));
+    await failed;
+  });
+
+  it('propagates caller cancellation through both source connections and the download', async () => {
+    const { provider, run, read } = archiveFixture();
+    const controller = new AbortController();
+    expect(await provider.readText('resource', 'op', 'PLAN.md', controller.signal)).toBe(
+      '\x01\x02\x03',
+    );
+    expect(sdk.getInfo).toHaveBeenCalledTimes(2);
+    expect(sdk.connect).toHaveBeenCalledTimes(2);
+    for (const call of [...sdk.getInfo.mock.calls, ...sdk.connect.mock.calls])
+      expect(call[1]?.signal).toBe(controller.signal);
+    expect(run.mock.calls[0]?.[1]?.signal).toBe(controller.signal);
+    const downloadSignal = read.mock.calls[0]?.[1]?.signal;
+    controller.abort();
+    expect(downloadSignal?.aborted).toBe(true);
+  });
+
+  it('preserves the local stream timeout when the caller signal stays live', async () => {
+    const { provider, read } = archiveFixture();
+    read.mockImplementationOnce(() => new Promise(() => {}));
+    const caller = new AbortController(),
+      local = new AbortController();
+    const timeout = AbortSignal.timeout.bind(AbortSignal);
+    const timeoutSpy = vi
+      .spyOn(AbortSignal, 'timeout')
+      .mockImplementation((ms) => (ms === 30_000 ? local.signal : timeout(ms)));
+    try {
+      const failed = expect(
+        provider.readText('resource', 'op', 'PLAN.md', caller.signal),
+      ).rejects.toMatchObject({ name: 'TimeoutError' });
+      await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(1));
+      local.abort(new DOMException('local stream deadline', 'TimeoutError'));
+      await failed;
+      expect(caller.signal.aborted).toBe(false);
+    } finally {
+      timeoutSpy.mockRestore();
+    }
+  });
+
+  it('cannot start a download when a source copy command completes after cancellation', async () => {
+    const { provider, run, read } = archiveFixture();
+    let finish!: () => void;
+    run.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = () => resolve({ stdout: '' });
+        }),
+    );
+    const controller = new AbortController();
+    const failed = expect(
+      provider.readText('resource', 'op', 'PLAN.md', controller.signal),
+    ).rejects.toMatchObject({ name: 'TimeoutError' });
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    controller.abort(new DOMException('checkpoint deadline', 'TimeoutError'));
+    await failed;
+    finish();
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(read).not.toHaveBeenCalled();
+    expect(sdk.connect).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['pre-expired', 'stalled'])(
+    'bounds %s source enumeration with the shared deadline',
+    async (mode) => {
+      const { provider, run } = archiveFixture();
+      const controller = new AbortController();
+      if (mode === 'pre-expired')
+        controller.abort(new DOMException('checkpoint deadline', 'TimeoutError'));
+      else run.mockImplementationOnce(() => new Promise(() => {}));
+      const failed = expect(
+        provider.listWorkspace('resource', 'op', controller.signal),
+      ).rejects.toMatchObject({ name: 'TimeoutError' });
+      if (mode === 'stalled') {
+        await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+        expect(run.mock.calls[0]?.[1]?.signal).toBe(controller.signal);
+        controller.abort(new DOMException('checkpoint deadline', 'TimeoutError'));
+      }
+      await failed;
+      if (mode === 'pre-expired') expect(sdk.getInfo).not.toHaveBeenCalled();
+    },
+  );
+});

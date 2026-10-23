@@ -84,8 +84,9 @@ export function checkpointFailure(error: unknown) {
 /** Race only external I/O, never a DB transaction or a callback that can commit late. */
 export async function checkpointIO<T>(
   operation: () => Promise<T>,
-  signal: AbortSignal,
+  signal?: AbortSignal,
 ): Promise<T> {
+  if (!signal) return operation();
   signal.throwIfAborted();
   let abort: () => void = () => {};
   const interrupted = new Promise<never>((_, reject) => {
