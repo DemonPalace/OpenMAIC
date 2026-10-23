@@ -6,7 +6,6 @@
  * recovery. A client connection is never part of the execution lifetime.
  */
 import { ModelAuthorizationError } from '@/lib/server/model-config/model-authorization';
-import { SandboxError } from '@/lib/sandbox/errors';
 import { serverMediaConnection } from '@/lib/server/model-config/media';
 import { backgroundWorkspaceId } from '@/lib/server/model-config/runtime';
 import { randomUUID } from 'node:crypto';
@@ -2025,14 +2024,7 @@ export async function runSession(ctx: RunContext, meta: ClaimedAgentSession): Pr
           expectedAttempt: attempt,
         })
         .catch(() => false);
-      // Missing installed course content requires a deployment/configuration fix.
-      // Preserve the undelivered input for an explicit retry after that fix;
-      // immediately claiming it again cannot repair the missing project.
-      const missingProject =
-        meta.id.startsWith('pbl-role-') &&
-        error instanceof SandboxError &&
-        error.code === 'PBL_PROJECT_UNAVAILABLE';
-      if (settled && !missingProject) await requeueIfUndelivered('setup failure');
+      if (settled) await requeueIfUndelivered('setup failure');
     }
     log.error(`session ${id} failed during setup`, error);
   } finally {

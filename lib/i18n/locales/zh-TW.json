@@ -2617,7 +2617,6 @@
     "run": {
       "incomplete": "本輪回覆尚未完成目前審閱的記錄，請點擊「重試本輪回覆」繼續。學習進度未被跳過。",
       "authentication": "The teaching model could not authenticate. Check the model configuration before retrying.",
-      "project": "The project content is not installed on the teaching server. Please contact the course administrator; retry after the project configuration is fixed.",
       "timeout": "The teaching response timed out. You can retry this turn.",
       "unavailable": "The teaching response could not finish. Please retry shortly.",
       "cancelled": "This teaching turn was cancelled. Retry it or send a new message.",
