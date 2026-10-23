@@ -18,7 +18,7 @@ export async function touchEnvironment(
   if (!row.environment_id) return null;
   let env = await service.get(row.environment_id);
   if (row.archive_discard?.environmentId === row.environment_id)
-    return { ...env, state: 'destroying' as const, workspaceReady: false };
+    return { ...env, workspaceReady: false };
   const deadline = Date.now() + 5_000;
   let reconciled = false;
   for (;;) {

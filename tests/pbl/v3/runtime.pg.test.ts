@@ -282,6 +282,7 @@ vi.mock('@/lib/server/sandbox/providers/e2b-compatible', () => ({
     async readCommand(id: string, _operation: string, commandId: string) {
       return JSON.parse(await readFile(join(mocked.root, id, `.command-${commandId}`), 'utf8'));
     }
+    async cancelCommand() {}
   },
 }));
 vi.mock('@/lib/server/agent-runtime/agent-driver-model', () => ({
@@ -3718,6 +3719,7 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
       checkpointRevision: 1,
       reason: 'unavailable',
     });
+    expect((await learningView(principal, fresh.id)).environment?.state).toBe('destroyed');
     mocked.failExport = false;
     await fresh.send('prepare');
     row = await store.get(fresh.id, principal.ownerId);
@@ -3865,6 +3867,59 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
       Date.now() - 10000,
     );
   });
+
+  it.each([false, true])(
+    'bounds a permanently unknown command even when cancellation fails: %s',
+    async (cancelFails) => {
+      const fresh = await freshStudy();
+      const row = await store.get(fresh.id, principal.ownerId);
+      const id = randomUUID();
+      const unknown = {
+        id,
+        state: 'unknown',
+        stdout: '',
+        stderr: '',
+        exitCode: null,
+        truncated: false,
+      };
+      await pool.query(
+        "INSERT INTO sandbox_commands(environment_id,id,request_fingerprint,result_json,created_at) VALUES($1,$2,'fixture',$3,now()-interval '20 minutes')",
+        [row.environment_id, id, JSON.stringify(unknown)],
+      );
+      await writeFile(
+        join(mocked.root, row.environment_id!, `.command-${id}`),
+        JSON.stringify(unknown),
+      );
+      const cancel = vi.spyOn(E2BCompatibleSandboxProvider.prototype, 'cancelCommand');
+      if (cancelFails) cancel.mockRejectedValue(new Error('Provider unavailable'));
+      const exportSpy = vi.spyOn(E2BCompatibleSandboxProvider.prototype, 'exportWorkspace');
+      onTestFinished(() => {
+        cancel.mockRestore();
+        exportSpy.mockRestore();
+      });
+      await ageStudy(fresh.id);
+      await maintainStudy(store, fresh.id, principal.ownerId);
+      const failure = (await store.get(fresh.id, principal.ownerId)).checkpoint_failure;
+      expect(failure).toMatchObject({ reason: 'execution-unsettled', stage: 'execution' });
+      await maintainStudy(store, fresh.id, principal.ownerId);
+      expect(
+        (await store.get(fresh.id, principal.ownerId)).checkpoint_failure?.firstIdleFailureAt,
+      ).toBe(failure?.firstIdleFailureAt);
+      await expireArchiveGrace(fresh.id);
+      const renewals = mocked.renewals.length;
+      await maintainStudy(store, fresh.id, principal.ownerId);
+      expect(mocked.renewals).toHaveLength(renewals);
+      expect(exportSpy).not.toHaveBeenCalled();
+      expect(cancel).toHaveBeenCalled();
+      const view = await learningView(principal, fresh.id);
+      expect(view.environment?.state).toBe('destroyed');
+      expect(view.archiveDiscard?.reason).toBe('execution-unsettled');
+      await fresh.send('prepare');
+      expect((await store.get(fresh.id, principal.ownerId)).environment_id).not.toBe(
+        row.environment_id,
+      );
+    },
+  );
 
   it('reclaims an uncertain replacement even while the study still references its expired predecessor', async () => {
     const fresh = await freshStudy();

@@ -1,5 +1,5 @@
 import 'server-only';
-import { LearningStore } from './store';
+import { LearningStore, type Study } from './store';
 import { SandboxService } from '@/lib/server/sandbox/service';
 import { getAgentSessionStore } from '@/lib/server/agent-runtime/store';
 import { agentRuntimeConfig } from '@/lib/server/agent-runtime/config';
@@ -65,7 +65,7 @@ async function renewForMaintenance(
   );
 }
 
-function archiveGraceExpired(row: import('./store').Study) {
+function archiveGraceExpired(row: Study) {
   const failed = row.checkpoint_failure;
   return (
     failed?.environmentId === row.environment_id &&
@@ -73,6 +73,20 @@ function archiveGraceExpired(row: import('./store').Study) {
     Date.now() - row.last_used_at.getTime() >= pblIdleTimeoutMs() &&
     Date.now() - Date.parse(failed.firstIdleFailureAt) >= pblArchiveFailureGraceMs()
   );
+}
+
+async function releaseWithoutArchive(store: LearningStore, row: Study, service: SandboxService) {
+  const environmentId = row.environment_id!;
+  const saved = await service.checkpoint(environmentId);
+  // This durable intent also fences edits if deletion is uncertain.
+  await store.recordArchiveDiscard(row, {
+    environmentId,
+    at: new Date().toISOString(),
+    checkpointRevision: saved?.revision ?? 0,
+    checkpointAt: saved?.createdAt ?? null,
+    reason: row.checkpoint_failure!.reason,
+  });
+  await service.destroy(environmentId);
 }
 
 /** No browser timers, per-tab counts, or independently maintained busy flags. */
@@ -150,16 +164,45 @@ export async function maintainStudy(
            AND (result_json IS NULL OR result_json->>'state' IN ('starting','running','unknown'))`,
             [environmentId],
           );
-          let commandsBusy = false;
+          let commandsBusy = 0,
+            overdueCommands = 0;
           for (const command of commands.rows) {
-            const observed = await service.command(environmentId, command.id);
+            const observed = await service
+              .command(environmentId, command.id)
+              .catch(() => ({ state: 'unknown' }));
             if (['starting', 'running', 'unknown'].includes(observed.state)) {
-              commandsBusy = true;
-              if (Date.now() - command.created_at.getTime() > PBL_MAX_COMMAND_MS)
-                await service.cancelCommand(environmentId, command.id);
+              commandsBusy++;
+              if (Date.now() - command.created_at.getTime() > PBL_MAX_COMMAND_MS) {
+                overdueCommands++;
+                // Failure to acknowledge cancellation is still an unresolved writer, not a terminal result.
+                await service.cancelCommand(environmentId, command.id).catch(() => {});
+              }
             }
           }
-          if (agents.rows.length || commandsBusy) return;
+          if (agents.rows.length) return;
+          if (commandsBusy) {
+            if (
+              overdueCommands === commandsBusy &&
+              Date.now() - row.last_used_at.getTime() >= pblIdleTimeoutMs()
+            ) {
+              if (archiveGraceExpired(row)) await releaseWithoutArchive(store, row, service);
+              else
+                await store.recordCheckpointFailure(row, {
+                  environmentId,
+                  reason: 'execution-unsettled',
+                  stage: 'execution',
+                  retryable: true,
+                  firstIdleFailureAt:
+                    row.checkpoint_failure?.firstIdleFailureAt ?? new Date().toISOString(),
+                  dirtyAt: row.workspace_dirty_at?.toISOString() ?? null,
+                });
+            }
+            return;
+          }
+          if (row.checkpoint_failure?.stage === 'execution') {
+            await store.recordActivity(id, ownerId);
+            await store.recordLifecycleError(id, ownerId, null);
+          }
           // Terminal rows have stable updated_at values; repeated polls never extend inactivity.
           await store.transaction(async (db) => {
             await fenceOwnerWrite(db, ownerId);
@@ -192,16 +235,7 @@ export async function maintainStudy(
                 ? row.checkpoint_failure
                 : null;
             if (archiveGraceExpired(row) && failure) {
-              const saved = await service.checkpoint(environmentId);
-              // Preserve the old durable version and record the loss BEFORE attempting deletion.
-              await store.recordArchiveDiscard(row, {
-                environmentId,
-                at: new Date().toISOString(),
-                checkpointRevision: saved?.revision ?? 0,
-                checkpointAt: saved?.createdAt ?? null,
-                reason: failure.reason,
-              });
-              await service.destroy(environmentId);
+              await releaseWithoutArchive(store, row, service);
               return;
             }
             const dirtyAt = row.workspace_dirty_at?.toISOString() ?? null;
@@ -223,10 +257,11 @@ export async function maintainStudy(
             } catch (error) {
               if (checkpointBusy(error)) return;
               const cause = checkpointFailure(error);
+              const failureStage = error instanceof CheckpointAttemptError ? error.stage : stage;
               await store.recordCheckpointFailure(row, {
                 environmentId,
                 ...cause,
-                stage: error instanceof CheckpointAttemptError ? error.stage : stage,
+                stage: failureStage,
                 dirtyAt,
                 firstIdleFailureAt:
                   failure?.firstIdleFailureAt ?? (idle ? new Date().toISOString() : null),
@@ -235,7 +270,7 @@ export async function maintainStudy(
                 studyId: id,
                 environmentId,
                 ...cause,
-                stage,
+                stage: failureStage,
               });
               return;
             }

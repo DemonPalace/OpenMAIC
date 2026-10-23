@@ -56,6 +56,10 @@ the same verdict path as browser collection, even with no browser open. An Agent
 than 15 minutes is requested to cancel; queued/orphaned cancellation uses the existing Agent
 lease fence. Commands still active/unknown after 330 seconds are requested to cancel through
 their existing operation ID. An unknown outcome is never assumed to have stopped writing.
+If all unresolved commands remain overdue after cancellation, idle maintenance uses the
+same finite failure grace. On expiry it records an interrupted-work loss notice and
+destroys the environment without taking a potentially inconsistent archive. Confirmation
+that commands have stopped clears this failure and starts normal post-task inactivity.
 
 File invalidation marks the workspace dirty before the remote write. In addition to teaching
 checkpoints, dirty work is checkpointed after 60 seconds when no managed writer is active.

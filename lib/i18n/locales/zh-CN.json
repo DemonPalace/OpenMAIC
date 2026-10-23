@@ -2891,7 +2891,8 @@
       "storage-permission": "请检查存储配置和权限。",
       "timeout": "存储或工作区服务不可用，或请求超时。",
       "unavailable": "存储或工作区服务不可用，或请求超时。",
-      "workspace-changed": "归档期间文件发生变化。"
+      "workspace-changed": "归档期间文件发生变化。",
+      "execution-unsettled": "无法确认任务已经停止。"
     }
   }
 }

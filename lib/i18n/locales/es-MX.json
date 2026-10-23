@@ -2891,7 +2891,8 @@
       "storage-permission": "Revisa la configuración y los permisos del almacenamiento.",
       "timeout": "El almacenamiento o el entorno no está disponible, o la solicitud agotó el tiempo de espera.",
       "unavailable": "El almacenamiento o el entorno no está disponible, o la solicitud agotó el tiempo de espera.",
-      "workspace-changed": "Los archivos cambiaron durante el archivado."
+      "workspace-changed": "Los archivos cambiaron durante el archivado.",
+      "execution-unsettled": "No se pudo confirmar que la tarea se detuvo."
     }
   }
 }

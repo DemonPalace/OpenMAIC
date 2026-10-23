@@ -2891,7 +2891,8 @@
       "storage-permission": "Vérifiez la configuration et les autorisations du stockage.",
       "timeout": "Le stockage ou l’environnement est indisponible, ou la requête a expiré.",
       "unavailable": "Le stockage ou l’environnement est indisponible, ou la requête a expiré.",
-      "workspace-changed": "Les fichiers ont changé pendant l’archivage."
+      "workspace-changed": "Les fichiers ont changé pendant l’archivage.",
+      "execution-unsettled": "Impossible de confirmer l’arrêt de la tâche."
     }
   }
 }

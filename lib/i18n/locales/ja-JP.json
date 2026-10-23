@@ -2891,7 +2891,8 @@
       "storage-permission": "ストレージの設定と権限を確認してください。",
       "timeout": "ストレージまたは作業環境が利用できないか、タイムアウトしました。",
       "unavailable": "ストレージまたは作業環境が利用できないか、タイムアウトしました。",
-      "workspace-changed": "保存中にファイルが変更されました。"
+      "workspace-changed": "保存中にファイルが変更されました。",
+      "execution-unsettled": "タスクの停止を確認できません。"
     }
   }
 }

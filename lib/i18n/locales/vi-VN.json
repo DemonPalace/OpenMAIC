@@ -2891,7 +2891,8 @@
       "storage-permission": "Hãy kiểm tra cấu hình và quyền truy cập kho lưu trữ.",
       "timeout": "Dịch vụ lưu trữ hoặc môi trường không khả dụng, hoặc đã hết thời gian chờ.",
       "unavailable": "Dịch vụ lưu trữ hoặc môi trường không khả dụng, hoặc đã hết thời gian chờ.",
-      "workspace-changed": "Tệp đã thay đổi trong khi lưu trữ."
+      "workspace-changed": "Tệp đã thay đổi trong khi lưu trữ.",
+      "execution-unsettled": "Không thể xác nhận tác vụ đã dừng."
     }
   }
 }

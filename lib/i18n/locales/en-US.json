@@ -2891,7 +2891,8 @@
       "storage-permission": "Check storage configuration and permissions.",
       "timeout": "The storage or workspace service is unavailable or timed out.",
       "unavailable": "The storage or workspace service is unavailable or timed out.",
-      "workspace-changed": "Files changed during archiving."
+      "workspace-changed": "Files changed during archiving.",
+      "execution-unsettled": "The task could not be confirmed stopped."
     }
   }
 }

@@ -2891,7 +2891,8 @@
       "storage-permission": "請檢查儲存設定和權限。",
       "timeout": "儲存或工作區服務無法使用，或請求逾時。",
       "unavailable": "儲存或工作區服務無法使用，或請求逾時。",
-      "workspace-changed": "封存期間檔案發生變更。"
+      "workspace-changed": "封存期間檔案發生變更。",
+      "execution-unsettled": "無法確認工作已停止。"
     }
   }
 }

@@ -102,12 +102,12 @@
       ]
     },
     "startupAndClassroomTests": {
-      "passed": 126
+      "passed": 214
     },
     "typecheck": "passed",
     "i18n": "12 locales aligned",
     "boundedFailurePostgresTests": {
-      "passed": 77,
+      "passed": 80,
       "includes": [
         "persistent failure deadline survives another maintenance instance",
         "previous checkpoint preserved and loss notice survives restore",
@@ -127,7 +127,8 @@
     },
     "s3AdapterTests": {
       "passed": 36
-    }
+    },
+    "archiveFailureLiveEvidence": "archive-failure-2026-10-23.json"
   },
   "observations": [
     "Scene return restored the exact acknowledged file",
@@ -149,5 +150,15 @@
     "hosted": 2009
   },
   "archiveFailureGraceMs": 300000,
-  "checkpointTransferTimeoutMs": 120000
+  "checkpointTransferTimeoutMs": 120000,
+  "selfReview": {
+    "base": "8f737ad715647304156f6377e0bf5bdb3705faec",
+    "reviewedCommit": "39be7c6a",
+    "axes": ["Standards", "Spec"],
+    "findingsAddressed": [
+      "Bound permanently unknown overdue commands using the idle failure grace even when cancellation cannot be acknowledged",
+      "Preserve the actual destroyed state while fencing discard-intent writes",
+      "Use the same resolved failure stage in diagnostics and durable metadata"
+    ]
+  }
 }

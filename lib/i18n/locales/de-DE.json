@@ -2891,7 +2891,8 @@
       "storage-permission": "Prüfen Sie Speicherkonfiguration und Berechtigungen.",
       "timeout": "Speicher oder Arbeitsumgebung ist nicht verfügbar oder hat das Zeitlimit überschritten.",
       "unavailable": "Speicher oder Arbeitsumgebung ist nicht verfügbar oder hat das Zeitlimit überschritten.",
-      "workspace-changed": "Dateien wurden während der Archivierung geändert."
+      "workspace-changed": "Dateien wurden während der Archivierung geändert.",
+      "execution-unsettled": "Das Ende der Aufgabe konnte nicht bestätigt werden."
     }
   }
 }

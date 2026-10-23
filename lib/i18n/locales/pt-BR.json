@@ -2891,7 +2891,8 @@
       "storage-permission": "Verifique a configuração e as permissões do armazenamento.",
       "timeout": "O armazenamento ou o ambiente está indisponível, ou a solicitação expirou.",
       "unavailable": "O armazenamento ou o ambiente está indisponível, ou a solicitação expirou.",
-      "workspace-changed": "Os arquivos mudaram durante o arquivamento."
+      "workspace-changed": "Os arquivos mudaram durante o arquivamento.",
+      "execution-unsettled": "Não foi possível confirmar que a tarefa parou."
     }
   }
 }

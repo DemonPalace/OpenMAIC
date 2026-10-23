@@ -6,13 +6,14 @@ export type CheckpointFailureReason =
   | 'unsupported-files'
   | 'workspace-permission'
   | 'workspace-full'
+  | 'execution-unsettled'
   | 'storage-quota'
   | 'storage-config'
   | 'storage-permission'
   | 'timeout'
   | 'workspace-changed'
   | 'unavailable';
-export type CheckpointStage = 'snapshot' | 'archive' | 'recovery' | 'release';
+export type CheckpointStage = 'snapshot' | 'archive' | 'recovery' | 'release' | 'execution';
 
 export function checkpointBusy(error: unknown) {
   return (
