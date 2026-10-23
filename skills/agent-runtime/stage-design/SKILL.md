@@ -92,9 +92,6 @@ and not re-synthesized ships as a silent page.
 Every settled page has to be persisted — a stage is done when the deck is
 complete, not when it is planned or half built.
 
-As soon as every settled page is persisted, tell the user the classroom is
-ready to preview while the remaining checks run.
-
 Every speech action must have audio. Call `generate_tts` once on each page in
 its default mode: it fills only the lines missing audio and reports how many
 were generated, skipped, or failed, so there is no need to read each page's
