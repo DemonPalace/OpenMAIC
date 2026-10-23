@@ -1,3 +1,4 @@
+import { llmExecutionContext } from '@/lib/ai/thinking-context';
 /**
  * MAIC Agent — pi StreamFn adapter (promoted from PoC).
  *
@@ -151,6 +152,8 @@ export interface CallLlmStreamFnOptions {
    */
   omitMaxOutputTokens?: boolean;
   thinkingConfig?: ThinkingConfig;
+  /** No application-level header/body deadline for this conversation. */
+  unbounded?: boolean;
   source?: string;
   /** Optional abort signal forwarded to the underlying streamLLM call. */
   abortSignal?: AbortSignal;
@@ -253,7 +256,10 @@ export function createPartMapper(
 export function createCallLlmStreamFn(opts: CallLlmStreamFnOptions): StreamFn {
   return ((_piModel, context: PiContext, streamOptions?: SimpleStreamOptions) => {
     const stream = new LocalAssistantEventStream();
-    void pump(stream, context, opts, streamOptions).catch((error) => stream.fail(error));
+    const run = () => pump(stream, context, opts, streamOptions);
+    void (opts.unbounded ? llmExecutionContext.run({ unbounded: true }, run) : run()).catch(
+      (error) => stream.fail(error),
+    );
     return stream as unknown as AssistantMessageEventStream;
   }) as StreamFn;
 }

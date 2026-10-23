@@ -276,7 +276,7 @@ function buildTeachingPrompt({
   );
 }
 
-/** Learner text belongs to durable conversation history, outside the course-resource budget. */
+/** Learner text belongs to durable conversation history. */
 function teachingReview(review: TeachingPromptInput['pendingReview']) {
   return review
     ? {

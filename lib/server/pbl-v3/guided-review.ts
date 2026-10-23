@@ -9,7 +9,7 @@ const receiptSchema = z.object({
   file: z.string(),
   artifactDigest: z.string().regex(/^[a-f0-9]{64}$/),
   runId: z.string(),
-  question: z.string().min(1).max(2000),
+  question: z.string().min(1),
   approval: z.boolean().optional(),
 });
 export const guidedSkillStateSchema = z
@@ -177,7 +177,7 @@ export class GuidedSkillReview {
   }
 
   checkpoint(question: string, digest: string, approval = false): GuidedSkillState {
-    if (!question.trim() || question.length > 2000) throw new Error('请给出当前段的具体检查任务');
+    if (!question.trim()) throw new Error('请给出当前段的具体检查任务');
     // The welcome is already supplied by the host prompt. Recording readiness
     // may be the model's first tool call; it must not depend on a redundant read.
     // Keep it inside A, without opening the lesson or crediting any feedback.

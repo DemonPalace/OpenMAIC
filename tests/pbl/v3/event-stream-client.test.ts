@@ -38,6 +38,22 @@ describe('learning SSE client', () => {
       }),
     );
   });
+  it('receives a complete reply beyond the former SSE frame-size cutoff', async () => {
+    const text = 'x'.repeat(8 * 1024 * 1024 + 1);
+    respond([
+      encoder.encode(
+        'event: learning\ndata: ' +
+          JSON.stringify({
+            view: { id: 'study', messages: [{ role: 'assistant', text }] },
+            workbench: null,
+          }) +
+          '\n\n',
+      ),
+    ]);
+    const receive = vi.fn();
+    await readLearningStream('study', new AbortController().signal, receive);
+    expect(receive.mock.calls[0]![0].view.messages[0].text).toBe(text);
+  });
   it('refuses the wrong study and stale messages after cancellation', async () => {
     respond([encoder.encode('event: learning\ndata: {"view":{"id":"other"}}\n\n')]);
     const receive = vi.fn();

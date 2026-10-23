@@ -51,6 +51,14 @@ Scene re-entry reloads durable study state. Dirty file tabs, the unsent reply, q
 choices and pane visibility are retained per study in tab-local browser storage;
 these drafts are not submitted learning records or durable checkpoints.
 
+V3 teaching uses low reasoning effort and no application-level turn duration,
+inactivity, model-output-token or tool-call-count ceiling. Its tool wrapper retains
+explicit cancellation/lease-loss handling without a timer. Its model transport has
+no header/body deadline. A prose-only stop can continue until the actual review or
+completion receipt is recorded; the prior visible reply remains recovery context.
+Package size/path validation, history pagination, worker admission and writer fences
+are independent protections. Non-teaching model/tool policies remain unchanged.
+
 The teaching panel uses the host's existing OpenPBL-derived chat skin, Markdown
 renderer and sticky scrolling, with four role identities and ordered turn parts.
 One owner-scoped SSE connection updates the teaching conversation, progress and
@@ -71,7 +79,9 @@ when prose or a tool takes over. Terminal and interrupted turns settle on replay
 Tool cards show the full emitted input, output, progress and display payloads, including
 failed results and loaded teaching sections, as plain text. Payloads are not interpreted
 as HTML or Markdown or filtered by tool name. Raw replay reads retain at most
-512 KiB of event payloads per role, plus bounded status metadata. Projected parts
+512 KiB of historical/tool payloads per role, plus bounded status metadata.
+Current assistant prose and thinking remain complete regardless of reply length;
+redundant intermediate text snapshots are compacted when reading. Projected parts
 share a 512 KiB per-role budget and a 2 MiB aggregate budget, with bounded
 turn envelopes and omission summaries outside those payload budgets. Recent payloads are kept whole. Oversized
 or older content outside the budget is explicitly marked as omitted, including in

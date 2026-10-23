@@ -66,6 +66,30 @@ describe('student conversation projection', () => {
       });
     },
   );
+  it('keeps the latest reply and thinking complete beyond the history byte budget', () => {
+    const text = 'Detailed explanation. '.repeat(60_000);
+    const thinking = 'Thinking. '.repeat(60_000);
+    const output = projectConversation(
+      [
+        event(1, 'user_message', { text: 'Please explain' }),
+        event(2, 'message_end', {
+          message: {
+            role: 'assistant',
+            content: [
+              { type: 'thinking', thinking },
+              { type: 'text', text },
+            ],
+          },
+        }),
+      ],
+      'discussion',
+      false,
+    );
+    const parts = output.at(-1)!.parts;
+    expect(parts.find((p) => p.kind === 'text')).toMatchObject({ text });
+    expect(parts.find((p) => p.kind === 'thinking')).toMatchObject({ text: thinking });
+    expect(output.at(-1)!.omitted).not.toBe(true);
+  });
   it('bounds aggregate tool payloads in one turn while preserving the latest normal payload whole', () => {
     const events: PersistedAgentSessionEvent[] = [];
     const text = 'tool output '.repeat(4000);

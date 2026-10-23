@@ -88,7 +88,6 @@ export async function readFiles(
   row: Study,
   project = projectFor(row),
   signal?: AbortSignal,
-  onProgress?: () => void,
 ) {
   signal?.throwIfAborted();
   const result: Record<string, string> = {};
@@ -100,7 +99,6 @@ export async function readFiles(
     signal?.throwIfAborted();
     const text = await service.readText(environmentId, path);
     signal?.throwIfAborted();
-    onProgress?.();
     bytes += Buffer.byteLength(text);
     if (bytes > 1_048_576)
       throw sandboxInvalid('Project source snapshots are limited to 1 MiB.', 'PBL_SOURCE_SIZE');

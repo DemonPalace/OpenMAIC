@@ -28,8 +28,6 @@ export async function readLearningStream(
       const { value, done } = await reader.read();
       if (done) return;
       pending += decoder.decode(value, { stream: true });
-      // A bounded transcript plus source metadata fits comfortably in this limit.
-      if (pending.length > 8 * 1024 * 1024) throw new Error('Learning event is too large.');
       let boundary: number;
       while ((boundary = pending.indexOf('\n\n')) >= 0) {
         const frame = pending.slice(0, boundary);

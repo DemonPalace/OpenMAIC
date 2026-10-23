@@ -16,7 +16,6 @@ import { installProjectPackage } from '@/lib/server/pbl-v3/project-resolver';
 import {
   packageBuiltin,
   indexProjectFiles,
-  validateProjectPackage,
   type ProjectDescriptor,
 } from '@/lib/server/pbl-v3/project-package';
 import { WORKSPACE_FILE_RUNNER } from '@/lib/server/sandbox/workspace-archive';
@@ -1652,6 +1651,45 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
     expect(stored.result.content[0].text.length).toBeGreaterThan(1000000);
     await agents.softDeleteSession(started.sessionId, principal.ownerId);
   });
+  it('shows long current text and thinking whole while compacting repeated stream snapshots', async () => {
+    const study = await freshStudy();
+    const queued = (await study.send('begin')) as { sessionId: string };
+    const text = 'Detailed explanation. '.repeat(40_000),
+      thinking = 'Reasoning. '.repeat(60_000);
+    for (let i = 0; i < 4; i++)
+      await agents.appendControlEvent(queued.sessionId, {
+        ts: Date.now(),
+        type: 'message_update',
+        data: {
+          message: {
+            role: 'assistant',
+            content: [
+              { type: 'thinking', thinking },
+              { type: 'text', text: text + ' ' + i },
+            ],
+          },
+        },
+      });
+    const { readConversationHistory } = await import('@/lib/server/pbl-v3/conversation-history');
+    const events = await readConversationHistory(
+      pool,
+      queued.sessionId,
+      await agents.lastEventSeq(queued.sessionId),
+      1000,
+    );
+    expect(events.filter((event) => event.type === 'message_update')).toHaveLength(1);
+    const view = await learningView(principal, study.id, { passive: true });
+    expect(view.conversation?.at(-1)?.parts.find((p) => p.kind === 'text')).toMatchObject({
+      text: text + ' 3',
+    });
+    expect(view.conversation?.at(-1)?.parts.find((p) => p.kind === 'thinking')).toMatchObject({
+      text: thinking,
+    });
+    const row = await store.get(study.id, principal.ownerId);
+    await pool.query("UPDATE sandbox_environments SET state='destroyed' WHERE id=$1", [
+      row.environment_id,
+    ]);
+  });
   it('bounds long evidence histories and oversized records while retaining complete quantitative totals', async () => {
     const study = await freshStudy();
     const started = (await study.send('begin')) as { sessionId: string };
@@ -1992,7 +2030,7 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
       canRetry: true,
     });
   });
-  it('repairs a prose-only guided turn once, fails explicitly if still unclosed, and retries without a new learner reply', async () => {
+  it('continues prose-only guided turns until a receipt or genuine empty model result, preserving retry evidence', async () => {
     const original = studyId;
     const study = await freshStudy();
     studyId = study.id;
@@ -2017,9 +2055,13 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
     await command('chat', { text: reply });
     const inputs = await agents.listUserMessages(queued.sessionId);
     const before = mocked.modelCalls;
-    mocked.responses = [textResponse('You can continue now.'), textResponse('Click Continue.')];
+    mocked.responses = [
+      textResponse('You can continue now.'),
+      textResponse('Click Continue.'),
+      textResponse(''),
+    ];
     await runSession({ running: new Map(), shuttingDown: false }, (await claim(queued.sessionId))!);
-    expect(mocked.modelCalls - before).toBe(2); // bounded, not an autonomous retry loop
+    expect(mocked.modelCalls - before).toBe(3); // Empty model output is a protocol failure, not a retry quota.
     expect((await agents.getSession(queued.sessionId))?.status).toBe('failed');
     expect((await agents.getSession(queued.sessionId))?.error).toContain('without recording');
     expect((await learningView(principal, study.id)).actions).not.toContain('next');
@@ -2080,6 +2122,7 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
     mocked.responses = [
       toolResponse([{ name: 'read_next_skill', input: {} }]),
       textResponse(delivered),
+      textResponse('I will record the question already asked.'),
       toolResponse([{ name: 'request_skill_review', input: { question } }]),
     ];
     const callsBefore = mocked.modelCalls;
@@ -2087,8 +2130,8 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
       { running: new Map(), shuttingDown: false },
       { ...meta!, ...(await agents.getSession(queued.sessionId))! },
     );
-    expect(mocked.modelCalls - callsBefore).toBe(3);
-    expect(mocked.modelSystems.at(-1)).toContain(JSON.stringify(delivered));
+    expect(mocked.modelCalls - callsBefore).toBe(4);
+    expect(mocked.modelSystems.at(-1)).toContain(delivered);
     expect(mocked.modelSystems.at(-1)).toContain('record that SAME question');
     expect((await agents.getSession(queued.sessionId))?.status).toBe('succeeded');
     expect(await agents.listUserMessages(queued.sessionId)).toEqual(inputs);
@@ -3442,23 +3485,6 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
       for (const milestone of descriptor.definition.milestones)
         descriptor.runtime.evaluations[milestone.id] = 'tests/private.json';
       bundle.files['project.json'] = JSON.stringify(descriptor);
-      // Build a valid course close to the actual 32 KiB budget, with room for a short question.
-      const introDoc = descriptor.teaching[0]!.documents[0]!,
-        introText = bundle.files[introDoc];
-      validateProjectPackage(indexProjectFiles(importedId, selected.ref.version, bundle.files));
-      let low = 0,
-        high = 4500;
-      while (low < high) {
-        const middle = Math.ceil((low + high) / 2);
-        bundle.files[introDoc] = introText + 'x'.repeat(middle);
-        try {
-          validateProjectPackage(indexProjectFiles(importedId, selected.ref.version, bundle.files));
-          low = middle;
-        } catch {
-          high = middle - 1;
-        }
-      }
-      bundle.files[introDoc] = introText + 'x'.repeat(Math.max(0, low - 256));
       const projectRef = await installProjectPackage(
         principal.ownerId,
         indexProjectFiles(importedId, selected.ref.version, bundle.files),
@@ -3562,9 +3588,8 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
           const calls = mocked.modelCalls;
           try {
             await writeFile(path, 'Learner plan '.repeat(4000));
-            await expect(teachingRunnerConfig(request)).rejects.toMatchObject({
-              code: 'PBL_PROMPT_SIZE',
-            });
+            const expanded = await teachingRunnerConfig(request);
+            expect(expanded.systemPrompt).toContain('Learner plan '.repeat(4000));
             expect(mocked.modelCalls).toBe(calls);
             oversizedPlanChecked = true;
           } finally {
@@ -3608,8 +3633,10 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
                 text: original + '\n' + 'Learner plan '.repeat(4000),
                 expectedHash: digest(original),
               }),
-            ).rejects.toMatchObject({ code: 'PBL_PROMPT_SIZE' });
-            expect(await service.readText(environmentId, 'PLAN.md')).toBe(original);
+            ).resolves.toBeDefined();
+            const expanded = await service.readText(environmentId, 'PLAN.md');
+            expect(expanded).toContain('Learner plan '.repeat(4000));
+            await send('save', { path: 'PLAN.md', text: original, expectedHash: digest(expanded) });
             oversizedPlanSaveChecked = true;
           }
           const teaching = descriptor.teaching.find((binding) => binding.stage === key)!;
@@ -3665,8 +3692,13 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
                         text: oversized,
                         expectedHash: digest(original),
                       }),
-                    ).rejects.toMatchObject({ code: 'PBL_PROMPT_SIZE' });
-                    expect(await service.readText(environmentId, path)).toBe(original);
+                    ).resolves.toBeDefined();
+                    expect(await service.readText(environmentId, path)).toBe(oversized);
+                    await invoke(config, 'write_file', {
+                      path,
+                      text: original,
+                      expectedHash: digest(oversized),
+                    });
                     oversizedPlanWriteChecked = true;
                   }
                   await invoke(config, 'write_file', {
@@ -3685,14 +3717,12 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
                     await invoke(config, 'collect_build');
                   }
                 }
-                if (!oversizedQuestionChecked) {
-                  await expect(
-                    invoke(config, 'request_skill_review', { question: '请'.repeat(2000) }),
-                  ).rejects.toMatchObject({ code: 'PBL_PROMPT_SIZE' });
-                  expect(config.isTurnComplete()).toBe(false);
-                  oversizedQuestionChecked = true;
-                }
-                await invoke(config, 'request_skill_review', { question: 'Explain this section.' });
+                const question = !oversizedQuestionChecked
+                  ? 'Explain this section. '.repeat(250)
+                  : 'Explain this section.';
+                await invoke(config, 'request_skill_review', { question });
+                expect(config.isTurnComplete()).toBe(true);
+                oversizedQuestionChecked = true;
               },
             );
           }

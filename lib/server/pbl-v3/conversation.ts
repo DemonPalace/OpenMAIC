@@ -294,7 +294,9 @@ export function boundConversation(
     const kept: Part[] = [];
     for (const part of entry.parts.toReversed()) {
       const size = Buffer.byteLength(JSON.stringify(part));
-      if (size <= remaining) {
+      if (entry === entries.at(-1) && (part.kind === 'text' || part.kind === 'thinking')) {
+        kept.push(part);
+      } else if (size <= remaining) {
         kept.push(part);
         remaining -= size;
       } else {

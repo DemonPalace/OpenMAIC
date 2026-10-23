@@ -445,7 +445,7 @@ describe('OpenAI SDK integration', () => {
       expect(assistant?.reasoning_content).toBeUndefined();
     });
 
-    it('scopes reasoning_effort to DeepSeek calls without tools', async () => {
+    it('supports explicit low effort with DeepSeek tools and preserves other tool defaults', async () => {
       const bodies: Array<Record<string, unknown>> = [];
       const originalFetch = globalThis.fetch;
       globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
@@ -494,6 +494,36 @@ describe('OpenAI SDK integration', () => {
         ).consumeStream();
         expect(bodies.at(-1)).toMatchObject({ thinking: { type: 'enabled' } });
         expect(bodies.at(-1)).not.toHaveProperty('reasoning_effort');
+
+        await streamLLM(
+          { model, prompt: 'hi', maxRetries: 0, tools: { lookup }, stopWhen: stepCountIs(1) },
+          'test',
+          { mode: 'enabled', effort: 'low' },
+        ).consumeStream();
+        expect(bodies.at(-1)).toMatchObject({
+          thinking: { type: 'enabled' },
+          reasoning_effort: 'low',
+        });
+        const alias = getModel({
+          providerId: 'deepseek',
+          modelId: 'deepseek-chat',
+          apiKey: 'test',
+        }).model;
+        await streamLLM(
+          {
+            model: alias,
+            prompt: 'hi',
+            maxRetries: 0,
+            tools: { lookup },
+            stopWhen: stepCountIs(1),
+          },
+          'test',
+          { mode: 'enabled', effort: 'low' },
+        ).consumeStream();
+        expect(bodies.at(-1)).toMatchObject({
+          thinking: { type: 'enabled' },
+          reasoning_effort: 'low',
+        });
 
         await streamLLM({ model, prompt: 'hi', maxRetries: 0 }, 'test').consumeStream();
         expect(bodies.at(-1)).toMatchObject({
