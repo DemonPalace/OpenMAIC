@@ -201,13 +201,15 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
   const preparationAttempt = useRef('');
   const prepare = useCallback(
     async (repeat = false) => {
+      if (commandInFlight.current) return;
       setPreparationFailed(false);
       if (!(await command('prepare', {}, repeat))) setPreparationFailed(true);
     },
     [command],
   );
   useEffect(() => {
-    if (!view || pending || view.busy || view.state.status === 'completed') return;
+    if (!view || pending || preparationFailed || view.busy || view.state.status === 'completed')
+      return;
     const key = `${view.id}:${activityGeneration}`;
     if (view.environment?.ready) {
       preparationAttempt.current = key;
@@ -218,7 +220,7 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
     // preparation needs an explicit retry; the server retains allocation identity.
     preparationAttempt.current = key;
     void prepare();
-  }, [view, pending, prepare, activityGeneration]);
+  }, [view, pending, preparationFailed, prepare, activityGeneration]);
   // Polling observes execution; a separate, idempotent command commits the verdict.
   // Collect terminal test runs automatically, including after refresh. A failed
   // collection offers a manual retry instead of an unbounded request loop.

@@ -107,7 +107,7 @@
     "typecheck": "passed",
     "i18n": "12 locales aligned",
     "boundedFailurePostgresTests": {
-      "passed": 80,
+      "passed": 86,
       "includes": [
         "persistent failure deadline survives another maintenance instance",
         "previous checkpoint preserved and loss notice survives restore",
@@ -133,7 +133,24 @@
       "file": "archive-loss-notice-2026-10-23.png",
       "method": "Browser screenshot of a real persisted released study; automatic compute preparation and teaching turns suppressed in the screenshot harness to avoid allocating additional resources"
     },
-    "packageVersionCheck": "storage 0.39.0 -> 0.39.1 passed"
+    "packageVersionCheck": "storage 0.39.0 -> 0.39.1 passed",
+    "terminalReviewFollowUp": {
+      "comment": "https://github.com/THU-MAIC/OpenMAIC/pull/2011#discussion_r4359159199",
+      "newPostgresRegressions": 6,
+      "targetedUnitTests": 21,
+      "browserWorkspaceJourney": "passed",
+      "mode": "Real PostgreSQL and local workspace files, controlled provider/model behavior; browser API fixture on local Next.js",
+      "coverage": [
+        "Close abandoned terminal before archiving final writes and restore those files",
+        "Preserve another active tab and a running Agent turn",
+        "Bound persistent terminal close and discovery failures without an inconsistent archive",
+        "Transient closure retries preserve inactivity time",
+        "Learner return clears pending terminal cleanup",
+        "Failed preparation requires explicit retry after later trusted input",
+        "Completed report reopening never prepares compute",
+        "Append migration checksum pins for PBL versions 6 through 8 without changing shipped SQL"
+      ]
+    }
   },
   "observations": [
     "Scene return restored the exact acknowledged file",
@@ -166,6 +183,7 @@
       "Use the same resolved failure stage in diagnostics and durable metadata"
     ],
     "verifiedFixCommit": "317f8ea0",
-    "reReview": "Both reviewers confirmed their findings addressed and reported no new high-confidence blocker"
+    "reReview": "Both reviewers confirmed their findings addressed and reported no new high-confidence blocker",
+    "terminalFollowUp": "Targeted subagent review confirmed the terminal-retention fix and explicit preparation-retry guards, with no new confirmed blocker."
   }
 }

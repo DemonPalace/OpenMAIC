@@ -13,7 +13,13 @@ export type CheckpointFailureReason =
   | 'timeout'
   | 'workspace-changed'
   | 'unavailable';
-export type CheckpointStage = 'snapshot' | 'archive' | 'recovery' | 'release' | 'execution';
+export type CheckpointStage =
+  | 'snapshot'
+  | 'archive'
+  | 'recovery'
+  | 'release'
+  | 'execution'
+  | 'terminal';
 
 export function checkpointBusy(error: unknown) {
   return (

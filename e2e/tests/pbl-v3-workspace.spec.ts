@@ -89,6 +89,7 @@ test('installed sample opens in the normal classroom and preserves progress afte
     }
     if (url.searchParams.has('samples')) return route.continue();
     if (body?.action === 'sample') return route.continue(); // actual course creation and persistence
+    if (url.pathname === '/api/pbl/v3/activity') return route.fulfill({ json: { recorded: true } });
     if (url.pathname === '/api/pbl/v3/report') {
       if (req.method() === 'POST') expect(req.headers()['content-type']).toBe('application/json');
       return route.fulfill({
@@ -422,14 +423,36 @@ test('installed sample opens in the normal classroom and preserves progress afte
   await page.getByLabel('Your message').fill('Continue after restoring my environment.');
   view.environment = { state: 'destroyed', ready: false };
   failPreparation = true;
-  await page.getByRole('button', { name: 'Refresh progress' }).click();
+  const beforeRecovery = calls.filter((c) => c.type === 'prepare').length;
+  // Observe expiry without trusted input: passive refreshes must not allocate compute.
+  await page.getByRole('button', { name: 'Refresh progress' }).dispatchEvent('click');
+  await expect(page.getByTestId('pbl-environment-setup')).toContainText('environment is inactive');
+  expect(calls.filter((c) => c.type === 'prepare')).toHaveLength(beforeRecovery);
+  // Exercise trusted input beyond the activity wake-up coalescing interval.
+  await page.waitForTimeout(1100);
+  await page.getByRole('button', { name: 'Restore project files', exact: true }).click();
   await expect(page.getByTestId('pbl-environment-setup')).toContainText('could not be prepared');
   const blocked = page.getByTestId('pbl-input-blocked');
   await expect(blocked).toContainText('retry above; your draft is kept.');
   await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeDisabled();
   const submitted = calls.filter((c) => c.type === 'chat').length;
+  await page.waitForTimeout(1100);
+  const automaticRetry = page
+    .waitForRequest(
+      (request) =>
+        request.method() === 'POST' &&
+        new URL(request.url()).pathname === '/api/pbl/v3' &&
+        request.postDataJSON()?.command?.type === 'prepare',
+      { timeout: 1500 },
+    )
+    .then(
+      () => true,
+      () => false,
+    );
   await page.getByLabel('Your message').press('Enter');
+  expect(await automaticRetry).toBe(false);
   expect(calls.filter((c) => c.type === 'chat')).toHaveLength(submitted);
+  expect(calls.filter((c) => c.type === 'prepare')).toHaveLength(beforeRecovery + 1);
   await expect(
     page
       .getByRole('alert')
@@ -764,7 +787,11 @@ test('installed sample opens in the normal classroom and preserves progress afte
   view.actions = [];
   view.state.position.stageIndex = 6;
   await page.getByRole('button', { name: 'Refresh progress' }).click();
-  await expect(page.getByTestId('pbl-environment-setup')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Learning report', exact: true })).toBeVisible();
+  await expect(page.getByTestId('pbl-environment-setup')).toContainText('environment is inactive');
+  await expect(
+    page.getByRole('button', { name: 'Restore project files', exact: true }),
+  ).toBeVisible();
   expect(calls.filter((c) => c.type === 'prepare')).toHaveLength(attempts + 1);
   await page.getByRole('button', { name: 'Expand project workspace' }).click();
   await page.getByRole('button', { name: 'Learning report', exact: true }).click();
@@ -802,4 +829,5 @@ test('installed sample opens in the normal classroom and preserves progress afte
   await page.getByRole('button', { name: 'Learning report', exact: true }).click();
   await expect(report.getByText('A saved learning journey', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Return to learning' }).click();
+  expect(calls.filter((c) => c.type === 'prepare')).toHaveLength(attempts + 1);
 });

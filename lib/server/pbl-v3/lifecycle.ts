@@ -89,6 +89,24 @@ async function releaseWithoutArchive(store: LearningStore, row: Study, service: 
   await service.destroy(environmentId);
 }
 
+async function handleUnsettledWriter(
+  store: LearningStore,
+  row: Study,
+  service: SandboxService,
+  stage: 'execution' | 'terminal',
+) {
+  if (Date.now() - row.last_used_at.getTime() < pblIdleTimeoutMs()) return;
+  if (archiveGraceExpired(row)) return releaseWithoutArchive(store, row, service);
+  await store.recordCheckpointFailure(row, {
+    environmentId: row.environment_id!,
+    reason: 'execution-unsettled',
+    stage,
+    retryable: true,
+    firstIdleFailureAt: row.checkpoint_failure?.firstIdleFailureAt ?? new Date().toISOString(),
+    dirtyAt: row.workspace_dirty_at?.toISOString() ?? null,
+  });
+}
+
 /** No browser timers, per-tab counts, or independently maintained busy flags. */
 export async function maintainStudy(
   store: LearningStore,
@@ -181,22 +199,8 @@ export async function maintainStudy(
           }
           if (agents.rows.length) return;
           if (commandsBusy) {
-            if (
-              overdueCommands === commandsBusy &&
-              Date.now() - row.last_used_at.getTime() >= pblIdleTimeoutMs()
-            ) {
-              if (archiveGraceExpired(row)) await releaseWithoutArchive(store, row, service);
-              else
-                await store.recordCheckpointFailure(row, {
-                  environmentId,
-                  reason: 'execution-unsettled',
-                  stage: 'execution',
-                  retryable: true,
-                  firstIdleFailureAt:
-                    row.checkpoint_failure?.firstIdleFailureAt ?? new Date().toISOString(),
-                  dirtyAt: row.workspace_dirty_at?.toISOString() ?? null,
-                });
-            }
+            if (overdueCommands === commandsBusy)
+              await handleUnsettledWriter(store, row, service, 'execution');
             return;
           }
           if (row.checkpoint_failure?.stage === 'execution') {
@@ -230,6 +234,28 @@ export async function maintainStudy(
             (row.workspace_dirty_at &&
               Date.now() - row.workspace_dirty_at.getTime() >= PBL_DIRTY_CHECKPOINT_MS)
           ) {
+            if (idle) {
+              // An abandoned shell is a writer, not learner activity. Close it before taking
+              // a file snapshot; failed discovery/cleanup uses the same finite failure grace.
+              let terminalsClosed = true;
+              try {
+                for (const terminal of await service.listTerminals(environmentId)) {
+                  if (terminal.state === 'closed') continue;
+                  if (
+                    (await service.closeTerminal(environmentId, terminal.id)).state !== 'closed'
+                  ) {
+                    terminalsClosed = false;
+                    break;
+                  }
+                }
+              } catch {
+                terminalsClosed = false;
+              }
+              if (!terminalsClosed) {
+                await handleUnsettledWriter(store, row, service, 'terminal');
+                return;
+              }
+            }
             const failure =
               row.checkpoint_failure?.environmentId === environmentId
                 ? row.checkpoint_failure

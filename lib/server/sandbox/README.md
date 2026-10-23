@@ -49,6 +49,8 @@ reports; another tab can still update the same study. No unload callback or tab 
 required. A long static reading period can reach inactivity; subsequent input restores the
 workspace automatically. Returning to a completed project's report does not allocate compute;
 its explicit restore control opens the project files when wanted.
+After a preparation failure, further typing/scrolling does not automatically retry it;
+the learner uses the explicit setup retry control, preserving any draft input.
 
 The server renews while the study is recently used or an Agent/execution is active. Task
 completion starts a fresh inactivity interval. Builds and assessments are collected through
@@ -60,6 +62,14 @@ If all unresolved commands remain overdue after cancellation, idle maintenance u
 same finite failure grace. On expiry it records an interrupted-work loss notice and
 destroys the environment without taking a potentially inconsistent archive. Confirmation
 that commands have stopped clears this failure and starts normal post-task inactivity.
+
+Idle reclamation closes leftover workbench terminals through the existing terminal cleanup
+path before archiving, including ordinary background processes in the terminal session.
+Recent learner activity and active Agent/build/assessment work still prevent reclamation.
+Uncertain terminal discovery or failed closure records an execution-unsettled failure at
+the terminal stage, using the same idle failure grace; retries never restart that deadline.
+If closure cannot be confirmed before expiry, release without a new archive under the
+existing durable discard/loss policy. Terminal closure itself does not count as activity.
 
 File invalidation marks the workspace dirty before the remote write. In addition to teaching
 checkpoints, dirty work is checkpointed after 60 seconds when no managed writer is active.

@@ -3683,6 +3683,168 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
     );
   }
 
+  async function studyWithTerminal() {
+    const fresh = await freshStudy();
+    await fresh.send('checkpoint');
+    const row = await store.get(fresh.id, principal.ownerId);
+    row.state.position.stageIndex = 3;
+    row.state.milestones[0]!.stageIndex = 3;
+    await store.transaction((db) => store.commit(db, row, { state: row.state, events: [] }));
+    const service = await SandboxService.forOwner(principal);
+    const terminal = (await workbenchCommand(principal, fresh.id, {
+      id: randomUUID(),
+      revision: (await store.get(fresh.id, principal.ownerId)).revision,
+      environmentId: row.environment_id!,
+      epoch: await service.workspaceEpoch(row.environment_id!),
+      action: 'terminal',
+    })) as { id: string; state: string };
+    expect(terminal.state).toBe('running');
+    onTestFinished(() => {
+      mocked.terminals.delete(terminal.id);
+    });
+    return { fresh, service, terminal, environmentId: row.environment_id! };
+  }
+
+  it('closes an abandoned terminal before archiving its final writes and releasing the idle environment', async () => {
+    const { fresh, service, terminal, environmentId } = await studyWithTerminal();
+    const source = Object.keys(project.files).find((path) => path !== 'PLAN.md')!;
+    const code =
+      'def greet(name):\n    return f"Hello, {name}!"\n# terminal cleanup flushed this edit\n';
+    const close = vi
+      .spyOn(E2BCompatibleSandboxProvider.prototype, 'closeTerminal')
+      .mockImplementation(async () => {
+        await writeFile(join(mocked.root, environmentId, source), code);
+        mocked.terminals.delete(terminal.id);
+      });
+    onTestFinished(() => close.mockRestore());
+    await ageStudy(fresh.id);
+    await maintainStudy(store, fresh.id, principal.ownerId);
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(await service.get(environmentId)).toMatchObject({ state: 'destroyed' });
+    expect(await service.checkpoint(environmentId)).toMatchObject({ revision: 2 });
+    const saved = await store.get(fresh.id, principal.ownerId);
+    expect(saved.archive_discard).toBeNull();
+    expect(saved.checkpoint_failure).toBeNull();
+    await fresh.send('prepare');
+    const restored = await store.get(fresh.id, principal.ownerId);
+    expect(await service.readText(restored.environment_id!, source)).toBe(code);
+  });
+
+  it('keeps a terminal open for activity in another tab and for a running Agent turn', async () => {
+    const { fresh, service, environmentId } = await studyWithTerminal();
+    const close = vi.spyOn(E2BCompatibleSandboxProvider.prototype, 'closeTerminal');
+    onTestFinished(() => close.mockRestore());
+    await ageStudy(fresh.id);
+    await store.recordActivity(fresh.id, principal.ownerId);
+    await maintainStudy(store, fresh.id, principal.ownerId);
+    expect(close).not.toHaveBeenCalled();
+    const queued = (await fresh.send('chat')) as { sessionId: string };
+    await ageStudy(fresh.id);
+    await maintainStudy(store, fresh.id, principal.ownerId);
+    expect(close).not.toHaveBeenCalled();
+    expect(await service.get(environmentId)).toMatchObject({ state: 'running' });
+    const turn = await agents.claimNextSession('terminal-lifecycle-worker', process.pid, {
+      sessionId: queued.sessionId,
+      leaseTtlMs: 10000,
+      maxAttempts: 5,
+    });
+    await agents.finishSession(queued.sessionId, 'terminal-lifecycle-worker', {
+      status: 'succeeded',
+      expectedAttempt: turn!.attempt,
+    });
+    await maintainStudy(store, fresh.id, principal.ownerId);
+    expect(close).not.toHaveBeenCalled();
+    await ageStudy(fresh.id);
+    // A stable task completion must also precede the simulated next inactivity window.
+    await pool.query(
+      "UPDATE agent_sessions SET updated_at=now()-interval '20 minutes' WHERE id=$1",
+      [queued.sessionId],
+    );
+    await maintainStudy(store, fresh.id, principal.ownerId);
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(await service.get(environmentId)).toMatchObject({ state: 'destroyed' });
+  });
+
+  it.each(['close', 'lookup'] as const)(
+    'bounds abandoned terminal %s failures without archiving a possible writer',
+    async (operation) => {
+      const { fresh, service, environmentId } = await studyWithTerminal();
+      const failure = vi
+        .spyOn(
+          E2BCompatibleSandboxProvider.prototype,
+          operation === 'close' ? 'closeTerminal' : 'findTerminal',
+        )
+        .mockRejectedValue(new Error('Provider unavailable'));
+      const archive = vi.spyOn(E2BCompatibleSandboxProvider.prototype, 'exportWorkspace');
+      onTestFinished(() => {
+        failure.mockRestore();
+        archive.mockRestore();
+      });
+      await ageStudy(fresh.id);
+      await maintainStudy(store, fresh.id, principal.ownerId);
+      const first = await store.get(fresh.id, principal.ownerId);
+      expect(first.checkpoint_failure).toMatchObject({
+        reason: 'execution-unsettled',
+        stage: 'terminal',
+      });
+      expect(first.checkpoint_failure?.firstIdleFailureAt).toBeTruthy();
+      expect(await service.get(environmentId)).toMatchObject({ state: 'running' });
+      await maintainStudy(new LearningStore(pool), fresh.id, principal.ownerId);
+      expect(
+        (await store.get(fresh.id, principal.ownerId)).checkpoint_failure?.firstIdleFailureAt,
+      ).toBe(first.checkpoint_failure?.firstIdleFailureAt);
+      expect(archive).not.toHaveBeenCalled();
+      await expireArchiveGrace(fresh.id);
+      const renewals = mocked.renewals.length;
+      await maintainStudy(store, fresh.id, principal.ownerId);
+      expect(mocked.renewals).toHaveLength(renewals);
+      expect(archive).not.toHaveBeenCalled();
+      expect(await service.get(environmentId)).toMatchObject({ state: 'destroyed' });
+      expect(await service.checkpoint(environmentId)).toMatchObject({ revision: 1 });
+      expect((await learningView(principal, fresh.id)).archiveDiscard).toMatchObject({
+        checkpointRevision: 1,
+        reason: 'execution-unsettled',
+      });
+    },
+  );
+
+  it('retries a transient terminal cleanup failure and archives without extending idle time', async () => {
+    const { fresh, service, environmentId } = await studyWithTerminal();
+    const close = vi
+      .spyOn(E2BCompatibleSandboxProvider.prototype, 'closeTerminal')
+      .mockRejectedValueOnce(new Error('Close acknowledgement lost'));
+    onTestFinished(() => close.mockRestore());
+    await ageStudy(fresh.id);
+    await maintainStudy(store, fresh.id, principal.ownerId);
+    const failed = await store.get(fresh.id, principal.ownerId);
+    expect(failed.checkpoint_failure?.stage).toBe('terminal');
+    await maintainStudy(store, fresh.id, principal.ownerId);
+    const saved = await store.get(fresh.id, principal.ownerId);
+    expect(saved.last_used_at).toEqual(failed.last_used_at);
+    expect(saved.checkpoint_failure).toBeNull();
+    expect(saved.lifecycle_error).toBeNull();
+    expect(saved.archive_discard).toBeNull();
+    expect(await service.checkpoint(environmentId)).toMatchObject({ revision: 2 });
+    expect(await service.get(environmentId)).toMatchObject({ state: 'destroyed' });
+  });
+
+  it('cancels pending terminal cleanup when the learner returns', async () => {
+    const { fresh, service, environmentId } = await studyWithTerminal();
+    const close = vi
+      .spyOn(E2BCompatibleSandboxProvider.prototype, 'closeTerminal')
+      .mockRejectedValue(new Error('Close unavailable'));
+    onTestFinished(() => close.mockRestore());
+    await ageStudy(fresh.id);
+    await maintainStudy(store, fresh.id, principal.ownerId);
+    await expireArchiveGrace(fresh.id);
+    await store.recordActivity(fresh.id, principal.ownerId);
+    const calls = close.mock.calls.length;
+    await maintainStudy(store, fresh.id, principal.ownerId);
+    expect(close).toHaveBeenCalledTimes(calls);
+    expect((await store.get(fresh.id, principal.ownerId)).checkpoint_failure).toBeNull();
+    expect(await service.get(environmentId)).toMatchObject({ state: 'running' });
+  });
+
   it('bounds repeated idle archive failures and restores only the previous durable version with a loss notice', async () => {
     const fresh = await freshStudy();
     let row = await store.get(fresh.id, principal.ownerId);
