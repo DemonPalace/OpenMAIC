@@ -243,7 +243,7 @@ describe('renaming a chat from its row', () => {
 
 describe('course rail move-out destination', () => {
   it.each(['top', 'folder'] as const)(
-    'only arms the ground for a course carried from a folder: %s',
+    'only arms for a foldered course and handles release after the activating move: %s',
     async (location) => {
       const { moveCourse } = await renderRail(location);
       if (location === 'folder') {
@@ -253,6 +253,7 @@ describe('course rail move-out destination', () => {
       expect(row).not.toBeNull();
       const ground = byTestId('pro-nav-tree-ground-drop')!;
       expect(ground.getAttribute('data-armed')).toBe('false');
+      expect(ground.getAttribute('data-ws-drop-folder')).toBe('');
       // Hit testing is controlled; the production pointer gesture and row rendering are real.
       const original = document.elementFromPoint;
       document.elementFromPoint = () => ground;
@@ -266,7 +267,7 @@ describe('course rail move-out destination', () => {
           );
         });
         expect(ground.getAttribute('data-armed')).toBe(location === 'folder' ? 'true' : 'false');
-        expect(ground.hasAttribute('data-ws-drop-folder')).toBe(location === 'folder');
+        expect(ground.getAttribute('data-ws-drop-folder')).toBe('');
         expect(ground.textContent).toBe(location === 'folder' ? 'workspace.dropToUnfile' : '');
         // Cancellation still clears the first gesture without moving anything.
         await act(async () => window.dispatchEvent(new PointerEvent('pointercancel')));
@@ -278,21 +279,13 @@ describe('course rail move-out destination', () => {
           );
           window.dispatchEvent(new PointerEvent('pointermove', { clientX: 20, clientY: 20 }));
         });
+        // Release immediately: no second move may repair the activation hit test.
+        await act(async () =>
+          window.dispatchEvent(new PointerEvent('pointerup', { clientX: 20, clientY: 20 })),
+        );
         if (location === 'folder') {
-          await act(async () =>
-            window.dispatchEvent(new PointerEvent('pointermove', { clientX: 20, clientY: 20 })),
-          );
-          await act(async () =>
-            window.dispatchEvent(new PointerEvent('pointerup', { clientX: 20, clientY: 20 })),
-          );
           expect(moveCourse).toHaveBeenCalledExactlyOnceWith('drag-course', undefined);
         } else {
-          await act(async () =>
-            window.dispatchEvent(new PointerEvent('pointermove', { clientX: 20, clientY: 20 })),
-          );
-          await act(async () =>
-            window.dispatchEvent(new PointerEvent('pointerup', { clientX: 20, clientY: 20 })),
-          );
           expect(moveCourse).not.toHaveBeenCalled();
         }
 

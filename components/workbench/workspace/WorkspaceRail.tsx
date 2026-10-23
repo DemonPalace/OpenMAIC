@@ -1300,12 +1300,13 @@ export function WorkspaceRail({
             hit-tests with `closest()`, so a zone wrapping the tree would turn
             every row into an unfile target and break reordering outright. And
             the 1px gaps between rows are not inside it, which is why hovering
-            between two rows still commits nothing. */}
+            between two rows still commits nothing. Its target metadata stays
+            present before activation so the first pointermove can hit-test it. */}
         {tab === 'courses' && foldersAvailable ? (
           <TreeGroundDrop
             armed={carriedFromFolder}
             active={carriedFromFolder && drag.folderTarget === ''}
-            dropProps={carriedFromFolder ? drag.folderProps() : {}}
+            dropProps={drag.folderProps()}
           />
         ) : null}
       </div>
