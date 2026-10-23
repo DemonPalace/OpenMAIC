@@ -20,8 +20,10 @@ Use the application's existing configuration:
 - A configured shared sandbox provider and durable checkpoint storage.
 - Explicit single-user installation mode, or a host-verified user with `sandbox:use`.
 
-Open `/pbl-v3` and choose a Java or Python sample. Entering the project automatically
-prepares its hosted environment and opens the first teaching step. There is no
+Open `/pbl-v3` and choose a Java or Python sample. The classroom first shows the
+existing project Hero; Start/Continue uses the same web-fullscreen reveal as v2,
+with the v3 workbench inside. Entering the project automatically prepares its hosted
+environment and opens the first teaching step. There is no
 learner setup click or deployment choice. Setup failure offers an explicit retry.
 The configured sandbox template must have Python 3. Follow the teaching sections,
 record a decision, review the plan and implementation, run and collect tests,
@@ -38,8 +40,13 @@ scenes keep their existing renderer.
 
 A PBL project remains a scene inside an OpenMAIC course. Neighboring slides, quizzes
 and other scenes provide course teaching; this change does not embed another
-OpenMAIC course inside the project. Native workspace expansion retains the same
-component instance and returns to the host layout without resetting a draft reply.
+OpenMAIC course inside the project. The Hero and expansion layer are shared with
+v2, preserving its visual styling, fit scaling and animation. Expansion retains the
+same workspace instance; Back to project overview retains the durable study and
+local drafts. Hero metadata is an owner-scoped, read-only lookup of the installed
+project, using authored copy for Future Self and the two-milestone Python TodoList.
+It does not create a study, renew/provision a sandbox, run a model or invoke v2
+generation/teaching. Stage counts come from the installed definition.
 Scene re-entry reloads durable study state. Dirty file tabs, the unsent reply, quiz
 choices and pane visibility are retained per study in tab-local browser storage;
 these drafts are not submitted learning records or durable checkpoints.
@@ -311,7 +318,13 @@ turn in the same stage. The teaching role can assess multiple replies together a
 quote or summarize them in `studentFeedback`; literal substring matching is not an
 authorization check. The role still assesses whether the answer addresses the
 question, while the server enforces real feedback or validated prior coverage, artifact versions and stage
-boundaries. Retries and assistant messages do not create student feedback.
+boundaries. Artifact stages additionally require an approval-request receipt for
+the current version. Conceptual coverage alone cannot approve a plan/code artifact.
+The final artifact section records an approval request; an earlier explicit request
+can set `request_skill_review.approval` and reuse its actual same-version reply
+without asking twice. The role still interprets whether that reply approves or
+requests changes; this is not a keyword-based consent classifier. Retries and
+assistant messages do not create student feedback.
 
 The source set, stage locks, writer-idle checks and ordinary sandbox restrictions
 remain the shared contract above. The merged workbench supplies file management and

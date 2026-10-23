@@ -751,6 +751,15 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
                 await invoke(config, 'run_build');
                 await invoke(config, 'collect_build');
               }
+              if (stage.kind === 'produce' && part === parts - 1) {
+                await expect(
+                  invoke(config, 'complete_stage', {
+                    studentFeedback: 'Earlier understanding is not final approval.',
+                    reuseFeedback: true,
+                  }),
+                ).rejects.toThrow('understanding feedback');
+                expect(config.isTurnComplete()).toBe(false);
+              }
               await invoke(config, 'request_skill_review', {
                 question: 'Explain the current work and confirm what to change.',
               });

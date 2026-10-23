@@ -1,6 +1,7 @@
 'use client';
 import {
   ArrowUp,
+  ArrowLeft,
   Square,
   MessageSquareText,
   RefreshCw,
@@ -31,9 +32,10 @@ import { sandboxErrorMessage } from '@/lib/sandbox/error-message';
 import { SandboxRequestError } from '@/components/sandbox/client';
 
 const headers = { 'content-type': 'application/json', 'x-openmaic-sandbox': '1' };
-export async function pblRequest<T>(url: string, body?: unknown): Promise<T> {
+export async function pblRequest<T>(url: string, body?: unknown, signal?: AbortSignal): Promise<T> {
   const response = await fetch(url, {
     headers,
+    ...(signal ? { signal } : {}),
     ...(body === undefined ? {} : { method: 'POST', body: JSON.stringify(body) }),
   });
   const data = await response.json();
@@ -46,7 +48,13 @@ export async function pblRequest<T>(url: string, body?: unknown): Promise<T> {
     );
   return data as T;
 }
-function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
+function PBLV3WorkspaceContent({
+  sceneId,
+  onReturnToHero,
+}: {
+  sceneId: string;
+  onReturnToHero?: () => void;
+}) {
   const { resolvedTheme, setTheme } = useTheme();
   const { t } = useI18n(),
     stageId = useStageStore((state) => state.stage?.id);
@@ -284,6 +292,17 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
       onKeyDown={(event) => event.stopPropagation()}
     >
       <header className="pbl-topbar flex shrink-0 items-center gap-2 border-b pbl-chrome py-2 pl-3 pr-12">
+        {onReturnToHero && (
+          <button
+            type="button"
+            onClick={onReturnToHero}
+            className={button}
+            aria-label={t('pbl.v2.workspace.returnToHero')}
+            title={t('pbl.v2.workspace.returnToHero')}
+          >
+            <ArrowLeft size={14} />
+          </button>
+        )}
         <h2 className="min-w-0 flex-1 truncate text-sm font-semibold">
           {view?.title ?? t('pblV3.title')}
         </h2>
@@ -849,10 +868,16 @@ function PBLV3WorkspaceContent({ sceneId }: { sceneId: string }) {
   );
 }
 
-export function PBLV3Workspace({ sceneId }: { sceneId: string }) {
+export function PBLV3Workspace({
+  sceneId,
+  onReturnToHero,
+}: {
+  sceneId: string;
+  onReturnToHero?: () => void;
+}) {
   return (
     <WorkspaceFrame>
-      <PBLV3WorkspaceContent sceneId={sceneId} />
+      <PBLV3WorkspaceContent sceneId={sceneId} onReturnToHero={onReturnToHero} />
     </WorkspaceFrame>
   );
 }

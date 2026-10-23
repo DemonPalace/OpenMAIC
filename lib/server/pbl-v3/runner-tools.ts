@@ -80,6 +80,7 @@ export async function teachingRunnerConfig(input: {
       row.state.position.stageIndex === 0 &&
       stage.kind === 'mentor_say' &&
       stage.skill !== 'recap',
+    stage.kind === 'produce' && stage.reviewRequired,
   );
   const runId = `${bound.stage_key}:${latest?.seq ?? 0}`;
   review.beginRun(
@@ -415,22 +416,29 @@ export async function teachingRunnerConfig(input: {
     tools.push(
       tool(
         'request_skill_review',
-        'Record a concrete student review question for this section. End your turn and wait for a new student reply.',
-        Type.Object({ question: Type.String({ minLength: 1, maxLength: 2000 }) }),
+        'Record a concrete student review question for this section. End your turn and wait for a new student reply. Set approval only when explicitly asking the learner to approve the current plan/code version. Understanding alone is not approval. The final artifact section always records an approval request.',
+        Type.Object({
+          question: Type.String({ minLength: 1, maxLength: 2000 }),
+          approval: Type.Optional(Type.Boolean()),
+        }),
         async (current, p, _callId, signal) => {
           const hash = await fingerprint(current, signal);
           await assertBuilt(store, current, hash);
+          const approval =
+            stage.kind === 'produce' &&
+            stage.reviewRequired &&
+            (p.approval === true || review.state.activeFile === protocol.final);
           // Refuse an oversized question before persisting a receipt that would block the next turn.
           const prospective = {
             ...currentPromptInput(),
-            pendingReview: { question: p.question, studentResponses: [] },
+            pendingReview: { question: p.question, approval, studentResponses: [] },
           };
           assertPromptBudget(renderTeachingPrompt(prospective).bytes);
           assertPromptBudget(
             Buffer.byteLength(systemPrompt + teachingLiveSuffix(teachingLiveContext(prospective))) +
               sectionBytes,
           );
-          review.checkpoint(p.question, hash);
+          review.checkpoint(p.question, hash, approval);
           return { value: { question: p.question, waitForStudent: true } };
         },
       ),
@@ -586,7 +594,11 @@ export async function teachingRunnerConfig(input: {
     activeSection: review.state.activeFile,
     reviewedSectionCount: review.state.reviewedFiles.length,
     pendingReview: review.state.pending
-      ? { question: review.state.pending.question, studentResponses: review.studentResponses() }
+      ? {
+          question: review.state.pending.question,
+          approval: review.state.pending.approval,
+          studentResponses: review.studentResponses(),
+        }
       : null,
   });
   const {

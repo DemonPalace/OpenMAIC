@@ -10,6 +10,7 @@ const receiptSchema = z.object({
   artifactDigest: z.string().regex(/^[a-f0-9]{64}$/),
   runId: z.string(),
   question: z.string().min(1).max(2000),
+  approval: z.boolean().optional(),
 });
 export const guidedSkillStateSchema = z
   .object({
@@ -18,6 +19,13 @@ export const guidedSkillStateSchema = z
     reviewedFiles: z.array(z.string()).max(16),
     pending: receiptSchema.optional(),
     welcome: z.enum(['pending', 'ready']).optional(),
+    approval: z
+      .object({
+        stageKey: z.string(),
+        artifactDigest: z.string(),
+        studentSeq: z.number().int().positive(),
+      })
+      .optional(),
     coverage: z
       .object({
         stageKey: z.string(),
@@ -47,6 +55,7 @@ export class GuidedSkillReview {
     readonly protocol: StageSkillProtocol,
     restored?: GuidedSkillState,
     projectWelcome = false,
+    private readonly requiresApproval = false,
   ) {
     const files = protocol.progression.slice(1);
     const index = restored ? files.indexOf(restored.activeFile) : -1;
@@ -158,6 +167,7 @@ export class GuidedSkillReview {
           artifactDigest: digest,
           studentSeq: this.studentResponses().at(-1)!.seq,
         };
+        if (this.state.pending?.approval) this.state.approval = { ...this.state.coverage };
       }
       this.state.reviewedFiles.push(this.state.activeFile);
     }
@@ -166,7 +176,7 @@ export class GuidedSkillReview {
     this.advanced = true;
   }
 
-  checkpoint(question: string, digest: string): GuidedSkillState {
+  checkpoint(question: string, digest: string, approval = false): GuidedSkillState {
     this.assertWritable();
     if (!question.trim() || question.length > 2000) throw new Error('请给出当前段的具体检查任务');
     this.state.pending = {
@@ -174,6 +184,7 @@ export class GuidedSkillReview {
       artifactDigest: digest,
       runId: this.runId,
       question,
+      ...(approval ? { approval: true } : {}),
     };
     this.ended = true;
     return structuredClone(this.state);
@@ -198,6 +209,16 @@ export class GuidedSkillReview {
     this.assertCompletable();
     if (reuseFeedback) this.assertCovered(feedback, digest);
     else this.assertFeedback(feedback, digest);
+    const prior = this.state.approval;
+    const approved =
+      (!reuseFeedback && this.state.pending?.approval) ||
+      (prior?.stageKey === this.stageKey &&
+        prior.artifactDigest === digest &&
+        this.messages.some((message) => message.seq === prior.studentSeq && message.text.trim()));
+    if (this.requiresApproval && !approved)
+      throw new Error(
+        'Request approval of the current artifact with request_skill_review and wait for the learner reply; understanding feedback cannot approve an artifact.',
+      );
   }
 
   complete(feedback: string | undefined, digest: string, reuseFeedback = false): void {

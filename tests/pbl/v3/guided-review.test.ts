@@ -161,6 +161,57 @@ describe('guided review boundaries', () => {
     ).not.toThrow();
   });
 
+  it('does not turn understanding into artifact approval, and recovers with a real approval reply', () => {
+    const review = new GuidedSkillReview(protocol, undefined, false, true);
+    review.beginRun('plan:2', [], false, 1);
+    review.advance('A-teach.md', undefined, artifact);
+    review.checkpoint('Explain the plan.', artifact);
+    review.beginRun('plan:2', [{ seq: 3, text: 'I understand the plan.' }], true);
+    review.advance('B-review.md', 'The learner understands.', artifact);
+    expect(() => review.complete('Reuse understanding.', artifact, true)).toThrow(
+      'understanding feedback',
+    );
+    review.checkpoint('Do you approve this current plan?', artifact, true);
+    expect(() => review.complete('The assistant approves.', artifact)).toThrow();
+    review.beginRun('plan:2', [{ seq: 3, text: 'I understand the plan.' }], true);
+    expect(() => review.complete('An older reply.', artifact)).toThrow();
+    review.beginRun('plan:2', [{ seq: 5, text: 'I approve this version.' }], true);
+    expect(() => review.complete('Actual approval.', 'b'.repeat(64))).toThrow();
+    expect(() => review.complete('Actual current-version approval.', artifact)).not.toThrow();
+  });
+
+  it('reuses explicit approval across sections and reload without another question', () => {
+    const review = new GuidedSkillReview(protocol, undefined, false, true);
+    review.beginRun('code:3', [], false, 1);
+    review.advance('A-teach.md', undefined, artifact);
+    review.checkpoint('Review and approve this code version for testing.', artifact, true);
+    const replies = [{ seq: 3, text: 'I understand it and approve it for testing.' }];
+    review.beginRun('code:3', replies, true);
+    review.advance('B-review.md', 'Actual approval.', artifact);
+    const restored = new GuidedSkillReview(protocol, review.state, false, true);
+    restored.beginRun('code:3', replies, true);
+    expect(() =>
+      restored.complete('Reuse unchanged approved version.', artifact, true),
+    ).not.toThrow();
+  });
+
+  it('retains current-version approval after a later answered understanding question', () => {
+    const extended = { ...protocol, progression: ['SKILL.md', 'A', 'B', 'C'], final: 'C' };
+    const review = new GuidedSkillReview(extended, undefined, false, true);
+    review.beginRun('code:3', [], false, 1);
+    review.advance('A', undefined, artifact);
+    review.checkpoint('Approve this version?', artifact, true);
+    const approval = { seq: 3, text: 'I approve this version.' };
+    review.beginRun('code:3', [approval], true);
+    review.advance('B', 'Approved.', artifact);
+    review.checkpoint('You asked about one risk. Is it clear now?', artifact);
+    const clarification = { seq: 5, text: 'Yes, the explanation resolved my question.' };
+    review.beginRun('code:3', [approval, clarification], true);
+    review.advance('C', 'The new question is answered.', artifact);
+    expect(() => review.complete('Reuse unchanged approval.', artifact, true)).not.toThrow();
+    expect(() => review.complete('Changed version.', 'b'.repeat(64), true)).toThrow();
+  });
+
   it('rejects reused feedback from an opening, another stage, changed artifact or an unanswered new question', () => {
     const review = new GuidedSkillReview(protocol);
     review.beginRun('code:3', [], false, 1);
