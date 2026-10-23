@@ -42,6 +42,17 @@ keep the cloud lease at least five minutes for normal hosted use. The applicatio
 30-second reconciliation schedule from `instrumentation.ts`. Replicas share the existing
 study/environment locks, and application restart does not reset durable usage timestamps.
 
+Study-lock admission is shared by all stores using the same PostgreSQL pool. Maintenance
+leaves one admission slot for interactive work when the pool supports multiple slots: the
+default ten-connection pool admits two study operations, of which maintenance may occupy
+one. The two scan workers still traverse other studies while an archive is slow. Deferred
+studies with recent learner use, a command within its execution deadline, or a recent
+command/Agent completion receive only a lightweight lease renewal; checkpoint, collection
+and release still require admission. Idle/overdue-only studies, expired failure grace and
+durable discard intent do not gain extra retention through this path. A deferred archive
+is retried on a later scan. Injected pools with only one study slot retain single-operation
+behavior.
+
 The active PBL scene reports coalesced trusted pointer, keyboard and wheel input inside
 the project frame at most once every 30 seconds. Entry and visibility return also mark
 activity. The provider stays above scene rendering, while input capture belongs to the project frame

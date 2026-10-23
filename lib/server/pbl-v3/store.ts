@@ -281,10 +281,17 @@ export class LearningStore {
       db.release();
     }
   }
-  /** Cross-process admission, including remote file I/O. Busy requests retry, never queue unboundedly. */
-  async exclusive<T>(id: string, fn: () => Promise<T>): Promise<T> {
+  /** Bound pool admission and hold a cross-process study lock, including remote file I/O. */
+  async exclusive<T>(
+    id: string,
+    fn: () => Promise<T>,
+    mode: 'interactive' | 'maintenance' = 'interactive',
+  ): Promise<T> {
     const active = admitted.get(this.pool) ?? 0;
-    if (active >= Math.max(1, Math.floor((this.pool.options.max ?? 10) / 4)))
+    const limit = Math.max(1, Math.floor((this.pool.options.max ?? 10) / 4));
+    // Leave one slot for interactive work whenever the pool supports multiple slots.
+    const capacity = mode === 'maintenance' ? Math.max(1, limit - 1) : limit;
+    if (active >= capacity)
       throw new SandboxError(
         'PBL_BUSY',
         429,

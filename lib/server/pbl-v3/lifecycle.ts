@@ -75,6 +75,39 @@ function archiveGraceExpired(row: Study) {
   );
 }
 
+/** Keep live use leased when a slow checkpoint occupies maintenance admission. */
+async function renewDeferredStudy(
+  store: LearningStore,
+  id: string,
+  ownerId: string,
+  environmentId: string,
+) {
+  const row = await store.get(id, ownerId);
+  if (row.archive_discard?.environmentId === environmentId || archiveGraceExpired(row)) return;
+  const recent = Date.now() - row.last_used_at.getTime() < pblIdleTimeoutMs();
+  if (!recent) {
+    const work = await store.pool.query(
+      `SELECT 1 FROM sandbox_commands WHERE environment_id=$1 AND (
+         ((result_json IS NULL OR result_json->>'state' IN ('starting','running','unknown'))
+           AND created_at >= $2)
+         OR (result_json->>'state' IN ('exited','failed','cancelled','timed_out') AND updated_at >= $3))
+       UNION ALL
+       SELECT 1 FROM pbl_v3_roles r JOIN agent_sessions a ON a.id=r.session_id
+         WHERE r.study_id=$4 AND a.status IN ('succeeded','failed','cancelled') AND a.updated_at >= $3
+       LIMIT 1`,
+      [
+        environmentId,
+        new Date(Date.now() - PBL_MAX_COMMAND_MS),
+        new Date(Date.now() - pblIdleTimeoutMs()),
+        id,
+      ],
+    );
+    if (!work.rows.length) return;
+  }
+  const service = await SandboxService.forLearningMaintenance(id, ownerId, environmentId);
+  await renewForMaintenance(store, service, id, environmentId);
+}
+
 async function releaseWithoutArchive(store: LearningStore, row: Study, service: SandboxService) {
   const environmentId = row.environment_id!;
   const saved = await service.checkpoint(environmentId);
@@ -138,7 +171,7 @@ export async function maintainStudy(
     await cancelOverdueTurns(running.rows);
     return;
   }
-  return store.exclusive(id, async () => {
+  const maintain = async () => {
     let row = await store.get(id, ownerId);
     const environmentId =
       pendingEnvironmentId ?? row.environment_id ?? row.environment_recovery?.requestId;
@@ -313,6 +346,11 @@ export async function maintainStudy(
         }
       },
     );
+  };
+  return store.exclusive(id, maintain, 'maintenance').catch(async (error: unknown) => {
+    if (error instanceof SandboxError && error.code === 'PBL_BUSY' && currentEnvironmentId)
+      await renewDeferredStudy(store, id, ownerId, currentEnvironmentId);
+    throw error;
   });
 }
 

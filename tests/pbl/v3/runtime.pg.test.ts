@@ -326,7 +326,7 @@ import { installedProject } from '@/lib/server/pbl-v3/catalog';
 import * as catalog from '@/lib/server/pbl-v3/catalog';
 import { SandboxError } from '@/lib/sandbox/errors';
 import { LearningStore } from '@/lib/server/pbl-v3/store';
-import { maintainStudy } from '@/lib/server/pbl-v3/lifecycle';
+import { maintainLearningEnvironments, maintainStudy } from '@/lib/server/pbl-v3/lifecycle';
 import {
   commandStudy,
   openStudy,
@@ -658,6 +658,147 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
       await admin.end();
     }
     if (mocked.root) await rm(mocked.root, { recursive: true, force: true });
+  });
+  it('leaves study admission available for unrelated interaction during slow maintenance archives', async () => {
+    const previousMax = pool.options.max;
+    pool.options.max = 10; // The production pool's default admits two study operations.
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const started = new Set<string>();
+    let scanning: Promise<void> | undefined;
+    const originalExport = E2BCompatibleSandboxProvider.prototype.exportWorkspace;
+    const archive = vi.spyOn(E2BCompatibleSandboxProvider.prototype, 'exportWorkspace');
+    try {
+      const first = await freshStudy(),
+        second = await freshStudy(),
+        interactive = await freshStudy();
+      const interactiveEnvironment = (await store.get(interactive.id, principal.ownerId))
+        .environment_id!;
+      const environments = new Set([
+        (await store.get(first.id, principal.ownerId)).environment_id!,
+        (await store.get(second.id, principal.ownerId)).environment_id!,
+      ]);
+      await ageStudy(first.id);
+      await ageStudy(second.id);
+      archive.mockImplementation(async function* (this: E2BCompatibleSandboxProvider, ...args) {
+        if (environments.has(args[0])) {
+          started.add(args[0]);
+          await gate;
+        }
+        yield* originalExport.apply(this, args);
+      });
+      const renewals = mocked.renewals.length;
+      scanning = maintainLearningEnvironments();
+      await vi.waitFor(() => expect(started.size).toBeGreaterThan(0));
+      // Leave the archives blocked long enough for all scan workers to seek admission.
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      expect(mocked.renewals.slice(renewals)).toContain(interactiveEnvironment);
+      await expect(
+        store.waitForExclusive(interactive.id, () =>
+          store.recordActivity(interactive.id, principal.ownerId),
+        ),
+      ).resolves.toBeUndefined();
+      await expect(interactive.send('checkpoint')).resolves.toBeDefined();
+      expect(started.size).toBe(1);
+      release();
+      await scanning;
+      // A deferred candidate gets its normal checkpoint/release on the next scan.
+      await maintainLearningEnvironments();
+      expect(started.size).toBe(2);
+    } finally {
+      release();
+      try {
+        await scanning;
+      } finally {
+        archive.mockRestore();
+        pool.options.max = previousMax;
+      }
+    }
+  }, 15000);
+
+  it.each([
+    ['reading', true],
+    ['agent', true],
+    ['completed-agent', true],
+    ['running-command', true],
+    ['completed-command', true],
+    ['overdue-command', false],
+    ['idle', false],
+    ['expired-failure', false],
+    ['discard-intent', false],
+  ] as const)('keeps deferred %s work leased only while protected', async (kind, renewed) => {
+    const fresh = await freshStudy();
+    const row = await store.get(fresh.id, principal.ownerId);
+    if (kind === 'agent' || kind === 'completed-agent') {
+      const queued = (await fresh.send('chat')) as { sessionId: string };
+      if (kind === 'completed-agent')
+        await pool.query("UPDATE agent_sessions SET status='succeeded' WHERE id=$1", [
+          queued.sessionId,
+        ]);
+    }
+    if (kind.endsWith('command'))
+      await pool.query(
+        `INSERT INTO sandbox_commands(environment_id,id,request_fingerprint,result_json,created_at)
+         VALUES($1,$2,'fixture',$3,$4)`,
+        [
+          row.environment_id,
+          randomUUID(),
+          JSON.stringify({ state: kind === 'completed-command' ? 'exited' : 'running' }),
+          new Date(Date.now() - (kind === 'overdue-command' ? 20 * 60_000 : 60_000)),
+        ],
+      );
+    if (!['reading', 'discard-intent'].includes(kind)) await ageStudy(fresh.id);
+    if (kind === 'expired-failure')
+      await store.recordCheckpointFailure(row, {
+        environmentId: row.environment_id!,
+        reason: 'unavailable',
+        stage: 'archive',
+        retryable: true,
+        dirtyAt: null,
+        firstIdleFailureAt: new Date(Date.now() - 20 * 60_000).toISOString(),
+      });
+    if (kind === 'discard-intent')
+      await store.recordArchiveDiscard(row, {
+        environmentId: row.environment_id!,
+        at: new Date().toISOString(),
+        checkpointRevision: 0,
+        checkpointAt: null,
+        reason: 'unavailable',
+      });
+    const previousMax = pool.options.max;
+    pool.options.max = 10;
+    let release!: () => void, entered!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const held = store.exclusive(
+      randomUUID(),
+      async () => {
+        entered();
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+      },
+      'maintenance',
+    );
+    try {
+      await ready;
+      const renewals = mocked.renewals.length;
+      const before = await store.get(fresh.id, principal.ownerId);
+      const maintenance = maintainStudy(new LearningStore(pool), fresh.id, principal.ownerId);
+      if (kind === 'agent') await maintenance;
+      else await expect(maintenance).rejects.toMatchObject({ code: 'PBL_BUSY' });
+      expect(mocked.renewals.slice(renewals).includes(row.environment_id!)).toBe(renewed);
+      const after = await store.get(fresh.id, principal.ownerId);
+      expect(after.revision).toBe(before.revision);
+      expect(after.last_used_at).toEqual(before.last_used_at);
+    } finally {
+      release();
+      await held;
+      pool.options.max = previousMax;
+    }
   });
   it.each(['greeting-python-lab', 'greeting-java'])(
     'completes both seven-step milestones with a tool-completed final recap and no appended exploration for %s',

@@ -134,6 +134,22 @@
       "method": "Browser screenshot of a real persisted released study; automatic compute preparation and teaching turns suppressed in the screenshot harness to avoid allocating additional resources"
     },
     "packageVersionCheck": "storage 0.39.0 -> 0.39.1 passed",
+    "maintenanceAdmissionFollowUp": {
+      "comment": "https://github.com/THU-MAIC/OpenMAIC/pull/2011#discussion_r4360037244",
+      "newPostgresRegressions": 10,
+      "postgresIntegrationTests": 96,
+      "pblUnitTests": { "passed": 168, "skipped": 4 },
+      "mode": "Real disposable PostgreSQL schemas and local Python/Java execution with controlled provider/model behavior; no additional cloud compute allocated",
+      "coverage": [
+        "Reproduced unrelated activity failing with PBL_BUSY while two maintenance exports occupied the default pool's two study slots",
+        "Slow maintenance leaves admission for unrelated activity and commands across LearningStore instances sharing a pool",
+        "Deferred idle archive finishes on a subsequent scan",
+        "Queued/running Agent, recent reading, non-overdue commands and recent command/Agent completions retain lease protection during admission contention",
+        "Idle/overdue-only studies, expired archive grace and durable discard intent do not receive deferred lease renewal",
+        "Lease-only protection does not change teaching revisions or learner activity timestamps"
+      ],
+      "selfReview": "Reviewer identified lease starvation from fully serial scans and renewal after discard intent; final diff preserves both scan workers, adds bounded lease-only protection and checks discard intent. Re-review found no remaining confirmed issue."
+    },
     "inputAndBootValidationFollowUp": {
       "comments": [
         "https://github.com/THU-MAIC/OpenMAIC/pull/2011#discussion_r4359910066",
