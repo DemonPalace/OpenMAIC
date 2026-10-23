@@ -1368,7 +1368,7 @@ describe('patch_stage robustness', () => {
     expect(slideElements(current)[0]!.id).toBe('el-title');
   });
 
-  it('grandfathers legacy issues across index shifts but not on new items', async () => {
+  it('fully validates a changed canvas field and names the offending item', async () => {
     const scene = richSlideScene();
     const canvas = (scene.content as SlideContent).canvas;
     const valid = {
@@ -1384,50 +1384,66 @@ describe('patch_stage robustness', () => {
     const current = state(course([scene]));
     const patch = tool(dslTools(current.store), 'patch_stage');
 
-    // Removing animations/0 shifts the legacy item to index 0: still allowed.
+    // Untouched legacy animations do not block an unrelated edit.
+    const unrelated = await patch.execute('bg', {
+      target: '/scenes/1',
+      intent: 'Darken the background',
+      ops: [
+        { op: 'set', path: '/content/canvas/background', value: { type: 'solid', color: '#000' } },
+      ],
+    } as never);
+    expect(unrelated).not.toHaveProperty('isError');
+
+    // Touching the animations array revalidates all of it, with a precise
+    // pointer to the item the model must fix.
     const shifted = await patch.execute('shift', {
       target: '/scenes/1',
       intent: 'Drop the first animation',
       ops: [{ op: 'remove', path: '/content/canvas/animations/0' }],
     } as never);
-    expect(shifted).not.toHaveProperty('isError');
-
-    // A NEW invalid item at a colliding index does not inherit the exemption.
-    const before = { ...canvas, animations: [valid, legacy] } as never;
-    const replaced = {
-      ...canvas,
-      animations: [valid, { ...legacy, id: 'anim-3' }],
-    };
-    expect(validateSlideCanvas(replaced, before)).toEqual([
-      'canvas/animations/1: unexpected property "legacyFlag"',
-    ]);
-    // Changing the offending value itself is a new violation too.
-    const changed = { ...canvas, animations: [valid, { ...legacy, legacyFlag: false }] };
-    expect(validateSlideCanvas(changed, before)).toHaveLength(1);
+    expect(shifted).toMatchObject({ isError: true });
+    expect(textOf(shifted)).toContain('canvas/animations/0: unexpected property "legacyFlag"');
   });
 
-  it('does not exempt an appended duplicate of a legacy-invalid id-less item', async () => {
+  it('rejects invalid values moved or duplicated within a changed field', async () => {
     const scene = richSlideScene();
     const canvas = (scene.content as SlideContent).canvas;
     canvas.theme.themeColors = ['#2563eb', 42 as unknown as string];
     const current = state(course([scene]));
     const patch = tool(dslTools(current.store), 'patch_stage');
-    const untouched = await patch.execute('theme-ok', {
-      target: '/scenes/1',
-      intent: 'Darken the background',
-      ops: [{ op: 'set', path: '/content/canvas/theme/backgroundColor', value: '#000' }],
-    } as never);
-    expect(untouched).not.toHaveProperty('isError');
     const duplicated = await patch.execute('theme-dup', {
       target: '/scenes/1',
       intent: 'Add a theme color',
       ops: [{ op: 'set', path: '/content/canvas/theme/themeColors/2', value: 42 }],
     } as never);
     expect(duplicated).toMatchObject({ isError: true });
-    expect(textOf(duplicated)).toContain('canvas/theme/themeColors/');
+    expect(textOf(duplicated)).toContain('canvas/theme/themeColors/1: must be string');
+    expect(textOf(duplicated)).toContain('canvas/theme/themeColors/2: must be string');
+
+    const chart = {
+      id: 'el-chart',
+      type: 'chart',
+      left: 0,
+      top: 0,
+      width: 100,
+      height: 100,
+      rotate: 0,
+      chartType: 'bar',
+      themeColors: ['#000'],
+      data: { labels: [42], legends: [], series: [] },
+    };
+    const before = { ...canvas, theme: { ...canvas.theme, themeColors: ['#000'] } };
+    const withChart = (data: unknown) =>
+      ({ ...before, elements: [{ ...chart, data }] }) as unknown as typeof canvas;
+    expect(
+      validateSlideCanvas(
+        withChart({ labels: [], legends: [42], series: [] }),
+        withChart(chart.data),
+      ),
+    ).toEqual(['canvas/elements/0/data/legends/0 (chart): must be string']);
   });
 
-  it('grandfathers a legacy table-cell issue when an earlier cell in the row is removed', async () => {
+  it('fully validates a changed table and names the offending cell', async () => {
     const scene = richSlideScene();
     const table = (scene.content as SlideContent).canvas.elements[3] as unknown as {
       data: Array<Array<Record<string, unknown>>>;
@@ -1440,30 +1456,10 @@ describe('patch_stage robustness', () => {
       intent: 'Drop the first cell',
       ops: [{ op: 'remove', path: '/content/canvas/elements/3/data/0/0' }],
     } as never);
-    expect(removed).not.toHaveProperty('isError');
-
-    // A new cell carrying the same violation is still rejected, as is a
-    // changed offending value on the legacy cell.
-    const added = await patch.execute('cell-new', {
-      target: '/scenes/1',
-      intent: 'Add a cell',
-      ops: [
-        {
-          op: 'set',
-          path: '/content/canvas/elements/3/data/0/1',
-          value: { id: 'c02', colspan: 1, rowspan: 1, text: 'New', legacyFlag: true },
-        },
-      ],
-    } as never);
-    expect(textOf(added)).toContain(
-      'canvas/elements/3/data/0/1 (table): unexpected property "legacyFlag"',
+    expect(removed).toMatchObject({ isError: true });
+    expect(textOf(removed)).toContain(
+      'canvas/elements/3/data/0/0 (table): unexpected property "legacyFlag"',
     );
-    const changed = await patch.execute('cell-changed', {
-      target: '/scenes/1',
-      intent: 'Touch the flag',
-      ops: [{ op: 'set', path: '/content/canvas/elements/3/data/0/0/legacyFlag', value: false }],
-    } as never);
-    expect(changed).toMatchObject({ isError: true });
   });
 
   it('runs identity and schema checks on str_replace into slide content', async () => {
