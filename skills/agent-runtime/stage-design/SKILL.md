@@ -100,7 +100,8 @@ its default mode: it fills only the lines missing audio and reports how many
 were generated, skipped, or failed, so there is no need to read each page's
 source to check `audioId`. Re-run it only where it reported failures or where
 narration wording changed afterwards. Read each page's narration once with
-`read_stage` at `detail:"text"` (no source read needed): narration that talks
+`read_stage` at `path:/scenes/<order|id>/actions`, `detail:"text"`, following
+`nextOffset` until it is exhausted (no source read needed): narration that talks
 about material this stage does not teach is a defect, whatever its audio
 status. Only then is the stage finished.
 

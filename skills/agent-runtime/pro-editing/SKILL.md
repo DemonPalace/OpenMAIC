@@ -121,8 +121,8 @@ verify with `render_scene_preview` when it is available: look at the render,
 edit, look once more. Budget **at most two preview rounds per page** — each
 render costs a tool call and time the user waits through. Do not preview
 pages you did not touch, and do not loop past the budget: if two rounds have
-not converged, stop and tell the user what remains instead of burning the rest
-of the run on one page.
+not converged, leave that page, carry on with the rest of the request, and note
+what remains on it in the final report instead of burning the run on one page.
 
 ## Narration audio follows text
 
