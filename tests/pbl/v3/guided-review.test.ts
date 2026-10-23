@@ -94,33 +94,51 @@ describe('guided review boundaries', () => {
     expect(() => review.advance('B-review.md', 'The learner answered.', artifact)).toThrow();
   });
 
-  it('keeps welcome inside A, answers background questions, and requires later real readiness before teaching', () => {
-    const review = new GuidedSkillReview(protocol, undefined, true);
-    review.beginRun('first:0', [], false, 1);
-    review.advance('A-teach.md', undefined, artifact);
-    review.checkpoint('Any process questions? Ready to continue?', artifact);
-    expect(() => review.startTeaching('Ready', artifact)).toThrow();
-    const resumed = new GuidedSkillReview(protocol, review.state, true);
-    resumed.beginRun('first:0', [{ seq: 3, text: 'Will the Agent write code with me?' }], true);
-    resumed.checkpoint('Yes, you review it together. Ready to begin?', artifact);
-    resumed.beginRun('first:0', [{ seq: 3, text: 'Will the Agent write code with me?' }], true);
-    expect(() => resumed.startTeaching('Ready', artifact)).toThrow();
-    resumed.beginRun(
-      'first:0',
-      [
-        { seq: 3, text: 'Will the Agent write code with me?' },
-        { seq: 5, text: 'Ready, please begin.' },
-      ],
-      true,
-    );
-    resumed.startTeaching('The learner explicitly asks to begin.', artifact);
-    expect(resumed.state.activeFile).toBe('A-teach.md');
-    expect(resumed.state.reviewedFiles).toEqual([]);
-    expect(resumed.state.welcome).toBe('ready');
-    expect(() =>
-      resumed.advance('B-review.md', 'Readiness means understanding.', artifact, true),
-    ).toThrow();
-    resumed.checkpoint('Explain the new concept.', artifact);
+  it.each([true, false])(
+    'keeps welcome inside A and requires real readiness (read first: %s)',
+    (readFirst) => {
+      const review = new GuidedSkillReview(protocol, undefined, true);
+      review.beginRun('first:0', [], false, 1);
+      if (readFirst) review.advance('A-teach.md', undefined, artifact);
+      review.checkpoint('Any process questions? Ready to continue?', artifact);
+      expect(review.state.activeFile).toBe('A-teach.md');
+      expect(review.state.reviewedFiles).toEqual([]);
+      expect(() => review.startTeaching('Ready', artifact)).toThrow();
+      const resumed = new GuidedSkillReview(protocol, review.state, true);
+      resumed.beginRun('first:0', [{ seq: 3, text: 'Will the Agent write code with me?' }], true);
+      resumed.checkpoint('Yes, you review it together. Ready to begin?', artifact);
+      resumed.beginRun('first:0', [{ seq: 3, text: 'Will the Agent write code with me?' }], true);
+      expect(() => resumed.startTeaching('Ready', artifact)).toThrow();
+      resumed.beginRun(
+        'first:0',
+        [
+          { seq: 3, text: 'Will the Agent write code with me?' },
+          { seq: 5, text: 'Ready, please begin.' },
+        ],
+        true,
+      );
+      resumed.startTeaching('The learner explicitly asks to begin.', artifact);
+      expect(resumed.state.activeFile).toBe('A-teach.md');
+      expect(resumed.state.reviewedFiles).toEqual([]);
+      expect(resumed.state.welcome).toBe('ready');
+      expect(() =>
+        resumed.advance('B-review.md', 'Readiness means understanding.', artifact, true),
+      ).toThrow();
+      resumed.checkpoint('Explain the new concept.', artifact);
+    },
+  );
+
+  it('still requires a section read for lessons and rejects invalid or repeated welcome receipts', () => {
+    const lesson = new GuidedSkillReview(protocol);
+    lesson.beginRun('later:0', [], false, 1);
+    expect(() => lesson.checkpoint('Explain.', artifact)).toThrow();
+    const welcome = new GuidedSkillReview(protocol, undefined, true);
+    welcome.beginRun('first:0', [], false, 1);
+    expect(() => welcome.checkpoint(' ', artifact)).toThrow();
+    expect(welcome.state.activeFile).toBe('');
+    welcome.checkpoint('Ready?', artifact);
+    expect(() => welcome.checkpoint('Ready again?', artifact)).toThrow();
+    expect(() => welcome.complete('No student reply.', artifact)).toThrow();
   });
 
   it('requires the project welcome when a saved protocol is no longer valid', () => {

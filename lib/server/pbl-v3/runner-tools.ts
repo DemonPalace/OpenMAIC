@@ -120,11 +120,15 @@ export async function teachingRunnerConfig(input: {
     return sandbox;
   };
   const fingerprint = async (current: Study, signal: AbortSignal) =>
-    current.environment_id
-      ? filesFingerprint(
-          await readFiles(await service(signal), current, project, signal, input.onActivity),
-        )
-      : digest('no-workspace');
+    // Readiness concerns the project introduction, not a file version. Avoid
+    // remote file reads here; real teaching/artifact reviews still bind files.
+    review.state.welcome === 'pending'
+      ? digest(`project-welcome:${protocol.digest}`)
+      : current.environment_id
+        ? filesFingerprint(
+            await readFiles(await service(signal), current, project, signal, input.onActivity),
+          )
+        : digest('no-workspace');
   function tool<T extends TSchema>(
     name: string,
     description: string,

@@ -24,6 +24,7 @@ import { workbenchCommand, workbenchView } from '@/lib/server/pbl-v3/workbench';
 import { issuePreviewGrant } from '@/lib/server/sandbox/preview';
 import type { ModelMessage } from 'ai';
 import { PgAgentSessionStore, ensureAgentSessionSchema } from '@openmaic/storage/agent-session/pg';
+import { listAgentUserMessages } from '@/lib/server/agent-runtime/user-messages';
 vi.mock('server-only', () => ({}));
 const mocked = vi.hoisted(() => ({
   pool: undefined as unknown,
@@ -378,6 +379,22 @@ async function freshStudy() {
     });
   await send('prepare');
   return { id: row.id, send };
+}
+async function freshTeachingStudy() {
+  const original = studyId;
+  const study = await freshStudy();
+  studyId = study.id;
+  try {
+    await runTools('Introduce the project.', async (config) => {
+      await invoke(config, 'request_skill_review', { question: 'Ready to begin?' });
+    });
+    await runTools('Ready, please begin teaching.', async (config) => {
+      await invoke(config, 'read_next_skill', { studentFeedback: 'The learner is ready.' });
+    });
+  } finally {
+    studyId = original;
+  }
+  return study;
 }
 function modelFinish(finishReason: string) {
   return {
@@ -987,94 +1004,100 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
       ).rejects.toThrow();
     });
   });
-  it('persists a welcome inside the first step, waits through process questions, then credits anticipated understanding', async () => {
-    const original = studyId;
-    const study = await freshStudy();
-    studyId = study.id;
-    try {
-      const opening = (await study.send('begin')) as { sessionId: string };
-      const claimed = await agents.claimNextSession('welcome-worker', process.pid, {
-        sessionId: opening.sessionId,
-        leaseTtlMs: 10000,
-        maxAttempts: 5,
-      });
-      const config = await teachingRunnerConfig({
-        sessionId: opening.sessionId,
-        ownerId: principal.ownerId,
-        workerId: 'welcome-worker',
-        attempt: claimed!.attempt,
-        signal: new AbortController().signal,
-      });
-      const result = await invoke(config, 'read_next_skill');
-      const welcome = JSON.stringify(result);
-      expect(welcome).toContain('Welcome only');
-      expect(welcome).toContain('how learning works');
-      expect(config.systemPrompt).not.toContain('"teaching":{');
-      await expect(
-        invoke(config, 'read_next_skill', {
-          studentFeedback: 'An automatic entry is not readiness.',
-        }),
-      ).rejects.toThrow();
-      await invoke(config, 'request_skill_review', {
-        question: 'Any process questions? Ready to begin?',
-      });
-      await agents.finishSession(opening.sessionId, 'welcome-worker', {
-        status: 'succeeded',
-        expectedAttempt: claimed!.attempt,
-      });
-      expect((await store.binding(opening.sessionId))?.guided?.welcome).toBe('pending');
-      await runTools('Will an Agent help with the implementation?', async (next) => {
-        expect(next.liveContext()).toContain('"welcomePresented":true');
-        expect(JSON.stringify(await invoke(next, 'read_next_skill'))).toContain('Welcome only');
-        await invoke(next, 'request_skill_review', {
-          question: 'Yes, you work together and review it. Ready to start?',
+  it.each([true, false])(
+    'persists welcome and waits for readiness (read first: %s)',
+    async (readFirst) => {
+      const original = studyId;
+      const study = await freshStudy();
+      studyId = study.id;
+      try {
+        const opening = (await study.send('begin')) as { sessionId: string };
+        const claimed = await agents.claimNextSession('welcome-worker', process.pid, {
+          sessionId: opening.sessionId,
+          leaseTtlMs: 10000,
+          maxAttempts: 5,
         });
-      });
-      const before = await learningView(principal, study.id);
-      expect(before.state.position.stageIndex).toBe(0);
-      expect(before.actions).not.toContain('next');
-      expect((await store.binding(opening.sessionId))?.guided?.welcome).toBe('pending');
-      await runTools('Ready, please begin the lesson.', async (next) => {
-        const lesson = JSON.stringify(
-          await invoke(next, 'read_next_skill', {
-            studentFeedback: 'The learner explicitly asks to begin.',
-          }),
-        );
-        expect(lesson).not.toContain('Welcome only');
-        expect(next.liveContext()).toContain('"welcome":"ready"');
-        expect(next.liveContext()).toContain('"activeSection":"A-teach.md"');
+        const config = await teachingRunnerConfig({
+          sessionId: opening.sessionId,
+          ownerId: principal.ownerId,
+          workerId: 'welcome-worker',
+          attempt: claimed!.attempt,
+          signal: new AbortController().signal,
+        });
+        if (readFirst) {
+          const welcome = JSON.stringify(await invoke(config, 'read_next_skill'));
+          expect(welcome).toContain('Welcome only');
+          expect(welcome).toContain('how learning works');
+        }
+        expect(config.systemPrompt).not.toContain('"teaching":{');
+        await invoke(config, 'request_skill_review', {
+          question: 'Any process questions? Ready to begin?',
+        });
         await expect(
-          invoke(next, 'read_next_skill', {
-            studentFeedback: 'Readiness is not understanding.',
-            reuseFeedback: true,
+          invoke(config, 'read_next_skill', {
+            studentFeedback: 'An automatic entry is not readiness.',
           }),
         ).rejects.toThrow();
-        await invoke(next, 'request_skill_review', { question: 'Explain returning a value.' });
-      });
-      await runTools(
-        'Return sends the value to the caller; printing does not. I also understand the consequences and am ready to continue.',
-        async (next) => {
-          await invoke(next, 'read_next_skill', {
-            studentFeedback: 'The reply explains the concept and its consequences.',
+        expect(config.isTurnComplete()).toBe(true);
+        expect(config.needsTurnReceipt()).toBe(false);
+        await agents.finishSession(opening.sessionId, 'welcome-worker', {
+          status: 'succeeded',
+          expectedAttempt: claimed!.attempt,
+        });
+        expect((await store.binding(opening.sessionId))?.guided?.welcome).toBe('pending');
+        await runTools('Will an Agent help with the implementation?', async (next) => {
+          expect(next.liveContext()).toContain('"welcomePresented":true');
+          expect(JSON.stringify(await invoke(next, 'read_next_skill'))).toContain('Welcome only');
+          await invoke(next, 'request_skill_review', {
+            question: 'Yes, you work together and review it. Ready to start?',
           });
-          await invoke(next, 'read_next_skill', {
-            studentFeedback: 'The same correct answer already covers the reflection goal.',
-            reuseFeedback: true,
-          });
-          await invoke(next, 'complete_stage', {
-            studentFeedback:
-              'The learner already explained the goal and confirms understanding without unresolved errors.',
-            reuseFeedback: true,
-          });
-        },
-      );
-      const finished = await learningView(principal, study.id);
-      expect(finished.state.position.stageIndex).toBe(0);
-      expect(finished.actions).toContain('next');
-    } finally {
-      studyId = original;
-    }
-  });
+        });
+        const before = await learningView(principal, study.id);
+        expect(before.state.position.stageIndex).toBe(0);
+        expect(before.actions).not.toContain('next');
+        expect((await store.binding(opening.sessionId))?.guided?.welcome).toBe('pending');
+        await runTools('Ready, please begin the lesson.', async (next) => {
+          const lesson = JSON.stringify(
+            await invoke(next, 'read_next_skill', {
+              studentFeedback: 'The learner explicitly asks to begin.',
+            }),
+          );
+          expect(lesson).not.toContain('Welcome only');
+          expect(next.liveContext()).toContain('"welcome":"ready"');
+          expect(next.liveContext()).toContain('"activeSection":"A-teach.md"');
+          await expect(
+            invoke(next, 'read_next_skill', {
+              studentFeedback: 'Readiness is not understanding.',
+              reuseFeedback: true,
+            }),
+          ).rejects.toThrow();
+          await invoke(next, 'request_skill_review', { question: 'Explain returning a value.' });
+        });
+        await runTools(
+          'Return sends the value to the caller; printing does not. I also understand the consequences and am ready to continue.',
+          async (next) => {
+            await invoke(next, 'read_next_skill', {
+              studentFeedback: 'The reply explains the concept and its consequences.',
+            });
+            await invoke(next, 'read_next_skill', {
+              studentFeedback: 'The same correct answer already covers the reflection goal.',
+              reuseFeedback: true,
+            });
+            await invoke(next, 'complete_stage', {
+              studentFeedback:
+                'The learner already explained the goal and confirms understanding without unresolved errors.',
+              reuseFeedback: true,
+            });
+          },
+        );
+        const finished = await learningView(principal, study.id);
+        expect(finished.state.position.stageIndex).toBe(0);
+        expect(finished.actions).toContain('next');
+      } finally {
+        studyId = original;
+      }
+    },
+  );
 
   it('accepts wrapped and multi-message review feedback from durable student turns', async () => {
     const original = studyId;
@@ -2027,6 +2050,39 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
     expect((await learningView(principal, study.id)).actions).not.toContain('next');
     studyId = original;
   }, 30000);
+  it('settles the automatic welcome when requesting readiness is the first tool call', async () => {
+    const study = await freshStudy();
+    const handle = startAgentRunner();
+    await handle.stop();
+    const queued = (await study.send('begin')) as { sessionId: string };
+    const meta = await agents.claimNextSession(handle.workerId, process.pid, {
+      sessionId: queued.sessionId,
+      leaseTtlMs: 10000,
+      maxAttempts: 5,
+    });
+    mocked.responses = [
+      toolResponse([
+        { name: 'request_skill_review', input: { question: 'Any process questions? Ready?' } },
+      ]),
+    ];
+    const callsBefore = mocked.modelCalls;
+    await runSession({ running: new Map(), shuttingDown: false }, meta!);
+    expect(mocked.modelCalls - callsBefore).toBe(1);
+    expect(await agents.getSession(queued.sessionId)).toMatchObject({ status: 'succeeded' });
+    expect((await store.binding(queued.sessionId))?.guided).toMatchObject({
+      welcome: 'pending',
+      activeFile: 'A-teach.md',
+      reviewedFiles: [],
+      pending: { question: 'Any process questions? Ready?' },
+    });
+    const view = await learningView(principal, study.id);
+    expect(view.roleRun).toMatchObject({ status: 'succeeded', canRetry: false, failure: null });
+    expect(view.state.position.stageIndex).toBe(0);
+    expect(view.actions).not.toContain('next');
+    const messages = await listAgentUserMessages(agents, queued.sessionId);
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.pblOpening).toBe(true);
+  });
   it.each(['mixed', 'invalid-tail', 'failed-review'] as const)(
     'stops teaching at a saved review in a %s batch through the real Pi loop',
     async (batch) => {
@@ -2092,7 +2148,7 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
             type: 'tool-call',
             toolCallId: 'early-review',
             toolName: 'request_skill_review',
-            input: { question: 'No section opened yet' },
+            input: { question: '' },
           },
           finish,
         ]);
@@ -2450,7 +2506,7 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
   });
 
   it('opens and rereads local protocol without cloud calls, while review still checks live evidence', async () => {
-    const study = await freshStudy();
+    const study = await freshTeachingStudy();
     const queued = (await study.send('chat')) as { sessionId: string };
     const meta = await agents.claimNextSession('protocol-worker', process.pid, {
       sessionId: queued.sessionId,
@@ -2496,7 +2552,7 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
   });
 
   it('stops an aborted evidence read before another file or teaching receipt is written', async () => {
-    const study = await freshStudy();
+    const study = await freshTeachingStudy();
     const queued = (await study.send('chat')) as { sessionId: string };
     const meta = await agents.claimNextSession('abort-evidence-worker', process.pid, {
       sessionId: queued.sessionId,
@@ -2554,7 +2610,7 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
   });
 
   it('keeps teaching tools available while a background poll renews the same environment', async () => {
-    const study = await freshStudy();
+    const study = await freshTeachingStudy();
     const queued = (await study.send('chat')) as { sessionId: string };
     const meta = await agents.claimNextSession('renewal-worker', process.pid, {
       sessionId: queued.sessionId,

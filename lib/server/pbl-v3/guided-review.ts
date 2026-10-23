@@ -177,8 +177,13 @@ export class GuidedSkillReview {
   }
 
   checkpoint(question: string, digest: string, approval = false): GuidedSkillState {
-    this.assertWritable();
     if (!question.trim() || question.length > 2000) throw new Error('请给出当前段的具体检查任务');
+    // The welcome is already supplied by the host prompt. Recording readiness
+    // may be the model's first tool call; it must not depend on a redundant read.
+    // Keep it inside A, without opening the lesson or crediting any feedback.
+    if (this.state.welcome === 'pending' && !this.state.activeFile)
+      this.advance(this.protocol.progression[1]!, undefined, digest);
+    this.assertWritable();
     this.state.pending = {
       file: this.state.activeFile,
       artifactDigest: digest,
