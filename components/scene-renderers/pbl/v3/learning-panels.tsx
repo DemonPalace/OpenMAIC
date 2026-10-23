@@ -3,7 +3,7 @@ import { FileText, Check } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useI18n } from '@/lib/hooks/use-i18n';
 import type { LearningView } from '@/lib/pbl/v3/types';
-import type { LearningReport } from '@/lib/pbl/v3/report';
+import { reportConversationMessages, type LearningReport } from '@/lib/pbl/v3/report';
 import { learningProgress } from '@/lib/pbl/v3/presentation';
 import { TextBlock } from '@/components/workbench/chat/text-block';
 import { sandboxErrorMessage } from '@/lib/sandbox/error-message';
@@ -278,22 +278,16 @@ function ProjectReport({ view }: { view: LearningView }) {
                 </section>
                 <section className="space-y-2">
                   <h3 className="text-lg font-semibold">{t('pblV3.reportConversations')}</h3>
-                  {report.conversations.flatMap((c, i) =>
-                    c.messages.map((m) => (
-                      <details
-                        id={sourceId(`turn:${i}:${m.sequence}`)}
-                        key={`${i}:${m.sequence}`}
-                        className="rounded border p-3"
-                      >
-                        <summary className="cursor-pointer text-sm">
-                          {m.role === 'user' ? t('pblV3.learner') : t(`pblV3.roles.${c.role}`)} ·{' '}
-                          {report.milestones.find((x) => x.id === c.milestone)?.title ??
-                            report.project.title}
-                        </summary>
-                        <p className="mt-2 whitespace-pre-wrap text-sm">{m.text}</p>
-                      </details>
-                    )),
-                  )}
+                  {reportConversationMessages(report).map((m) => (
+                    <details id={sourceId(m.id)} key={m.id} className="rounded border p-3">
+                      <summary className="cursor-pointer text-sm">
+                        {m.role === 'learner' ? t('pblV3.learner') : t(`pblV3.roles.${m.role}`)} ·{' '}
+                        {report.milestones.find((x) => x.id === m.milestone)?.title ??
+                          report.project.title}
+                      </summary>
+                      <p className="mt-2 whitespace-pre-wrap text-sm">{m.text}</p>
+                    </details>
+                  ))}
                 </section>
               </>
             )}

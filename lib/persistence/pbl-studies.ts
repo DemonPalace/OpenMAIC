@@ -76,10 +76,11 @@ UPDATE asset_entries e SET committed_at=COALESCE(e.committed_at,now()),expires_a
       version: 5,
       name: 'learning-evidence-and-reports',
       transaction: true,
-      up: `CREATE TABLE pbl_v3_evidence (
+      up: `ALTER TABLE pbl_v3_events ADD COLUMN recorded_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp();
+      CREATE TABLE pbl_v3_evidence (
         id BIGSERIAL PRIMARY KEY, study_id TEXT NOT NULL REFERENCES pbl_v3_studies(id),
         milestone_id TEXT, stage_index INTEGER NOT NULL, kind TEXT NOT NULL,
-        actor TEXT NOT NULL, detail JSONB NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        actor TEXT NOT NULL, detail JSONB NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
       );
       CREATE INDEX pbl_v3_evidence_study ON pbl_v3_evidence(study_id,id);
       CREATE TABLE pbl_v3_reports (

@@ -331,6 +331,7 @@ import {
 import { teachingRunnerConfig } from '@/lib/server/pbl-v3/runner-tools';
 import { touchEnvironment } from '@/lib/server/pbl-v3/environment';
 import { recordLearningEvidence } from '@/lib/server/pbl-v3/evidence';
+import { reportConversationMessages } from '@/lib/pbl/v3/report';
 import { startOrchestration } from '@/lib/pbl/v3/domain/orchestration/transition';
 import { SandboxService } from '@/lib/server/sandbox/service';
 import { SandboxStore } from '@/lib/server/sandbox/store';
@@ -1444,6 +1445,108 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
       undefined,
     ]);
     expect(JSON.stringify(report)).not.toContain('fingerprint');
+  });
+  it('interleaves saved edits and snapshots with orchestration evidence using persisted times', async () => {
+    const study = await freshStudy();
+    const row = await store.get(study.id, principal.ownerId);
+    const base = 2_000_000_000_000;
+    const events = [
+      {
+        type: 'artifact.recorded',
+        artifact: { kind: 'plan', milestoneId: 'greeting' },
+        content: 'plan',
+      },
+      {
+        type: 'evaluation.recorded',
+        evaluation: { milestoneId: 'greeting', status: 'failed', revision: { id: 'one' } },
+      },
+      {
+        type: 'evaluation.recorded',
+        evaluation: { milestoneId: 'greeting', status: 'passed', revision: { id: 'two' } },
+      },
+      { type: 'recap.completed', milestoneId: 'greeting' },
+    ];
+    for (const [i, event] of events.entries())
+      await pool.query(
+        'INSERT INTO pbl_v3_events(study_id,sequence,event,recorded_at) VALUES($1,$2,$3,to_timestamp($4::float8/1000))',
+        [
+          study.id,
+          row.state.lastSequence + i + 1,
+          JSON.stringify(event),
+          base + (i * 2 + 2) * 1000,
+        ],
+      );
+    await pool.query(
+      "UPDATE pbl_v3_studies SET state=jsonb_set(state,'{lastSequence}',to_jsonb($2::int)) WHERE id=$1",
+      [study.id, row.state.lastSequence + events.length],
+    );
+    for (const [i, kind] of ['file-edit', 'artifact', 'file-edit', 'final-artifact'].entries()) {
+      await recordLearningEvidence(pool, row, 'learner', kind, { text: `saved-${i}` });
+      await pool.query(
+        "UPDATE pbl_v3_evidence SET created_at=to_timestamp($3::float8/1000) WHERE study_id=$1 AND detail->>'text'=$2",
+        [study.id, `saved-${i}`, base + (i === 3 ? 9 : i * 2 + 1) * 1000],
+      );
+    }
+    const report = await learningEvidence(principal, study.id);
+    const timeline = report.evidence.filter((e) => e.at >= base);
+    expect(timeline.map((e) => e.kind)).toEqual([
+      'file-edit',
+      'artifact.recorded',
+      'artifact',
+      'evaluation.recorded',
+      'file-edit',
+      'evaluation.recorded',
+      'recap.completed',
+      'final-artifact',
+    ]);
+    expect(timeline.map((e) => (e.at - base) / 1000)).toEqual([1, 2, 3, 4, 5, 6, 8, 9]);
+    expect(report.counts['evaluation.recorded']).toBe(2);
+    expect(report.facts?.fileEdits).toBe(2);
+    const again = await learningEvidence(principal, study.id);
+    expect(again.evidence.map((e) => e.sequence)).toEqual(report.evidence.map((e) => e.sequence));
+  });
+  it('orders retained role history by message time despite updated-session order and a shared mentor', async () => {
+    const study = await freshStudy();
+    const base = 2_000_000_000_000;
+    const roles = [
+      { role: 'planner', milestone: 'greeting', times: [2, 3, 6] },
+      { role: 'coder', milestone: 'next', times: [4, 5] },
+      { role: 'mentor', milestone: 'project', times: [1, 8] },
+    ];
+    for (const [i, role] of roles.entries()) {
+      const session = await agents.createSession({
+        ownerId: principal.ownerId,
+        prompt: role.role,
+        status: 'succeeded',
+      });
+      await pool.query(
+        'INSERT INTO pbl_v3_roles(session_id,study_id,role,context_key,stage_key) VALUES($1,$2,$3,$4,$5)',
+        [session.id, study.id, role.role, role.milestone, `${role.milestone}:0`],
+      );
+      for (const time of role.times)
+        await agents.appendControlEvent(session.id, {
+          ts: base + time * 1000,
+          type: 'user_message',
+          data: { text: `${role.role}-${time}` },
+        });
+      await pool.query(
+        'UPDATE agent_sessions SET updated_at=to_timestamp($2::float8/1000) WHERE id=$1',
+        [session.id, base + (i + 1) * 100000],
+      );
+    }
+    const report = await learningEvidence(principal, study.id);
+    expect(report.conversations.map((c) => c.role)).toEqual(['mentor', 'planner', 'coder']);
+    expect(reportConversationMessages(report).map((m) => m.text)).toEqual([
+      'mentor-1',
+      'planner-2',
+      'planner-3',
+      'coder-4',
+      'coder-5',
+      'planner-6',
+      'mentor-8',
+    ]);
+    const again = await learningEvidence(principal, study.id);
+    expect(reportConversationMessages(again)).toEqual(reportConversationMessages(report));
   });
   it('bounds raw tool replay before projection and preserves the latest reply and normal full result', async () => {
     const study = await freshStudy();
@@ -2769,6 +2872,8 @@ describe.skipIf(!url)('PBL v3 teaching runtime with real PG', () => {
       expect(row.state.collected.greeting!.tests?.status).toBe('passed');
       expect(row.state.collected.greeting!.remediation).toBeNull();
     },
+    // Allocation, PG round trips and four real subprocesses need the bounded integration budget.
+    60000,
   );
   it('does not relabel a healthy workspace as unavailable when reading test progress fails', async () => {
     const study = await freshStudy();

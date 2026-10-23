@@ -29,8 +29,13 @@ async function buildLearningEvidence(db: PoolClient, row: Study): Promise<Learni
     return clipped;
   };
   const evidence: LearningReport['evidence'] = [];
-  const records = await db.query<{ sequence: number; event: OrchestrationEvent | null }>(
-    `SELECT sequence,CASE WHEN octet_length(event::text)<=$4 THEN event END AS event
+  const records = await db.query<{
+    sequence: number;
+    at: number;
+    event: OrchestrationEvent | null;
+  }>(
+    `SELECT sequence,(extract(epoch FROM recorded_at)*1000)::float8 AS at,
+       CASE WHEN octet_length(event::text)<=$4 THEN event END AS event
      FROM pbl_v3_events WHERE study_id=$1 AND sequence<=$2 ORDER BY sequence DESC LIMIT $3`,
     [id, row.state.lastSequence, HISTORY_LIMIT + 1, RECORD_BYTES],
   );
@@ -46,7 +51,7 @@ async function buildLearningEvidence(db: PoolClient, row: Study): Promise<Learni
     if (hash && !versions.has(hash)) versions.set(hash, `v${versions.size + 1}`);
   }
   const versionLabel = (hash: string) => versions.get(hash);
-  for (const { sequence, event } of records.rows.slice(0, HISTORY_LIMIT)) {
+  for (const { sequence, at, event } of records.rows.slice(0, HISTORY_LIMIT)) {
     if (!event) {
       truncated = true;
       continue;
@@ -93,6 +98,7 @@ async function buildLearningEvidence(db: PoolClient, row: Study): Promise<Learni
       if (!text && detail) continue;
       evidence.push({
         sequence,
+        at,
         milestoneId,
         kind: event.type,
         detail: text,
@@ -137,8 +143,8 @@ async function buildLearningEvidence(db: PoolClient, row: Study): Promise<Learni
       truncated = true;
       continue;
     }
-    const entries = await db.query<{ id: number; type: string; data: unknown }>(
-      `SELECT seq AS id,type,CASE WHEN octet_length(data::text)<=$4 THEN data END AS data
+    const entries = await db.query<{ id: number; at: number; type: string; data: unknown }>(
+      `SELECT seq AS id,ts::float8 AS at,type,CASE WHEN octet_length(data::text)<=$4 THEN data END AS data
        FROM agent_session_events WHERE session_id=$1 AND seq<=$2
          AND (type IN ('user_message','message_end')
            OR (type='tool_execution_end' AND data->>'toolName'='request_skill_review'))
@@ -149,12 +155,18 @@ async function buildLearningEvidence(db: PoolClient, row: Study): Promise<Learni
     const selected = entries.rows.slice(0, eventsRemaining);
     eventsRemaining -= selected.length;
     const messages: LearningReport['conversations'][number]['messages'] = [];
-    const pushMessage = (sequence: number, role: 'user' | 'assistant', text: string) => {
+    const pushMessage = (
+      sequence: number,
+      at: number,
+      role: 'user' | 'assistant',
+      text: string,
+    ) => {
       const clipped = boundedText(text);
       if (clipped.length < text.length) conversationTruncated = true;
-      if (clipped) messages.push({ sequence, role, text: clipped });
+      if (clipped) messages.push({ sequence, at, role, text: clipped });
     };
     let latestInputSequence: number | undefined;
+    let latestInputAt = 0;
     for (const entry of selected) {
       if (!entry.data) {
         conversationTruncated = true;
@@ -166,13 +178,16 @@ async function buildLearningEvidence(db: PoolClient, row: Study): Promise<Learni
         message?: { role?: string; content?: { type: string; text?: string }[] };
       };
       const question = reviewQuestion(entry);
-      if (question !== null) pushMessage(entry.id, 'assistant', question);
+      if (question !== null) pushMessage(entry.id, entry.at, 'assistant', question);
       if (entry.type === 'user_message') {
         // Review recovery follows the actual queued input, including automatic
         // openings. Only real learner messages belong in the visible transcript.
-        latestInputSequence = Math.max(latestInputSequence ?? 0, entry.id);
+        if (latestInputSequence === undefined || entry.id > latestInputSequence) {
+          latestInputSequence = entry.id;
+          latestInputAt = entry.at;
+        }
         if (!data.pblOpening && typeof data.text === 'string')
-          pushMessage(entry.id, 'user', data.text);
+          pushMessage(entry.id, entry.at, 'user', data.text);
       }
       if (
         entry.type === 'message_end' &&
@@ -183,7 +198,7 @@ async function buildLearningEvidence(db: PoolClient, row: Study): Promise<Learni
           .filter((p) => p.type === 'text')
           .map((p) => p.text ?? '')
           .join('\n');
-        if (text) pushMessage(entry.id, 'assistant', text);
+        if (text) pushMessage(entry.id, entry.at, 'assistant', text);
       }
     }
     const pending = binding.guided?.pending;
@@ -195,7 +210,12 @@ async function buildLearningEvidence(db: PoolClient, row: Study): Promise<Learni
           m.sequence > latestInputSequence && m.role === 'assistant' && m.text === pending.question,
       )
     )
-      pushMessage(binding.last + 1, 'assistant', pending.question);
+      pushMessage(
+        binding.last + 1,
+        selected[0]?.at ?? latestInputAt,
+        'assistant',
+        pending.question,
+      );
     conversations.push({
       role: binding.role,
       milestone: binding.context_key,
@@ -206,12 +226,13 @@ async function buildLearningEvidence(db: PoolClient, row: Study): Promise<Learni
   remaining = TEXT_LIMIT / 3;
   const saved = await db.query<{
     id: string;
+    at: number;
     milestone_id: string;
     kind: string;
     actor: string;
     detail: Record<string, unknown> | null;
   }>(
-    `SELECT id,milestone_id,kind,actor,
+    `SELECT id,(extract(epoch FROM created_at)*1000)::float8 AS at,milestone_id,kind,actor,
        CASE WHEN octet_length(detail::text)<=$3 THEN detail END AS detail
      FROM pbl_v3_evidence WHERE study_id=$1 ORDER BY id DESC LIMIT $2`,
     [id, HISTORY_LIMIT + 1, RECORD_BYTES],
@@ -239,6 +260,7 @@ async function buildLearningEvidence(db: PoolClient, row: Study): Promise<Learni
     if (!text && detail) continue;
     savedEvidence.push({
       sequence: -Number(item.id),
+      at: item.at,
       milestoneId: item.milestone_id,
       kind: item.kind,
       detail: text,
@@ -249,6 +271,8 @@ async function buildLearningEvidence(db: PoolClient, row: Study): Promise<Learni
     });
   }
   evidence.push(...savedEvidence.reverse());
+  evidence.sort((a, b) => a.at - b.at);
+  conversations.sort((a, b) => (a.messages[0]?.at ?? Infinity) - (b.messages[0]?.at ?? Infinity));
   const decisions = (
     await db.query<{ decisions: number; changes: number }>(
       `WITH choices AS (

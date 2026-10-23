@@ -131,6 +131,7 @@ test('installed sample opens in the normal classroom and preserves progress afte
           evidence: [
             {
               sequence: 7,
+              at: 30,
               kind: 'artifact.recorded',
               milestoneId: 'greeting',
               detail: 'Saved plan evidence',
@@ -146,7 +147,29 @@ test('installed sample opens in the normal classroom and preserves progress afte
             },
           ],
           counts: { 'artifact.recorded': 1 },
-          conversations: [],
+          conversations: [
+            {
+              role: 'mentor',
+              milestone: 'project',
+              truncated: false,
+              messages: [
+                { sequence: 1, at: 10, role: 'assistant', text: 'Report timeline opening' },
+                { sequence: 2, at: 60, role: 'assistant', text: 'Report timeline reflection' },
+              ],
+            },
+            {
+              role: 'coder',
+              milestone: 'greeting',
+              truncated: false,
+              messages: [{ sequence: 1, at: 40, role: 'user', text: 'Report timeline correction' }],
+            },
+            {
+              role: 'planner',
+              milestone: 'greeting',
+              truncated: false,
+              messages: [{ sequence: 1, at: 20, role: 'user', text: 'Report timeline plan' }],
+            },
+          ],
           truncated: true,
         },
       });
@@ -760,6 +783,16 @@ test('installed sample opens in the normal classroom and preserves progress afte
   ).toBeVisible();
   await report.getByRole('button', { name: 'Evidence 7', exact: true }).click();
   await expect(report.getByText('Saved plan evidence')).toBeVisible();
+  expect(
+    await report
+      .locator('details[id^="report-source-turn-"]')
+      .evaluateAll((items) => items.map((item) => item.id)),
+  ).toEqual([
+    'report-source-turn-0-1',
+    'report-source-turn-2-1',
+    'report-source-turn-1-1',
+    'report-source-turn-0-2',
+  ]);
   await report.evaluate((el) => {
     el.scrollTop = 0;
   });

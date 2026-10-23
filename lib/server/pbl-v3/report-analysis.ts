@@ -2,6 +2,7 @@ import 'server-only';
 import { z } from 'zod';
 import { jsonrepair } from 'jsonrepair';
 import type { LearningReport, ReportFinding } from '@/lib/pbl/v3/report';
+import { reportConversationMessages } from '@/lib/pbl/v3/report';
 import { callLLM } from '@/lib/ai/llm';
 import {
   lookupSlot,
@@ -25,20 +26,14 @@ export function reportSources(report: LearningReport) {
   return [
     ...report.evidence.map((e) => ({
       id: `event:${e.sequence}`,
+      at: e.at,
       milestone: e.milestoneId,
       kind: e.kind,
       version: e.version,
       text: e.detail,
     })),
-    ...report.conversations.flatMap((c, i) =>
-      c.messages.map((m) => ({
-        id: `turn:${i}:${m.sequence}`,
-        milestone: c.milestone,
-        role: m.role === 'user' ? 'learner' : c.role,
-        text: m.text,
-      })),
-    ),
-  ];
+    ...reportConversationMessages(report),
+  ].sort((a, b) => a.at - b.at);
 }
 /** Bounds analysis, not storage. Sample every part of the journey instead of silently taking only the tail. */
 export function reportAnalysisInput(report: LearningReport) {
@@ -76,9 +71,9 @@ export function validateReportFindings(text: string, report: LearningReport): Re
   const parsed = narrative.parse(JSON.parse(jsonrepair(clean)));
   const sources = new Map(reportSources(report).map((s) => [s.id, s.text]));
   const learnerSources = new Set(
-    report.conversations.flatMap((c, i) =>
-      c.messages.filter((m) => m.role === 'user').map((m) => `turn:${i}:${m.sequence}`),
-    ),
+    reportConversationMessages(report)
+      .filter((m) => m.role === 'learner')
+      .map((m) => m.id),
   );
   const validated = parsed.findings.filter(
     (f) =>

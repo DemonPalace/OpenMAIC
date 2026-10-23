@@ -298,6 +298,10 @@ records and 1,000 conversation events across at most 1,000 role bindings. Querie
 omit payloads over 32 KiB before transferring them to the app. Each displayed
 record is limited to 12,000 characters, with an 80,000-character budget per
 category (240,000 total), prioritizing recent evidence and marking omissions.
+After selection, persisted timestamps interleave edits/snapshots with orchestration
+events. The report's conversation view interleaves milestone roles and the shared
+mentor by message time; analysis uses that same ordering across all evidence and
+messages. Citation IDs remain tied to their source records when display order changes.
 The complete append-only history remains stored. Quantitative counts are computed
 over the full snapshot in SQL, independently of excerpt limits; assistant turns
 count completed text messages, excluding thinking and tool/protocol events.

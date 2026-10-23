@@ -14,6 +14,7 @@ export interface LearningReport {
   counts: Record<string, number>;
   evidence: {
     sequence: number;
+    at: number;
     milestoneId?: string;
     kind: string;
     detail: string;
@@ -23,7 +24,7 @@ export interface LearningReport {
   conversations: {
     role: string;
     milestone: string;
-    messages: { sequence: number; role: 'user' | 'assistant'; text: string }[];
+    messages: { sequence: number; at: number; role: 'user' | 'assistant'; text: string }[];
     truncated: boolean;
   }[];
   truncated: boolean;
@@ -44,6 +45,21 @@ export interface LearningReport {
     omitted: boolean;
     canRetry: boolean;
   };
+}
+
+/** Keep citation IDs tied to their retained source while interleaving shared mentor and milestone roles. */
+export function reportConversationMessages(report: LearningReport) {
+  return report.conversations
+    .flatMap((c, i) =>
+      c.messages.map((m) => ({
+        id: `turn:${i}:${m.sequence}`,
+        at: m.at,
+        milestone: c.milestone,
+        role: m.role === 'user' ? 'learner' : c.role,
+        text: m.text,
+      })),
+    )
+    .sort((a, b) => a.at - b.at);
 }
 export interface ReportFinding {
   category: 'journey' | 'strength' | 'change' | 'collaboration' | 'next';
