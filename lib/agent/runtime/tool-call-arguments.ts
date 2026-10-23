@@ -81,3 +81,15 @@ export function replayToolCallArguments(value: unknown): Record<string, unknown>
   delete rest[TOOL_ARGUMENTS_ERROR_KEY];
   return rest;
 }
+
+/**
+ * The parse diagnosis carried by a tool call's arguments, if any. pi's schema
+ * validation already surfaces it when a required field is missing; a tool whose
+ * parameters are all optional would otherwise run with defaults, so the agent
+ * blocks such a call before execution with this message.
+ */
+export function toolArgumentsError(args: unknown): string | undefined {
+  if (!args || typeof args !== 'object' || Array.isArray(args)) return undefined;
+  const value = (args as Record<string, unknown>)[TOOL_ARGUMENTS_ERROR_KEY];
+  return typeof value === 'string' ? value : undefined;
+}

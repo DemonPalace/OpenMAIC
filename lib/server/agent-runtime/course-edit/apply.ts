@@ -582,23 +582,36 @@ function elementIdentityIssue(before: SlideContent, after: SlideContent): string
 }
 
 /**
- * Element ids are server-owned. A whole-element `set` that omits the id, or
- * rewrites it while keeping the element's type, still means "replace this
- * element", so it keeps the original id instead of failing the identity check.
+ * Element ids are server-owned. A whole-element `set` of the same type that
+ * omits the id still means "replace this element", so it keeps the original
+ * id. Carrying ANOTHER existing element's id is a reorder attempt, which
+ * `set` cannot express without retargeting animations and actions.
  */
 function keepElementIdentity(
   content: SlideContent,
   tokens: string[],
   action: 'set' | 'remove',
   value: unknown,
-): unknown {
-  if (action !== 'set' || !isRecord(value) || tokens.length !== 3) return value;
+): ApplyResult<unknown> {
+  if (action !== 'set' || !isRecord(value) || tokens.length !== 3) return ok(value);
   if (tokens[0] !== 'canvas' || tokens[1] !== 'elements' || !/^(0|[1-9]\d*)$/.test(tokens[2]!)) {
-    return value;
+    return ok(value);
   }
-  const existing = content.canvas.elements[Number(tokens[2])];
-  if (!existing || value.type !== existing.type || value.id === existing.id) return value;
-  return { ...value, id: existing.id };
+  const index = Number(tokens[2]);
+  const existing = content.canvas.elements[index];
+  if (!existing) return ok(value);
+  if (value.id === undefined) {
+    return ok(value.type === existing.type ? { ...value, id: existing.id } : value);
+  }
+  const other = content.canvas.elements.findIndex(
+    (element, at) => at !== index && element.id === value.id,
+  );
+  if (other >= 0) {
+    return fail(
+      `set /canvas/elements/${index} carries id ${JSON.stringify(value.id)} of the element at index ${other}; elements cannot be reordered or swapped with set. Edit each element's fields in place, or use delete_element + add_element (afterId/index) to move one`,
+    );
+  }
+  return ok(value);
 }
 
 /**
@@ -617,6 +630,13 @@ function withRendererDefaults(element: Record<string, unknown>): Record<string, 
   if (element.type === 'text' && !('content' in element)) delete normalized.content;
   if (isRecord(element.text) && !('content' in element.text) && isRecord(normalized.text)) {
     delete normalized.text.content;
+  }
+  // Shape geometry is derived from the box only when BOTH halves are absent:
+  // a supplied path is in its own coordinate space, so a box-sized viewBox
+  // (or a box-sized path for a supplied viewBox) would mis-scale it.
+  if (element.type === 'shape' && 'path' in element !== 'viewBox' in element) {
+    if (!('path' in element)) delete normalized.path;
+    if (!('viewBox' in element)) delete normalized.viewBox;
   }
   if (element.type !== 'line' && !('rotate' in element)) normalized.rotate = 0;
   return normalized;
@@ -642,30 +662,45 @@ function applyJsonPointerPatch(
   }
   const decoded = decodePointer(input.path);
   if (!decoded.ok) return decoded;
+  const value = keepElementIdentity(content, decoded.value, input.action, input.value);
+  if (!value.ok) return value;
   const next = structuredClone(content);
   const applied = applyPointer(
     next as unknown as Record<string, unknown>,
     decoded.value,
     input.action,
-    keepElementIdentity(content, decoded.value, input.action, input.value),
+    value.value,
   );
   if (!applied.ok) return applied;
-  const identityIssue = elementIdentityIssue(content, next);
+  return finalizeSlideContent(content, next);
+}
+
+/**
+ * Shared post-condition for any edit of slide content that keeps element
+ * identity (JSON Pointer set/remove, str_replace): ids and types unchanged,
+ * no NEW schema violations relative to `before`, and changed LaTeX re-rendered.
+ * `after` is mutated (LaTeX html) and returned.
+ */
+export function finalizeSlideContent(
+  before: SlideContent,
+  after: SlideContent,
+): ApplyResult<SlideContent> {
+  const identityIssue = elementIdentityIssue(before, after);
   if (identityIssue) return fail(`patch rejected: ${identityIssue}`);
-  const schemaIssues = validateSlideCanvas(next.canvas, content.canvas);
+  const schemaIssues = validateSlideCanvas(after.canvas, before.canvas);
   if (schemaIssues.length > 0) return fail(`patch rejected: ${schemaIssues.join('; ')}`);
   const beforeLatex = new Map(
-    content.canvas.elements
+    before.canvas.elements
       .filter((element) => element.type === 'latex')
       .map((element) => [element.id, element.latex]),
   );
-  for (const element of next.canvas.elements) {
+  for (const element of after.canvas.elements) {
     if (element.type !== 'latex' || beforeLatex.get(element.id) === element.latex) continue;
     const html = renderLatexElementHtml(element.latex);
     if (html !== null) element.html = html;
     else delete element.html;
   }
-  return ok(next);
+  return ok(after);
 }
 
 export function applySlideEdit(

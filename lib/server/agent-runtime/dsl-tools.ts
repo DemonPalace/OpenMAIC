@@ -14,6 +14,7 @@ import {
   closestExcerpt,
   collectStringFields,
   describeStringFieldsNear,
+  finalizeSlideContent,
   inventoryScene,
   textSlide,
   type SlideEditOp,
@@ -23,6 +24,7 @@ import {
   omitReadSceneMediaBytes,
 } from './course-edit/media-byte-omission';
 import { COURSE_STAGE_ID_DESCRIPTION } from './course-stage';
+import { validateSlideCanvas } from './course-edit/element-schema';
 
 const READ_PAGE_CHARS = 12_000;
 const SEARCH_CONTEXT_CHARS = 200;
@@ -537,12 +539,13 @@ function validationError(scene: Scene): string | null {
 
 function clearStaleSpeechAudio(before: Scene, after: Scene): void {
   const beforeById = new Map(
-    ((before.actions ?? []) as Action[])
-      .filter((action): action is Extract<Action, { type: 'speech' }> => action.type === 'speech')
+    ((before.actions ?? []) as Array<Action | null>)
+      .filter((action): action is Extract<Action, { type: 'speech' }> => action?.type === 'speech')
       .map((action) => [action.id, action]),
   );
-  for (const action of (after.actions ?? []) as Action[]) {
-    if (action.type !== 'speech') continue;
+  // Actions are not validated until the end of the batch: tolerate junk here.
+  for (const action of (after.actions ?? []) as Array<Action | null>) {
+    if (action?.type !== 'speech') continue;
     const previous = beforeById.get(action.id);
     if (!previous || previous.text === action.text) continue;
     const legacy = action as typeof action & { audioUrl?: string };
@@ -636,12 +639,17 @@ function isWritableScenePath(path: string): boolean {
   return path.startsWith('/content/') || path === '/actions' || path.startsWith('/actions/');
 }
 
-/** Writable string fields of a scene (the same roots str_replace accepts). */
-function sceneStringFields(scene: Scene) {
+/**
+ * The stored strings behind the read_stage text view: the only fields a
+ * path-less str_replace may target or a diagnostic may point at. Structural
+ * strings (ids, types, src, colors, element references) are never candidates.
+ */
+function textViewFields(scene: Scene) {
+  const visible = new Set(textScene(scene).entries.map((entry) => entry.path));
   return [
     ...collectStringFields(scene.content, '/content'),
     ...collectStringFields(scene.actions ?? [], '/actions'),
-  ];
+  ].filter((field) => visible.has(field.path));
 }
 
 const MAX_CANDIDATE_POINTERS = 10;
@@ -656,7 +664,7 @@ function listPointers(paths: string[]): string {
 /** Closest text across every string field, for an anchor found nowhere. */
 function closestInScene(scene: Scene, anchor: string): string {
   let best: { path: string; excerpt: string; score: number } | null = null;
-  for (const field of sceneStringFields(scene)) {
+  for (const field of textViewFields(scene)) {
     if (field.value.startsWith('data:')) continue;
     const found = closestExcerpt(field.value, anchor);
     if (found && (!best || found.score > best.score)) best = { path: field.path, ...found };
@@ -673,7 +681,7 @@ function applyStrReplaceOp(scene: Scene, op: ResolvedPatchOp): PatchOpResult {
   let path = op.path;
   if (!path) {
     const oldText = op.oldText;
-    const matches = sceneStringFields(scene).filter((field) => field.value.includes(oldText));
+    const matches = textViewFields(scene).filter((field) => field.value.includes(oldText));
     if (matches.length === 0) {
       return {
         ok: false as const,
@@ -708,7 +716,7 @@ function applyStrReplaceOp(scene: Scene, op: ResolvedPatchOp): PatchOpResult {
       if (near) error += `. ${near}`;
     } else if (error.startsWith('anchor text not found')) {
       const oldText = op.oldText;
-      const elsewhere = sceneStringFields(scene)
+      const elsewhere = textViewFields(scene)
         .filter((field) => field.path !== path && field.value.includes(oldText))
         .map((field) => field.path);
       if (elsewhere.length > 0) {
@@ -718,6 +726,12 @@ function applyStrReplaceOp(scene: Scene, op: ResolvedPatchOp): PatchOpResult {
     return { ok: false as const, error };
   }
   const next = applied.value as Scene;
+  if (scene.content.type === 'slide' && path.startsWith('/content/')) {
+    // A string edit must not slip past the identity/schema checks every other
+    // slide write gets (e.g. rewriting an element id or type).
+    const checked = finalizeSlideContent(scene.content, next.content as SlideContent);
+    if (!checked.ok) return checked;
+  }
   clearStaleSpeechAudio(scene, next);
   return {
     ok: true as const,
@@ -776,6 +790,12 @@ function applyPatchOp(scene: Scene, raw: RawPatchOp): PatchOpResult {
       error: 'set/remove path must start /content/ or /actions/; use edit_deck for scene metadata',
     };
   }
+  if (op.op === 'set') {
+    const appended = appendedLength(scene, op.path);
+    if (appended !== null) {
+      notes.push(`appended at index ${appended} (array had ${appended} items)`);
+    }
+  }
   if (scene.content.type === 'slide' && op.path.startsWith('/content/')) {
     const parsed = slideOperation(op);
     if (typeof parsed === 'string') return { ok: false as const, error: parsed };
@@ -792,6 +812,23 @@ function applyPatchOp(scene: Scene, raw: RawPatchOp): PatchOpResult {
   if (!applied.ok) return applied;
   clearStaleSpeechAudio(scene, applied.value as Scene);
   return withNotes({ ok: true as const, value: applied.value as Scene, details: baseDetails });
+}
+
+/** Array length when `set` at `path` appends (index == length or `-`), else null. */
+function appendedLength(scene: Scene, path: string): number | null {
+  const tokens = path
+    .slice(1)
+    .split('/')
+    .map((token) => token.replace(/~1/g, '/').replace(/~0/g, '~'));
+  const key = tokens.pop();
+  let node: unknown = scene;
+  for (const token of tokens) {
+    if (Array.isArray(node)) node = node[Number(token)];
+    else if (node && typeof node === 'object') node = (node as Record<string, unknown>)[token];
+    else return null;
+  }
+  if (!Array.isArray(node)) return null;
+  return key === '-' || key === String(node.length) ? node.length : null;
 }
 
 /** True when an op removes array items, shifting the indices of later items. */
@@ -827,7 +864,9 @@ function assignMissingActionIds(scene: Scene): void {
     const record = action as Record<string, unknown>;
     if (typeof record.id === 'string' && record.id) continue;
     let id = `action-${nanoid(8)}`;
-    while ((scene.actions as Action[]).some((item) => item.id === id)) id = `action-${nanoid(8)}`;
+    while ((scene.actions as Array<Action | null>).some((item) => item?.id === id)) {
+      id = `action-${nanoid(8)}`;
+    }
     record.id = id;
   }
 }
@@ -1010,6 +1049,22 @@ export function buildDslCourseTools(deps: CourseToolDeps): AgentTool<never, neve
         opDetails.push(applied.details);
       }
       assignMissingActionIds(next);
+      // Each op is checked against the previous op's output; re-check the
+      // final canvas against the BATCH START so an earlier op cannot launder
+      // a violation into "pre-existing" data for a later one.
+      if (resolved.scene.content.type === 'slide' && next.content.type === 'slide') {
+        const issues = validateSlideCanvas(
+          next.content.canvas,
+          (resolved.scene.content as SlideContent).canvas,
+        );
+        if (issues.length > 0) {
+          return toolResult(
+            `patch_stage rejected after op ${params.ops.length}: ${issues.join('; ')}`,
+            { intent: params.intent, failedOp: params.ops.length },
+            true,
+          );
+        }
+      }
       // Final-state placeholder guard. The per-op checks above are the friendly
       // errors for a model that copies a placeholder verbatim, but they inspect
       // each op's payload in ISOLATION — a batch can assemble a complete

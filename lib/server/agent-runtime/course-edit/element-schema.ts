@@ -745,7 +745,13 @@ export function validateElementPatch(type: string, patch: Record<string, unknown
 interface SchemaIssue {
   /** Path inside the validated value ("" for the value itself). */
   at: string;
+  /** Pointer of the offending value: `at`, or `at/<name>` for a property issue. */
+  location: string;
   message: string;
+}
+
+function encodeToken(token: string): string {
+  return token.replace(/~/g, '~0').replace(/\//g, '~1');
 }
 
 /** Flatten TypeBox errors into one issue per offending property. */
@@ -759,16 +765,18 @@ function schemaIssues(schema: TSchema, value: unknown): SchemaIssue[] {
     if (error.keyword === 'additionalProperties' && params.additionalProperties?.length) {
       return params.additionalProperties.map((name) => ({
         at,
+        location: `${at}/${encodeToken(name)}`,
         message: `unexpected property ${JSON.stringify(name)}`,
       }));
     }
     if (error.keyword === 'required' && params.requiredProperties?.length) {
       return params.requiredProperties.map((name) => ({
         at,
+        location: `${at}/${encodeToken(name)}`,
         message: `missing required property ${JSON.stringify(name)}`,
       }));
     }
-    return [{ at, message: error.message }];
+    return [{ at, location: at, message: error.message }];
   });
   const seen = new Set<string>();
   return issues.filter((issue) => {
@@ -791,7 +799,10 @@ function elementIssues(
   schemas: Record<string, TSchema>,
 ): { type: string; issues: SchemaIssue[] } {
   if (!element || typeof element !== 'object' || Array.isArray(element)) {
-    return { type: 'unknown', issues: [{ at: '', message: 'expected an element object' }] };
+    return {
+      type: 'unknown',
+      issues: [{ at: '', location: '', message: 'expected an element object' }],
+    };
   }
   const type = (element as { type?: unknown }).type;
   const schema = typeof type === 'string' ? schemas[type] : undefined;
@@ -801,6 +812,7 @@ function elementIssues(
       issues: [
         {
           at: '/type',
+          location: '/type',
           message: `unknown element type ${JSON.stringify(type)}; expected one of ${KNOWN_ELEMENT_TYPES}`,
         },
       ],
@@ -827,9 +839,11 @@ export function validateElementInput(element: unknown): string[] {
  * Validate the patched canvas, rejecting unknown fields at every level.
  *
  * With `previous`, only violations INTRODUCED by the patch are reported: an
- * element (matched by id) or canvas field that already carried the same issue
- * before the patch does not block an unrelated edit, so historical data that
- * predates a schema rule never makes the whole slide read-only.
+ * issue that already existed before the patch, on an UNCHANGED value, does
+ * not block an unrelated edit, so historical data that predates a schema rule
+ * never makes the whole slide read-only. Issues are matched index-free (see
+ * `issueKey`), so array shifts neither block valid edits nor let new invalid
+ * items inherit an old item's exemption.
  */
 export function validateSlideCanvas(canvas: unknown, previous?: Slide): string[] {
   // Historical geometry can have schema-invalid types, missing fields, or
@@ -837,10 +851,12 @@ export function validateSlideCanvas(canvas: unknown, previous?: Slide): string[]
   // new and changed geometry still receives full validation below.
   const schemaCanvas = projectUnchangedHistoricalGeometry(canvas, previous);
   const baselineCanvas = new Set(
-    previous ? schemaIssues(SlideCanvasSchema, previous).map(issueKey) : [],
+    previous
+      ? schemaIssues(SlideCanvasSchema, previous).map((issue) => issueKey(previous, issue))
+      : [],
   );
   const issues = schemaIssues(SlideCanvasSchema, schemaCanvas)
-    .filter((issue) => !baselineCanvas.has(issueKey(issue)))
+    .filter((issue) => !baselineCanvas.has(issueKey(schemaCanvas, issue)))
     .map((issue) => `canvas${issue.at}: ${issue.message}`);
   const elements = (schemaCanvas as { elements?: unknown }).elements;
   if (Array.isArray(elements)) {
@@ -859,10 +875,10 @@ export function validateSlideCanvas(canvas: unknown, previous?: Slide): string[]
         ? elementIssues(before, PERSISTED_ELEMENT_SCHEMAS)
         : { type: '', issues: [] };
       const known = new Set(
-        baseline.type === type ? baseline.issues.map((issue) => issueKey(issue)) : [],
+        baseline.type === type ? baseline.issues.map((issue) => issueKey(before, issue)) : [],
       );
       for (const issue of current) {
-        if (known.has(issueKey(issue))) continue;
+        if (known.has(issueKey(element, issue))) continue;
         issues.push(formatElementIssue(`canvas/elements/${index}`, type, issue));
       }
     });
@@ -877,8 +893,35 @@ export function validateSlideCanvas(canvas: unknown, previous?: Slide): string[]
   });
 }
 
-function issueKey(issue: SchemaIssue): string {
-  return `${issue.at}: ${issue.message}`;
+/**
+ * Index-free identity of an issue inside `root`: every array index on the way
+ * to the offending value is replaced by the item's `id` (when it has one) or
+ * by the item's full JSON, and the offending value's own JSON is included. Two
+ * issues share a key only when they sit on the same (or a deep-equal) item and
+ * the offending value itself is unchanged.
+ */
+function issueKey(root: unknown, issue: SchemaIssue): string {
+  const tokens = issue.location
+    .split('/')
+    .slice(1)
+    .map((token) => token.replace(/~1/g, '/').replace(/~0/g, '~'));
+  let node: unknown = root;
+  const parts: string[] = [];
+  for (const token of tokens) {
+    if (Array.isArray(node)) {
+      const item: unknown = node[Number(token)];
+      const id = (item as { id?: unknown } | null)?.id;
+      parts.push(typeof id === 'string' ? `#${id}` : `=${JSON.stringify(item)}`);
+      node = item;
+    } else if (node && typeof node === 'object') {
+      parts.push(encodeToken(token));
+      node = (node as Record<string, unknown>)[token];
+    } else {
+      parts.push(encodeToken(token));
+      node = undefined;
+    }
+  }
+  return `${parts.join('/')}|${issue.message}|${JSON.stringify(node) ?? 'undefined'}`;
 }
 
 function projectUnchangedHistoricalGeometry(canvas: unknown, previous?: Slide): unknown {

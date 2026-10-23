@@ -1260,10 +1260,19 @@ describe('patch_stage robustness', () => {
     const ambiguous = await patch.execute('ambiguous', {
       target: '/scenes/1',
       intent: 'Rename',
-      ops: [{ op: 'str_replace', oldText: 'Inter', newText: 'Arial' }],
+      ops: [{ op: 'str_replace', oldText: 'We', newText: 'Wee' }],
     } as never);
-    expect(textOf(ambiguous)).toContain('anchor text occurs in');
-    expect(textOf(ambiguous)).toContain('/content/canvas/elements/0/defaultFontName');
+    expect(textOf(ambiguous)).toContain('anchor text occurs in 2 fields');
+    expect(textOf(ambiguous)).toContain('/content/canvas/elements/3/data/0/1/text');
+    expect(textOf(ambiguous)).toContain('/actions/0/text');
+
+    // Structural strings (ids, fonts, colors) are never path-less targets.
+    const structural = await patch.execute('structural', {
+      target: '/scenes/1',
+      intent: 'Rename',
+      ops: [{ op: 'str_replace', oldText: 'el-title', newText: 'el-x' }],
+    } as never);
+    expect(textOf(structural)).toContain('not found in any string field');
 
     const none = await patch.execute('none', {
       target: '/scenes/1',
@@ -1283,6 +1292,7 @@ describe('patch_stage robustness', () => {
       ops: [{ op: 'set', path: '/actions/1', value: { type: 'speech', text: 'More' } }],
     } as never);
     expect(appended).not.toHaveProperty('isError');
+    expect(textOf(appended)).toContain('op 1: appended at index 1 (array had 1 items)');
     const actions = current.get().scenes[0]!.actions!;
     expect(actions).toHaveLength(2);
     // Actions are server-identified like elements: a missing id is assigned.
@@ -1339,6 +1349,107 @@ describe('patch_stage robustness', () => {
       ],
     } as never);
     expect(textOf(retyped)).toContain('added "el-new"; removed "el-latex"');
+
+    // Carrying another element's id is a reorder/swap attempt: rejected, not
+    // silently re-identified (animations and actions target ids).
+    const elements = slideElements(current);
+    const swapped = await patch.execute('swap', {
+      target: '/scenes/1',
+      intent: 'Swap two elements',
+      ops: [
+        { op: 'set', path: '/content/canvas/elements/0', value: elements[1] },
+        { op: 'set', path: '/content/canvas/elements/1', value: elements[0] },
+      ],
+    } as never);
+    expect(swapped).toMatchObject({ isError: true, details: { failedOp: 1 } });
+    expect(textOf(swapped)).toContain(
+      'carries id "el-shape" of the element at index 1; elements cannot be reordered',
+    );
+    expect(slideElements(current)[0]!.id).toBe('el-title');
+  });
+
+  it('grandfathers legacy issues across index shifts but not on new items', async () => {
+    const scene = richSlideScene();
+    const canvas = (scene.content as SlideContent).canvas;
+    const valid = {
+      id: 'anim-1',
+      elId: 'el-title',
+      effect: 'fadeIn',
+      type: 'in',
+      duration: 500,
+      trigger: 'click',
+    } as const;
+    const legacy = { ...valid, id: 'anim-2', legacyFlag: true };
+    canvas.animations = [valid, legacy] as never;
+    const current = state(course([scene]));
+    const patch = tool(dslTools(current.store), 'patch_stage');
+
+    // Removing animations/0 shifts the legacy item to index 0: still allowed.
+    const shifted = await patch.execute('shift', {
+      target: '/scenes/1',
+      intent: 'Drop the first animation',
+      ops: [{ op: 'remove', path: '/content/canvas/animations/0' }],
+    } as never);
+    expect(shifted).not.toHaveProperty('isError');
+
+    // A NEW invalid item at a colliding index does not inherit the exemption.
+    const before = { ...canvas, animations: [valid, legacy] } as never;
+    const replaced = {
+      ...canvas,
+      animations: [valid, { ...legacy, id: 'anim-3' }],
+    };
+    expect(validateSlideCanvas(replaced, before)).toEqual([
+      'canvas/animations/1: unexpected property "legacyFlag"',
+    ]);
+    // Changing the offending value itself is a new violation too.
+    const changed = { ...canvas, animations: [valid, { ...legacy, legacyFlag: false }] };
+    expect(validateSlideCanvas(changed, before)).toHaveLength(1);
+  });
+
+  it('runs identity and schema checks on str_replace into slide content', async () => {
+    const current = richState();
+    const patch = tool(dslTools(current.store), 'patch_stage');
+    const retype = await patch.execute('retype', {
+      target: '/scenes/1',
+      intent: 'Bad edit',
+      ops: [
+        {
+          op: 'str_replace',
+          path: '/content/canvas/elements/1/text/align',
+          oldText: 'middle',
+          newText: 'mid',
+        },
+      ],
+    } as never);
+    expect(retype).toMatchObject({ isError: true, details: { failedOp: 1 } });
+    expect(textOf(retype)).toContain('canvas/elements/1/text/align (shape)');
+
+    const reid = await patch.execute('reid', {
+      target: '/scenes/1',
+      intent: 'Bad edit',
+      ops: [
+        {
+          op: 'str_replace',
+          path: '/content/canvas/elements/0/id',
+          oldText: 'title',
+          newText: 'x',
+        },
+      ],
+    } as never);
+    expect(textOf(reid)).toContain('cannot add, remove, or change element ids');
+    expect(current.putScene).not.toHaveBeenCalled();
+  });
+
+  it('reports a bad action list instead of throwing on null actions', async () => {
+    const current = richState();
+    const patch = tool(dslTools(current.store), 'patch_stage');
+    const result = await patch.execute('null-action', {
+      target: '/scenes/1',
+      intent: 'Replace narration',
+      ops: [{ op: 'set', path: '/actions', value: [null, { type: 'speech', text: 'x' }] }],
+    } as never);
+    expect(result).toMatchObject({ isError: true });
+    expect(current.putScene).not.toHaveBeenCalled();
   });
 
   it('accepts /content/elements as the canonical /content/canvas/elements and says so', async () => {
@@ -1432,6 +1543,30 @@ describe('patch_stage robustness', () => {
       ],
     } as never);
     expect(textOf(empty)).toContain('element (text): missing required property "content"');
+
+    // A supplied path keeps its own coordinate space: viewBox is not derived.
+    const shape = {
+      type: 'shape',
+      left: 0,
+      top: 0,
+      width: 200,
+      height: 100,
+      path: 'M 0 0 L 1 0 L 1 1 Z',
+    };
+    const pathOnly = await patch.execute('add-path', {
+      target: '/scenes/1',
+      intent: 'Add a triangle',
+      ops: [{ op: 'add_element', element: shape }],
+    } as never);
+    expect(textOf(pathOnly)).toContain('element (shape): missing required property "viewBox"');
+    const { path: _path, ...box } = shape;
+    const boxOnly = await patch.execute('add-box', {
+      target: '/scenes/1',
+      intent: 'Add a box',
+      ops: [{ op: 'add_element', element: box }],
+    } as never);
+    expect(boxOnly).not.toHaveProperty('isError');
+    expect(slideElements(current).at(-1)).toMatchObject({ viewBox: [200, 100] });
   });
 });
 
