@@ -18,8 +18,8 @@ import { getSessionMaterial, resolveSessionMaterialRawAsset } from './session-ma
 const Params = Type.Object({
   materialId: Type.String({
     description:
-      'The mat_ id of an image, video or audio material, from list_materials. An ast_ id is ' +
-      'already a stored asset src and needs no copy.',
+      'The mat_ id of an image, video or audio material, from list_materials. An ast_ id ' +
+      'returned by a successful media tool result is already a usable src and needs no copy.',
   }),
   stageId: Type.String({ description: COURSE_STAGE_ID_DESCRIPTION }),
   scope: Type.Optional(
