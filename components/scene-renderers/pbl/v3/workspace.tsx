@@ -228,6 +228,12 @@ function PBLV3WorkspaceContent({
   const [collectionFailed, setCollectionFailed] = useState('');
   const testStage = view?.stage.kind === 'check' && view.stage.checker === 'tests';
   const evaluationKey = view?.evaluation ? `${view.id}:${view.evaluation.id}` : '';
+  const buildWorking =
+    !testStage &&
+    (pendingAction === 'compile' ||
+      (view?.evaluation?.purpose === 'compile' &&
+        (pendingAction === 'collect' ||
+          ['starting', 'running', 'unknown'].includes(view.evaluation.state))));
   useEffect(() => {
     if (
       !testStage ||
@@ -500,52 +506,7 @@ function PBLV3WorkspaceContent({
                     ).join(''),
                   };
                 }}
-              >
-                {view.actions.includes('compile') && (
-                  <button
-                    className={button}
-                    disabled={disabled || !!view.evaluation}
-                    aria-busy={pendingAction === 'compile'}
-                    onClick={() => void command('compile')}
-                  >
-                    {pendingAction === 'compile' && (
-                      <LoaderCircle size={13} className="animate-spin" aria-hidden="true" />
-                    )}
-                    {t('pblV3.build')}
-                  </button>
-                )}
-                {view.evaluation && view.stage.kind !== 'check' && (
-                  <>
-                    {(['starting', 'running'].includes(view.evaluation.state) ||
-                      pendingAction === 'collect') && (
-                      <span
-                        role="status"
-                        aria-busy="true"
-                        data-testid="pbl-build-status"
-                        className="inline-flex items-center gap-1.5 text-xs text-muted-foreground"
-                      >
-                        <LoaderCircle size={13} className="animate-spin" aria-hidden="true" />
-                        {t(
-                          pendingAction === 'collect'
-                            ? 'pblV3.activity.collect'
-                            : 'pblV3.activity.build',
-                        )}
-                      </span>
-                    )}
-                    <button
-                      className={button}
-                      disabled={disabled}
-                      onClick={() => void command('collect')}
-                    >
-                      {t('pblV3.collect')}
-                    </button>
-                    <pre className="whitespace-pre-wrap text-xs">
-                      {view.evaluation.stdout}
-                      {view.evaluation.stderr}
-                    </pre>
-                  </>
-                )}
-              </LearningWorkbenchPanel>
+              />
             }
             assistant={
               <section
@@ -589,10 +550,11 @@ function PBLV3WorkspaceContent({
                     key={`${view.id}:${view.state.position.milestoneIndex}:${view.state.position.stageIndex}`}
                     view={view}
                     working={
-                      testStage &&
-                      (pendingAction === 'evaluate' ||
-                        pendingAction === 'collect' ||
-                        (!!view.evaluation && !resultUnavailable))
+                      buildWorking ||
+                      (testStage &&
+                        (pendingAction === 'evaluate' ||
+                          pendingAction === 'collect' ||
+                          (!!view.evaluation && !resultUnavailable)))
                     }
                     summary={
                       testStage ? (
@@ -601,6 +563,10 @@ function PBLV3WorkspaceContent({
                           mode="summary"
                           collectionFailed={resultUnavailable}
                           pendingAction={pendingAction}
+                        />
+                      ) : buildWorking ? (
+                        <PendingAction
+                          action={pendingAction === 'collect' ? 'collect' : 'compile'}
                         />
                       ) : undefined
                     }
@@ -678,6 +644,60 @@ function PBLV3WorkspaceContent({
                     }
                   >
                     {view.stage.kind === 'produce' && <ProductionContext view={view} />}
+
+                    {(view.actions.includes('compile') ||
+                      (view.stage.kind !== 'check' && view.evaluation?.purpose === 'compile')) && (
+                      <div className="space-y-2" data-testid="pbl-build-controls">
+                        {view.actions.includes('compile') && (
+                          <button
+                            className={button}
+                            disabled={disabled || !!view.evaluation}
+                            aria-busy={pendingAction === 'compile'}
+                            onClick={() => void command('compile')}
+                          >
+                            {pendingAction === 'compile' && (
+                              <LoaderCircle size={13} className="animate-spin" aria-hidden="true" />
+                            )}
+                            {t('pblV3.build')}
+                          </button>
+                        )}
+                        {view.evaluation && view.stage.kind !== 'check' && (
+                          <>
+                            {(['starting', 'running'].includes(view.evaluation.state) ||
+                              pendingAction === 'collect') && (
+                              <span
+                                role="status"
+                                aria-busy="true"
+                                data-testid="pbl-build-status"
+                                className="inline-flex items-center gap-1.5 text-xs text-muted-foreground"
+                              >
+                                <LoaderCircle
+                                  size={13}
+                                  className="animate-spin"
+                                  aria-hidden="true"
+                                />
+                                {t(
+                                  pendingAction === 'collect'
+                                    ? 'pblV3.activity.collect'
+                                    : 'pblV3.activity.build',
+                                )}
+                              </span>
+                            )}
+                            <button
+                              className={button}
+                              disabled={disabled}
+                              onClick={() => void command('collect')}
+                            >
+                              {t('pblV3.collect')}
+                            </button>
+                            <pre className="whitespace-pre-wrap text-xs">
+                              {view.evaluation.stdout}
+                              {view.evaluation.stderr}
+                            </pre>
+                          </>
+                        )}
+                      </div>
+                    )}
 
                     {testStage && (
                       <TestEvaluation

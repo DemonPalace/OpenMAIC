@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { Group, Panel, Separator, usePanelRef } from 'react-resizable-panels';
 import {
@@ -54,7 +54,6 @@ export function LearningWorkbenchPanel({
   onRefresh,
   onSave,
   onDirtyChange,
-  children,
 }: {
   view: LearningView;
   workbench: LearningWorkbench | null;
@@ -68,7 +67,6 @@ export function LearningWorkbenchPanel({
     request: FileSaveRequest,
   ) => Promise<FileSaveReceipt>;
   onDirtyChange: (dirty: boolean) => void;
-  children: ReactNode;
 }) {
   const { t } = useI18n();
   const work =
@@ -85,14 +83,6 @@ export function LearningWorkbenchPanel({
   const [manage, setManage] = useState(false),
     [consoleOpen, setConsoleOpen] = useState(false),
     [consoleTab, setConsoleTab] = useState<'output' | 'terminal'>('output');
-  const showEvaluation =
-    view.stage.kind !== 'check' && (view.actions.includes('compile') || !!view.evaluation);
-  useEffect(() => {
-    if (showEvaluation) {
-      setConsoleOpen(true);
-      setConsoleTab('output');
-    }
-  }, [showEvaluation]);
   const explorer = usePanelRef();
   const [filesCollapsed, setFilesCollapsed] = useState(false);
   const executionSequence = useRef(0),
@@ -442,7 +432,7 @@ export function LearningWorkbenchPanel({
           </Panel>
         </Group>
       </div>
-      {(ACTIVITY_SHELL_ENABLED || showEvaluation) && (
+      {ACTIVITY_SHELL_ENABLED && (
         <div
           className="shrink-0 border-t bg-muted/10"
           style={{ height: consoleOpen ? '38%' : undefined }}
@@ -456,7 +446,7 @@ export function LearningWorkbenchPanel({
                 setConsoleTab('output');
               }}
             >
-              {t(ACTIVITY_SHELL_ENABLED ? 'pblV3.ide.output' : 'pblV3.ide.buildOutput')}
+              {t('pblV3.ide.output')}
             </button>
             {ACTIVITY_SHELL_ENABLED && (
               <button
@@ -536,7 +526,6 @@ export function LearningWorkbenchPanel({
                   ))}
                 </>
               )}
-              {children}
             </div>
             {ACTIVITY_SHELL_ENABLED && (
               <div hidden={consoleTab !== 'terminal'}>

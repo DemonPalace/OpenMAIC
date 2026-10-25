@@ -729,21 +729,47 @@ test('installed sample opens in the normal classroom and preserves progress afte
     'aria-selected',
     'true',
   );
-  // Hiding shell controls must not remove trusted course build feedback.
+  // Build feedback uses the existing task drawer without shrinking the editor.
+  const editorHeight = (await page.locator('.monaco-editor').first().boundingBox())!.height;
   view.actions.push('compile');
   await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Build output', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Build output', exact: true })).toHaveCount(0);
   await expect(
-    page.getByRole('button', { name: 'Build / check syntax', exact: true }),
+    page.getByTestId('pbl-ide').getByRole('button', { name: 'Build / check syntax', exact: true }),
+  ).toHaveCount(0);
+  const taskDetails = page.getByRole('region', { name: 'Current task details', exact: true });
+  if (!(await taskDetails.isVisible()))
+    await page.getByRole('button', { name: /Current task details/ }).click();
+  await expect(
+    taskDetails.getByRole('button', { name: 'Build / check syntax', exact: true }),
   ).toBeVisible();
-  view.evaluation = { id: 'course-build', state: 'running', stdout: '', stderr: '' };
+  view.evaluation = {
+    id: 'course-build',
+    purpose: 'compile',
+    state: 'running',
+    stdout: '',
+    stderr: '',
+  };
   view.revision++;
   await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
   await expect(page.getByTestId('pbl-build-status').locator('.animate-spin')).toHaveCount(1);
+  await page.getByRole('button', { name: 'Close task details', exact: true }).click();
+  await expect(page.locator('.pbl-task-dock [data-action="compile"] .animate-spin')).toHaveCount(1);
+  expect(
+    (await page.locator('.monaco-editor').first().boundingBox())!.height,
+  ).toBeGreaterThanOrEqual(editorHeight - 1);
   view.evaluation.state = 'exited';
+  view.evaluation.stderr = 'greeting.py:1: SyntaxError: expected a colon';
   view.revision++;
   await page.getByRole('button', { name: 'Refresh progress', exact: true }).click();
+  await page.getByRole('button', { name: /Current task details/ }).click();
+  await expect(taskDetails.getByText('greeting.py:1: SyntaxError: expected a colon')).toBeVisible();
   await expect(page.getByTestId('pbl-build-status')).toHaveCount(0);
+  await expect(page.locator('.pbl-task-dock [data-action="compile"]')).toHaveCount(0);
+  await expect(
+    taskDetails.getByRole('button', { name: 'Collect test result', exact: true }),
+  ).toBeVisible();
+  await page.getByRole('button', { name: 'Close task details', exact: true }).click();
   view.evaluation = null;
   // The current activity exposes no shell or arbitrary-command controls.
   await expect(page.getByRole('button', { name: 'Terminal', exact: true })).toHaveCount(0);
