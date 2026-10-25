@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { LoaderCircle } from 'lucide-react';
 import type { ProjectHeroDetails } from '@/lib/pbl/project-hero';
@@ -22,6 +22,9 @@ export function PBLV3Container({ sceneId }: { sceneId: string }) {
   const [expanded, setExpanded] = useState(false);
   const [autoExpand, setAutoExpand] = useState(false);
   const [fullscreenRoot, setFullscreenRoot] = useState<Element | null>(null);
+  const [portalHost] = useState(() =>
+    typeof document === 'undefined' ? null : document.createElement('div'),
+  );
   const [reload, setReload] = useState(0);
   useEffect(() => {
     if (!stageId) return;
@@ -45,6 +48,13 @@ export function PBLV3Container({ sceneId }: { sceneId: string }) {
     document.addEventListener('fullscreenchange', sync);
     return () => document.removeEventListener('fullscreenchange', sync);
   }, []);
+  useLayoutEffect(() => {
+    if (!portalHost) return;
+    // React keeps the workspace instance when its portal target stays identical.
+    // Move that same host inside native fullscreen so it remains visible there.
+    (fullscreenRoot ?? document.body).appendChild(portalHost);
+    return () => portalHost.remove();
+  }, [fullscreenRoot, portalHost]);
   const launch = () => {
     setAutoExpand(true);
     setEntered(true);
@@ -56,7 +66,7 @@ export function PBLV3Container({ sceneId }: { sceneId: string }) {
     setReload((value) => value + 1);
   }, []);
   return (
-    <div ref={hostRef} className="h-full w-full">
+    <div ref={hostRef} className="h-full w-full" data-testid="pbl-v3-entry">
       {!entered &&
         (entrance ? (
           <ProjectHero
@@ -87,6 +97,7 @@ export function PBLV3Container({ sceneId }: { sceneId: string }) {
           </div>
         ))}
       {entered &&
+        portalHost &&
         createPortal(
           <PBLWorkspaceLayer
             hostRef={hostRef}
@@ -99,7 +110,7 @@ export function PBLV3Container({ sceneId }: { sceneId: string }) {
           >
             <PBLV3Workspace sceneId={sceneId} onReturnToHero={returnToHero} />
           </PBLWorkspaceLayer>,
-          fullscreenRoot ?? document.body,
+          portalHost,
         )}
     </div>
   );

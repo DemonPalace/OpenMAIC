@@ -146,6 +146,13 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
   let evaluateEntered = () => {};
   let collectGate: Promise<void> | null = null;
   let collectEntered = () => {};
+  let chatGate: Promise<void> | null = null;
+  let chatEntered = () => {};
+  let streamRequests = 0;
+  let openRequests = 0;
+  page.on('request', (request) => {
+    if (new URL(request.url()).pathname === '/api/pbl/v3/events') streamRequests++;
+  });
   await page.route('**/api/pbl/v3**', async (route) => {
     if (new URL(route.request().url()).searchParams.get('project') === '1') {
       expect(route.request().headers()['x-openmaic-sandbox']).toBe('1');
@@ -165,6 +172,8 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
     }
     const command =
       route.request().method() === 'POST' ? route.request().postDataJSON()?.command : undefined;
+    if (route.request().method() === 'POST' && route.request().postDataJSON()?.action === 'open')
+      openRequests++;
     if (command?.type === 'save')
       return route.fulfill({ status: 503, json: { error: { code: 'SANDBOX_UNAVAILABLE' } } });
     if (command?.type === 'decide') {
@@ -183,6 +192,12 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
       return route.fulfill({ json: { view } });
     }
     if (command?.type === 'chat') {
+      if (chatGate) {
+        const gate = chatGate;
+        chatGate = null;
+        chatEntered();
+        await gate;
+      }
       // The server preserves a completed review while answering a follow-up.
       view.activitySequence!++;
       return route.fulfill({ json: { view } });
@@ -391,6 +406,45 @@ test('PBL conversation stays in the host classroom through expansion, scene navi
   await expect(openingRetry).toHaveCount(0);
   await expect(page.getByLabel('Your message', { exact: true })).toHaveValue('My unsent answer');
   await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeEnabled();
+  // Native presentation fullscreen must move the same portal, including a pending request.
+  const workspace = await page.getByTestId('pbl-v3-workspace').elementHandle();
+  const streamsBeforeFullscreen = streamRequests;
+  const opensBeforeFullscreen = openRequests;
+  let releaseChat!: () => void;
+  chatGate = new Promise<void>((resolve) => (releaseChat = resolve));
+  const chatStarted = new Promise<void>((resolve) => (chatEntered = resolve));
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await chatStarted;
+  await expect(
+    page.locator('[data-testid="pbl-pending-action"][data-action="chat"]'),
+  ).toBeVisible();
+  await page.getByTestId('pbl-v3-entry').evaluate((el) => el.requestFullscreen());
+  await expect.poll(() => page.evaluate(() => !!document.fullscreenElement)).toBe(true);
+  await expect(page.getByTestId('pbl-v3-workspace')).toBeVisible();
+  expect(
+    await workspace!.evaluate(
+      (el) => el === document.querySelector('[data-testid="pbl-v3-workspace"]'),
+    ),
+  ).toBe(true);
+  await expect(
+    page.locator('[data-testid="pbl-pending-action"][data-action="chat"]'),
+  ).toBeVisible();
+  await page.evaluate(() => document.exitFullscreen());
+  await expect.poll(() => page.evaluate(() => document.fullscreenElement)).toBeNull();
+  expect(
+    await workspace!.evaluate(
+      (el) => el === document.querySelector('[data-testid="pbl-v3-workspace"]'),
+    ),
+  ).toBe(true);
+  await expect(
+    page.locator('[data-testid="pbl-pending-action"][data-action="chat"]'),
+  ).toBeVisible();
+  expect(streamRequests).toBe(streamsBeforeFullscreen);
+  expect(openRequests).toBe(opensBeforeFullscreen);
+  releaseChat();
+  await expect(page.locator('[data-testid="pbl-pending-action"][data-action="chat"]')).toHaveCount(
+    0,
+  );
   await page.getByLabel('Your message', { exact: true }).fill('');
   // Teaching has no drawer; decisions expose only the actual current task.
   await expect(task.getByRole('button', { name: /Current task details/ })).toHaveCount(0);

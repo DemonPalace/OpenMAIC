@@ -228,7 +228,7 @@ test('installed sample opens in the normal classroom and preserves progress afte
       });
     }
     if (req.method() === 'GET' && url.searchParams.has('file')) {
-      if (readGate) {
+      if (readGate && url.searchParams.get('file') === 'greeting.py') {
         const gate = readGate;
         readGate = null;
         readEntered();
@@ -364,6 +364,7 @@ test('installed sample opens in the normal classroom and preserves progress afte
     0,
   );
   // Read-only Monaco model switches and server value refreshes are not learner edits.
+  await expect(page.getByRole('button', { name: 'Reload file', exact: true })).toBeEnabled();
   let releaseRead!: () => void;
   readGate = new Promise<void>((resolve) => {
     releaseRead = resolve;
